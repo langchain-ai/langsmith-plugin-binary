@@ -36,3 +36,27 @@ jobs:
         run: pnpm lint:types
       - name: Test
         run: pnpm test
+
+  installer:
+    name: Installer Cases and Mutations
+    runs-on: macos-26
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26.8.2
+      - name: Run the Installer Cases
+        run: bash test/install/self-check.sh
+      - name: Run the Installer Mutations
+        run: bash test/install/self-check.sh --mutations
+
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Shellcheck
+        run: shellcheck test/install/*.sh test/fixtures/*/install.sh
