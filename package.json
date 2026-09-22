@@ -1,0 +1,54 @@
+{
+  "name": "@langchain/langsmith-plugin-binary",
+  "version": "0.1.0",
+  "description": "Shared build, sign, install and update pipeline for the LangSmith plugin binaries",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "langsmith"
+  ],
+  "homepage": "https://github.com/langchain-ai/langsmith-plugin-binary#readme",
+  "bugs": {
+    "url": "https://github.com/langchain-ai/langsmith-plugin-binary/issues"
+  },
+  "license": "MIT",
+  "author": "LangChain",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/langchain-ai/langsmith-plugin-binary.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean",
+    "prepare": "tsc --build",
+    "format": "oxfmt --write",
+    "lint": "npm run lint:format && npm run lint:oxlint && npm run lint:types",
+    "lint:format": "oxfmt --check",
+    "lint:oxlint": "oxlint",
+    "lint:types": "tsc --noEmit -p tsconfig.check.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "oxfmt": "^0.67.0",
+    "oxlint": "^1.83.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.33.0"
+}
