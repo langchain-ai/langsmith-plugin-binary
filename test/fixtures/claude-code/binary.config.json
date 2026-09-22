@@ -19,5 +19,17 @@
       "  /plugin install langsmith-tracing@langsmith-claude-code-plugins",
       "  /reload-plugins"
     ]
+  },
+  "build": {
+    "entryPoint": "src/hooks/dispatch.ts",
+    "outputDirectory": "bin",
+    "versionFile": "package.json",
+    "minify": false,
+    "defines": {
+      "__LS_BINARY_HOOKS__": "hooks/hooks.binary.json"
+    }
+  },
+  "sign": {
+    "entitlements": "macos-entitlements.plist"
   }
 }

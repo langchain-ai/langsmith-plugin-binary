@@ -15,6 +15,14 @@ export class Section {
     return this.scope === "" ? field : `${this.scope}.${field}`;
   }
 
+  raw(field: string): unknown {
+    return this.source[field];
+  }
+
+  fields(): [string, unknown][] {
+    return Object.entries(this.source);
+  }
+
   text(field: string): string {
     const value = this.source[field];
     if (typeof value !== "string" || value.trim() === "") {
@@ -40,11 +48,19 @@ export class Section {
     return value;
   }
 
-  lines(field: string): string[] {
+  strings(field: string): string[] {
     const value = this.source[field];
     if (!Array.isArray(value) || value.length === 0) {
-      fail(this.name(field), "a non-empty array of lines");
+      fail(this.name(field), "a non-empty array of strings");
     }
+    for (const entry of value) {
+      if (typeof entry !== "string") fail(this.name(field), "an array of strings");
+    }
+    return value as string[];
+  }
+
+  lines(field: string): string[] {
+    const value = this.strings(field);
     for (const line of value) {
       if (typeof line !== "string") fail(this.name(field), "an array of strings");
       if (MULTI_LINE_OR_CONTROL.test(line)) fail(this.name(field), "an array of single lines");
@@ -52,7 +68,7 @@ export class Section {
         fail(this.name(field), `an array with no line reading ${line}`);
       }
     }
-    return value as string[];
+    return value;
   }
 
   section(field: string): Section {
