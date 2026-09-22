@@ -1,0 +1,7 @@
+{
+  "ignorePatterns": ["dist"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  }
+}
