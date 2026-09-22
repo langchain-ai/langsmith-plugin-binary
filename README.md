@@ -2,22 +2,39 @@
 
 Shared build, sign, install and update pipeline for the LangSmith plugin binaries.
 
-The LangSmith plugins for Claude Code and OpenAI Codex each ship a standalone macOS
-binary. Everything about getting that binary built, signed, downloaded and kept up to
-date lives here, so both plugins behave the same way.
+Releases land in each plugin's own repo. This one publishes nothing.
 
-Releases still land in each plugin's own repository. This one publishes none.
+## Onboarded plugins
 
-## What is here
+| Plugin      | Repo                            | Status      |
+| ----------- | ------------------------------- | ----------- |
+| Claude Code | `langsmith-claude-code-plugins` | not started |
+| Codex       | `langsmith-codex-plugins`       | not started |
 
-| Piece     | What it does                                                                      |
-| --------- | --------------------------------------------------------------------------------- |
-| Installer | The script users pipe to `bash`, and the generator that writes each plugin's copy |
-| Updater   | Finds, downloads, verifies and installs a newer release                           |
-| Build     | Compiles a plugin into a single macOS executable                                  |
-| Sign      | Signs and notarizes that executable with Apple                                    |
-| Workflow  | The GitHub Actions pipeline each plugin calls                                     |
+## What happens on a release
 
-## Using it
+1. Compile the plugin into two macOS binaries. One per chip
+2. Run the Intel one on a real Intel machine
+3. Sign both and wait for Apple to notarize them
+4. Attach both to a draft release with a checksum beside each
+5. A user runs the install script. It finds that release and checks the checksum
+6. Later the installed binary spots a newer release and replaces itself
 
-See [MIGRATION.md](MIGRATION.md).
+Three things stop a release instead of shipping something broken. A binary built for the
+wrong chip. A binary reporting the wrong version. A missing Apple credential.
+
+Every step gets the file name from the same settings file. Nothing drifts apart.
+
+## Where the code is
+
+|                                      |                              |
+| ------------------------------------ | ---------------------------- |
+| `src/build.ts`                       | compiles                     |
+| `src/sign.ts`                        | signs and notarizes          |
+| `src/install-script.ts`              | generates the install script |
+| `src/update.ts`                      | self-update                  |
+| `.github/workflows/build-binary.yml` | the pipeline a plugin calls  |
+
+## Onboarding a plugin
+
+See [ONBOARDING.md](ONBOARDING.md).
