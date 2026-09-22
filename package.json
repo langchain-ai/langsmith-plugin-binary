@@ -17,8 +17,13 @@
     "type": "git",
     "url": "https://github.com/langchain-ai/langsmith-plugin-binary.git"
   },
+  "bin": {
+    "langsmith-plugin-binary": "dist/cli.js"
+  },
   "files": [
-    "dist"
+    "dist",
+    "installer/install.sh.template",
+    "test/install"
   ],
   "type": "module",
   "main": "dist/index.js",
@@ -38,7 +43,10 @@
     "lint:format": "oxfmt --check",
     "lint:oxlint": "oxlint",
     "lint:types": "tsc --noEmit -p tsconfig.check.json",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run",
+    "test:install": "bash test/install/self-check.sh",
+    "test:install:mutations": "bash test/install/self-check.sh --mutations",
+    "lint:shell": "shellcheck test/install/*.sh test/fixtures/*/install.sh"
   },
   "devDependencies": {
     "@types/node": "^26.4.0",
