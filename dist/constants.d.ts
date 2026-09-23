@@ -1,0 +1,28 @@
+export declare const HEREDOC_TERMINATOR = "HELP";
+export declare const MULTI_LINE_OR_CONTROL: RegExp;
+export declare const EXECUTABLE_NAME: RegExp;
+export declare const REPOSITORY_PATH: RegExp;
+export declare const ENVIRONMENT_PREFIX: RegExp;
+export declare const TEMPLATE_URL: import("node:url").URL;
+export declare const ENVIRONMENT_VARIABLE_DESCRIPTIONS: ReadonlyArray<readonly [string, string]>;
+export declare const DEFAULT_PUBLISHED_TARGETS: Readonly<Record<string, readonly string[]>>;
+export declare const RELEASES_PER_PAGE = 100;
+export declare const LIST_TIMEOUT_MS = 15000;
+export declare const DOWNLOAD_TIMEOUT_MS: number;
+export declare const CODESIGN_TIMEOUT_MS = 120000;
+export declare const VERSION_CHECK_TIMEOUT_MS = 30000;
+export declare const MAX_BINARY_BYTES: number;
+export declare const MAX_CHECKSUM_BYTES = 1024;
+export declare const ABANDONED_LOCK_MS: number;
+export declare const LOCK_FILE_NAME = ".update.lock";
+export declare const DEFAULT_INSTALL_DIRECTORY_NAME = ".langsmith";
+export declare const LOOPBACK_HOSTS: Set<string>;
+export declare const VERSION: RegExp;
+export declare const OLDER_THAN_ANY_RELEASE = "0.0.0";
+export declare const MACH_O_ARCHES: Readonly<Record<string, string>>;
+export declare const VERSION_DEFINE = "__LS_INTEGRATION_VERSION__";
+export declare const DEVELOPER_ID_PREFIX = "Developer ID Application:";
+export declare const IDENTITY_LINE: RegExp;
+export declare const TEAM_ID_SUFFIX: RegExp;
+export declare const APPLE_CREDENTIALS: readonly ["APPLE_API_ISSUER", "APPLE_API_KEY", "APPLE_API_KEY_ID", "CSC_KEY_PASSWORD", "CSC_LINK"];
+//# sourceMappingURL=constants.d.ts.map
