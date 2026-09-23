@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 import { defineBinaryTarget } from "./binary.js";
+import { APPLE_CREDENTIALS } from "./constants.js";
 
 interface Step {
   name?: string;
@@ -20,11 +21,22 @@ interface Job {
   steps?: Step[];
   strategy?: { matrix?: { include?: { arch: string; runner: string }[] } };
   needs?: string[];
+  if?: string;
+  environment?: string;
 }
 
 const WORKFLOW = parse(
   readFileSync(new URL("../.github/workflows/build-binary.yml", import.meta.url), "utf-8"),
-) as { jobs: Record<string, Job> };
+) as {
+  on: Record<string, unknown>;
+  concurrency: { "cancel-in-progress": string };
+  jobs: Record<string, Job>;
+};
+
+const PUBLISHING_GATE = "needs.plan.outputs.publishing == 'true'";
+const TAG_TEST = /startsWith\(\s*github\.ref\s*,\s*'([^']*)'\s*\)/;
+const APPLE_SECRET = /secrets\.(?:APPLE|CSC)_/;
+const SECRET_READ = /^\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}$/;
 
 function fixtureRoot(consumer: string): string {
   return new URL(`../test/fixtures/${consumer}/`, import.meta.url).pathname;
@@ -44,6 +56,52 @@ function stepNamed(job: string, step: string): Step {
 
 function script(job: string, step: string): string {
   return stepNamed(job, step).run ?? "";
+}
+
+function jobsWhere(holds: (job: Job, name: string) => boolean): string[] {
+  return Object.keys(WORKFLOW.jobs).filter((name) => holds(WORKFLOW.jobs[name] ?? {}, name));
+}
+
+function entersAnEnvironment(job: Job): boolean {
+  return job.environment !== undefined;
+}
+
+function readsAnAppleCredential(job: Job): boolean {
+  return APPLE_SECRET.test(JSON.stringify(job));
+}
+
+function waitsForThePublishingGate(job: Job): boolean {
+  return (job.if ?? "").replace(/\s+/g, " ").trim() === PUBLISHING_GATE;
+}
+
+function credentialsWiredInto(job: string, step: string): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(stepNamed(job, step).env ?? {})
+      .map(([variable, value]) => [variable, SECRET_READ.exec(value)?.[1]])
+      .filter(([, secret]) => secret !== undefined),
+  ) as Record<string, string>;
+}
+
+function tagPrefix(expression: string): string {
+  const found = TAG_TEST.exec(expression);
+  if (found === null) throw new Error(`${expression} never tests github.ref against a tag`);
+  return found[1] ?? "";
+}
+
+function stepsRunning(job: string, command: string): string[] {
+  return (WORKFLOW.jobs[job]?.steps ?? [])
+    .map((step) => step.run?.trim() ?? "")
+    .filter((run) => run.includes(command));
+}
+
+function runsABinaryItDownloaded(_job: Job, name: string): boolean {
+  return handedOver(name, "download").length > 0 && stepsRunning(name, "test:binary").length > 0;
+}
+
+function alwaysRestoresTheExecutableBit(job: Job): boolean {
+  return (job.steps ?? []).some(
+    (step) => step.run?.includes("chmod +x") === true && step.if === undefined,
+  );
 }
 
 function runStep(
@@ -241,5 +299,51 @@ describe("keeping the signed and unsigned binaries apart", () => {
       { arch: "arm64", runner: "macos-26" },
       { arch: "x64", runner: "macos-26-intel" },
     ]);
+  });
+});
+
+describe("keeping the Apple credentials inside the signing environment", () => {
+  it("asks for a deployment environment in one job and no other", () => {
+    expect(jobsWhere(entersAnEnvironment)).toEqual(["sign"]);
+  });
+
+  it("never reads an Apple credential outside a job that entered the environment", () => {
+    expect(jobsWhere(readsAnAppleCredential)).toEqual(jobsWhere(entersAnEnvironment));
+  });
+
+  it("never enters the signing environment on a run that is not publishing", () => {
+    expect(jobsWhere((job) => entersAnEnvironment(job) && waitsForThePublishingGate(job))).toEqual(
+      jobsWhere(entersAnEnvironment),
+    );
+  });
+
+  it("wires every credential the signing script asks for into the signing step", () => {
+    expect(credentialsWiredInto("sign", "Sign and Notarize the Binary")).toEqual(
+      Object.fromEntries(APPLE_CREDENTIALS.map((credential) => [credential, credential])),
+    );
+  });
+});
+
+describe("the release path no pull request ever runs", () => {
+  it("agrees on what a tag looks like everywhere it decides that", () => {
+    expect(tagPrefix(WORKFLOW.concurrency["cancel-in-progress"])).toBe(
+      tagPrefix(stepNamed("plan", "Decide Whether This Run Is Releasing").env?.PUBLISHING ?? ""),
+    );
+  });
+
+  it("restores the executable bit in every job that runs a binary it downloaded", () => {
+    expect(
+      jobsWhere(
+        (job, name) => runsABinaryItDownloaded(job, name) && alwaysRestoresTheExecutableBit(job),
+      ),
+    ).toEqual(jobsWhere(runsABinaryItDownloaded));
+  });
+
+  it("puts the signed binary through the same test the unsigned one passed", () => {
+    expect(stepsRunning("sign", "test:binary")).toEqual(stepsRunning("build", "test:binary"));
+  });
+
+  it("keeps the trigger the plugin repositories release through", () => {
+    expect(Object.keys(WORKFLOW.on)).toContain("workflow_call");
   });
 });

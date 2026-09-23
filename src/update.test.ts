@@ -230,6 +230,13 @@ describe("verifying what it downloaded", () => {
     expect(message).toContain("outside the allowed range");
   });
 
+  it("refuses a release asset that claims to hold nothing at all", async () => {
+    const release = publish("0.6.0");
+    (release.json.assets as { size: number }[])[0]!.size = 0;
+    const { message } = await failedUpdate([release]);
+    expect(message).toContain("release asset size 0 is outside the allowed range");
+  });
+
   it("refuses a download that stops early", async () => {
     const release = publish("0.6.0");
     (release.json.assets as { size: number }[])[0]!.size += 100;
