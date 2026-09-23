@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { build } from "./build.js";
 import { loadConfig } from "./config.js";
@@ -43,6 +43,14 @@ function runInstallerCommand(loaded, argv, log) {
     }
     log(`${target} matches the generator`);
 }
+export function entrypointPath(argv1) {
+    try {
+        return realpathSync(resolve(argv1));
+    }
+    catch {
+        return resolve(argv1);
+    }
+}
 export async function run(argv, log) {
     const [command, ...rest] = argv;
     if (!COMMANDS.includes(command))
@@ -54,7 +62,7 @@ export async function run(argv, log) {
         return build(loaded, rest, log);
     await sign(loaded, { binaryPath: binaryToSign(rest), log });
 }
-if (process.argv[1] && import.meta.filename === resolve(process.argv[1])) {
+if (process.argv[1] && import.meta.filename === entrypointPath(process.argv[1])) {
     run(process.argv.slice(2), (line) => console.log(line)).catch((error) => {
         console.error(describe(error));
         process.exit(1);
