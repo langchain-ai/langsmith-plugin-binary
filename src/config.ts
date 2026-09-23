@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { ENVIRONMENT_PREFIX, EXECUTABLE_NAME, REPOSITORY_PATH } from "./constants.js";
-import type { InstallerConfig, LoadedConfig, PluginBinaryConfig } from "./models.js";
+import {
+  DEFAULT_PUBLISHED_TARGETS,
+  ENVIRONMENT_PREFIX,
+  EXECUTABLE_NAME,
+  REPOSITORY_PATH,
+} from "./constants.js";
+import type { BuildConfig, InstallerConfig, LoadedConfig, PluginBinaryConfig } from "./models.js";
 import { describe } from "./utils/errors.js";
-import { Section } from "./utils/validation.js";
+import { fail, Section } from "./utils/validation.js";
 
 function parseInstaller(root: Section): InstallerConfig {
   const installer = root.section("installer");
@@ -21,6 +26,37 @@ function parseInstaller(root: Section): InstallerConfig {
   };
 }
 
+function parseBuild(root: Section): BuildConfig {
+  const build = root.section("build");
+  const defines: Record<string, string> = {};
+  if (build.raw("defines") !== undefined) {
+    const declared = build.section("defines");
+    for (const [name] of declared.fields()) {
+      if (!/^__[A-Z0-9_]+__$/.test(name)) fail(`build.defines.${name}`, "named like __EXAMPLE__");
+      defines[name] = declared.repositoryPath(name);
+    }
+  }
+  const minify = build.raw("minify");
+  if (minify !== undefined && typeof minify !== "boolean") fail("build.minify", "true or false");
+  return {
+    entryPoint: build.repositoryPath("entryPoint"),
+    outputDirectory: build.repositoryPath("outputDirectory"),
+    versionFile: build.repositoryPath("versionFile"),
+    minify: minify === true,
+    defines,
+  };
+}
+
+function parsePublishedTargets(root: Section): Readonly<Record<string, readonly string[]>> {
+  if (root.raw("publishedTargets") === undefined) return DEFAULT_PUBLISHED_TARGETS;
+  const targets = root.section("publishedTargets");
+  const parsed: Record<string, readonly string[]> = {};
+  for (const [platform] of targets.fields()) {
+    parsed[platform] = targets.strings(platform);
+  }
+  return parsed;
+}
+
 export function parseConfig(raw: unknown): PluginBinaryConfig {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("the binary config must be a JSON object");
@@ -33,7 +69,10 @@ export function parseConfig(raw: unknown): PluginBinaryConfig {
       "a lower-case name made of letters, digits and single dashes",
     ),
     repository: root.matching("repository", REPOSITORY_PATH, "an owner/name repository path"),
+    publishedTargets: parsePublishedTargets(root),
     installer: parseInstaller(root),
+    build: parseBuild(root),
+    sign: { entitlements: root.section("sign").repositoryPath("entitlements") },
   };
 }
 

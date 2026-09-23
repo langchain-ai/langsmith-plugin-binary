@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { build } from "./build.js";
 import { loadConfig } from "./config.js";
 import { renderInstaller } from "./install-script.js";
 import type { LoadedConfig } from "./models.js";
+import { sign } from "./sign.js";
 import { describe } from "./utils/errors.js";
 
-const COMMANDS = ["installer"] as const;
+const COMMANDS = ["installer", "build", "sign"] as const;
 
 const USAGE = `Usage: langsmith-plugin-binary <command> [--config <path>]
 
   installer          Write the repository's install script from its binary config.
                      --check compares the committed file instead of writing it.
+  build [--arch=X]   Compile the plugin into a macOS binary. --arch=all builds both.
+  sign [<binary>]    Sign and notarize a built binary with Apple.
 `;
 
 function flagValue(argv: string[], flag: string): string | undefined {
@@ -20,6 +24,12 @@ function flagValue(argv: string[], flag: string): string | undefined {
   const value = argv[index + 1];
   if (value === undefined || value.startsWith("-")) throw new Error(`${flag} needs a value`);
   return value;
+}
+
+function binaryToSign(argv: string[]): string | undefined {
+  const flag = argv.indexOf("--config");
+  const rest = flag < 0 ? argv : [...argv.slice(0, flag), ...argv.slice(flag + 2)];
+  return rest.find((argument) => !argument.startsWith("-"));
 }
 
 function runInstallerCommand(
@@ -51,7 +61,10 @@ export async function run(argv: string[], log: (line: string) => void): Promise<
   if (!COMMANDS.includes(command as (typeof COMMANDS)[number])) throw new Error(USAGE);
 
   const loaded = loadConfig(flagValue(rest, "--config") ?? "binary.config.json");
-  runInstallerCommand(loaded, rest, log);
+  if (command === "installer") return runInstallerCommand(loaded, rest, log);
+  if (command === "build") return build(loaded, rest, log);
+
+  await sign(loaded, { binaryPath: binaryToSign(rest), log });
 }
 
 if (process.argv[1] && import.meta.filename === resolve(process.argv[1])) {

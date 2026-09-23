@@ -1,8 +1,9 @@
 import { chmodSync, cpSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { run } from "./cli.js";
+import { APPLE_CREDENTIALS } from "./constants.js";
 
 function fixture(file: string): string {
   return new URL(`../test/fixtures/codex/${file}`, import.meta.url).pathname;
@@ -49,6 +50,21 @@ describe("generating a repository's install script", () => {
     await expect(generate(root, "--check")).resolves.toEqual([
       `${join(root, "install.sh")} matches the generator`,
     ]);
+  });
+});
+
+describe("signing from the command line", () => {
+  afterEach(() => {
+    for (const name of APPLE_CREDENTIALS) delete process.env[name];
+  });
+
+  it("signs the built binary, not the config file it was pointed at", async () => {
+    for (const name of APPLE_CREDENTIALS) process.env[name] = "set";
+    await expect(
+      run(["sign", "--config", fixture("binary.config.json")], () => {}),
+    ).rejects.toThrow(
+      `there is no binary to sign at ${fixture("plugins/tracing/bin/langsmith-codex-tracing")}`,
+    );
   });
 });
 

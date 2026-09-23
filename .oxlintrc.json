@@ -1,5 +1,5 @@
 {
-  "ignorePatterns": ["dist"],
+  "ignorePatterns": ["dist", "test/fixtures"],
   "categories": {
     "correctness": "error",
     "suspicious": "error"

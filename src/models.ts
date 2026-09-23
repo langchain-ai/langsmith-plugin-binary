@@ -1,3 +1,5 @@
+import type { APPLE_CREDENTIALS } from "./constants.js";
+
 export interface BinaryTarget {
   executableName: string;
   repository: string;
@@ -16,10 +18,25 @@ export interface InstallerConfig {
   unsupportedPlatformHelp: string[];
 }
 
+export interface BuildConfig {
+  entryPoint: string;
+  outputDirectory: string;
+  versionFile: string;
+  minify: boolean;
+  defines: Record<string, string>;
+}
+
+export interface SignConfig {
+  entitlements: string;
+}
+
 export interface PluginBinaryConfig {
   executableName: string;
   repository: string;
+  publishedTargets: Readonly<Record<string, readonly string[]>>;
   installer: InstallerConfig;
+  build: BuildConfig;
+  sign: SignConfig;
 }
 
 export interface LoadedConfig {
@@ -111,3 +128,25 @@ export interface InstalledBinary {
   path: string;
   version: string;
 }
+
+export interface BuildPlan {
+  platform: string;
+  arches: readonly string[];
+  entryPoint: string;
+  outputDirectory: string;
+  executableName: string;
+  version: string;
+  minify: boolean;
+  defines: Record<string, string>;
+}
+
+export interface BuildSteps {
+  compile(plan: BuildPlan, arch: string, binary: string, repositoryRoot: string): void;
+  checkArch(binary: string, arch: string): void;
+  signAdHoc(binary: string): void;
+  checkVersion(binary: string, version: string): void;
+}
+
+export type CredentialName = (typeof APPLE_CREDENTIALS)[number];
+export type Environment = Partial<Record<CredentialName, string>>;
+export type AppleCredentials = Record<CredentialName, string>;
