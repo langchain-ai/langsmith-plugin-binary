@@ -62,14 +62,19 @@ import { defineBinaryTarget } from "@langchain/langsmith-plugin-binary";
 import config from "../binary.config.json" with { type: "json" };
 
 export const binary = defineBinaryTarget({
-  ...config,
+  executableName: config.executableName,
+  repository: config.repository,
   userAgent: "langsmith-claude-code",
   releasesApiOverrideEnvVar: "CC_LANGSMITH_RELEASES_API",
 });
 ```
 
-Spread the settings file in. That keeps the name the installer downloads and the name the
-binary looks for in sync.
+Read the two names out of the settings file rather than spreading the whole thing in. That
+keeps the name the installer downloads and the name the binary looks for in sync, without
+shipping your build and signing settings to every user in the plugin bundle.
+
+Check the bundle afterwards. Some bundlers keep every key of an imported JSON file even
+when only two are read, in which case strip the unused sections at build time.
 
 | Call                                         | When                                               |
 | -------------------------------------------- | -------------------------------------------------- |
