@@ -1,2 +1,12 @@
-export { DEFAULT_PUBLISHED_TARGETS } from "./constants.js";
-export type { BinaryTarget } from "./models.js";
+export { defineBinaryTarget } from "./binary.js";
+export type {
+  BinaryTarget,
+  BinaryTargetOptions,
+  HostOptions,
+  InstalledBinary,
+  InstallOptions,
+  PluginBinary,
+  SignatureVerifier,
+  UpdateOptions,
+  UpdateResult,
+} from "./models.js";
