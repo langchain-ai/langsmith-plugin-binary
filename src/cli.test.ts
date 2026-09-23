@@ -1,8 +1,17 @@
-import { chmodSync, cpSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { run } from "./cli.js";
+import { entrypointPath, run } from "./cli.js";
 import { APPLE_CREDENTIALS } from "./constants.js";
 
 function fixture(file: string): string {
@@ -83,5 +92,22 @@ describe("running a command", () => {
     await expect(
       run(["installer", "--config", "/nowhere/binary.config.json"], () => {}),
     ).rejects.toThrow("could not read the binary config at /nowhere/binary.config.json");
+  });
+});
+
+describe("the entrypoint check", () => {
+  it("sees through the symlink a package manager installs the bin as", () => {
+    const real = join(mkdtempSync(join(tmpdir(), "entry-")), "cli.js");
+    writeFileSync(real, "");
+    const link = `${real}.link`;
+    symlinkSync(real, link);
+
+    expect(entrypointPath(link)).toBe(realpathSync(real));
+  });
+
+  it("falls back to the given path when nothing is there to resolve", () => {
+    const missing = join(tmpdir(), "entry-missing", "cli.js");
+
+    expect(entrypointPath(missing)).toBe(missing);
   });
 });
