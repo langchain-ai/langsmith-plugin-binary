@@ -18,7 +18,12 @@ function releaseQuery(target, currentVersion, options) {
     };
 }
 function stagingOptions(options) {
-    return { verifySignature: options.verifySignature, now: options.now };
+    return {
+        verifySignature: options.verifySignature,
+        now: options.now,
+        pause: options.pause,
+        versionCheckBudget: options.versionCheckBudget,
+    };
 }
 function resolveInstallDir(target, options) {
     return options.installDir ?? installDirectory(target, options.home);
