@@ -1,8 +1,11 @@
 import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { REJECTED_FILE_SUFFIX, VERSION_CHECK_BUDGET_MS, VERSION_CHECK_MINIMUM_ATTEMPT_MS, VERSION_CHECK_RETRY_PAUSES_MS, } from "./constants.js";
 import { downloadAsset, verifyAdHocSignature } from "./download.js";
 import { reportedVersion } from "./utils/process.js";
+import { whyTheSignatureStoppedMatching, whyTheVersionCheckFailed, whyTheVersionIsWrong, worthKeeping, worthRetrying, } from "./utils/staging.js";
 export function installDirectory(target, home = homedir()) {
     return join(home, target.installDirectoryName);
 }
@@ -16,21 +19,49 @@ export async function runningAsInstalledBinary(executablePath, installedPath) {
     ]);
     return running !== undefined && running === installed;
 }
-async function stage(target, installDir, version, options, fill) {
+async function stage({ target, installDir, version, options, fill, confirmVersion, }) {
     const now = (options.now ?? Date.now)();
     const verifySignature = options.verifySignature ?? verifyAdHocSignature;
+    const pause = options.pause ?? ((milliseconds) => sleep(milliseconds));
     await fs.mkdir(installDir, { recursive: true, mode: 0o700 });
     const temporary = join(installDir, `.${target.executableName}.${process.pid}.${now}.tmp`);
+    const rejected = join(installDir, `.${target.executableName}${REJECTED_FILE_SUFFIX}`);
     const installed = installedBinaryPath(target, installDir);
+    const moveAsideForInspection = () => fs.rename(temporary, rejected).then(() => rejected, () => undefined);
     try {
         await fill(temporary);
         await fs.chmod(temporary, 0o755);
         await verifySignature(temporary);
-        const reported = await reportedVersion(temporary);
-        if (reported !== version) {
-            throw new Error(`the downloaded binary reports version ${reported}, expected ${version}`);
+        if (confirmVersion) {
+            const spendBy = Date.now() + (options.versionCheckBudget ?? VERSION_CHECK_BUDGET_MS);
+            const left = () => spendBy - Date.now();
+            let check = await reportedVersion(temporary, left());
+            for (const wait of VERSION_CHECK_RETRY_PAUSES_MS) {
+                if (check.ok || !worthRetrying(check.failure))
+                    break;
+                if (left() - wait < VERSION_CHECK_MINIMUM_ATTEMPT_MS)
+                    break;
+                await pause(wait);
+                try {
+                    await verifySignature(temporary);
+                }
+                catch (error) {
+                    throw new Error(whyTheSignatureStoppedMatching(error, await moveAsideForInspection()), {
+                        cause: error,
+                    });
+                }
+                check = await reportedVersion(temporary, left());
+            }
+            if (!check.ok) {
+                const staged = worthKeeping(check.failure) ? await moveAsideForInspection() : undefined;
+                throw new Error(whyTheVersionCheckFailed(check.failure, staged));
+            }
+            if (check.reported !== version) {
+                throw new Error(whyTheVersionIsWrong(check.reported, version));
+            }
         }
         await fs.rename(temporary, installed);
+        await fs.unlink(rejected).catch(() => undefined);
         return installed;
     }
     catch (error) {
@@ -39,9 +70,23 @@ async function stage(target, installDir, version, options, fill) {
     }
 }
 export function installRelease(release, installDir, query, options = {}) {
-    return stage(query.target, installDir, release.version, options, (temporary) => downloadAsset(release, temporary, query));
+    return stage({
+        target: query.target,
+        installDir,
+        version: release.version,
+        options,
+        fill: (temporary) => downloadAsset(release, temporary, query),
+        confirmVersion: true,
+    });
 }
 export function installRunningBinary(target, executablePath, installDir, version, options = {}) {
-    return stage(target, installDir, version, options, (temporary) => fs.copyFile(executablePath, temporary));
+    return stage({
+        target,
+        installDir,
+        version,
+        options,
+        fill: (temporary) => fs.copyFile(executablePath, temporary),
+        confirmVersion: false,
+    });
 }
 //# sourceMappingURL=install-binary.js.map

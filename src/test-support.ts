@@ -112,5 +112,16 @@ export function acceptEverything(): HostOptions {
     runtimePlatform: "darwin",
     runtimeArch: "arm64",
     verifySignature: async () => {},
+    pause: async () => {},
+  };
+}
+
+export function recordedPauses(): { waits: number[]; pause: (ms: number) => Promise<void> } {
+  const waits: number[] = [];
+  return {
+    waits,
+    pause: async (ms: number) => {
+      waits.push(ms);
+    },
   };
 }

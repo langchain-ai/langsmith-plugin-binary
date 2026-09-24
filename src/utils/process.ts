@@ -1,13 +1,31 @@
 import { execFile, execFileSync } from "node:child_process";
-import { VERSION_CHECK_TIMEOUT_MS } from "../constants.js";
+import { CRASH_SIGNALS, NODE_ERROR_PREFIX } from "../constants.js";
+import type { ExecFileFailure, VersionCheck, VersionCheckFailure } from "../models.js";
+import { describe } from "./errors.js";
 
-export function reportedVersion(executable: string): Promise<string> {
-  return new Promise((resolve, reject) => {
+export function failureKind(error: unknown, elapsed: number): VersionCheckFailure {
+  const { killed, signal, code } = (error ?? {}) as ExecFileFailure;
+  if (killed) return { kind: "timeout", seconds: Math.round(elapsed / 100) / 10 };
+  if (signal) return { kind: CRASH_SIGNALS.has(signal) ? "crashed" : "stopped", signal };
+  if (typeof code === "number") return { kind: "exit", status: code };
+  const refused = typeof code === "string" && !code.startsWith(NODE_ERROR_PREFIX);
+  const detail = typeof code === "string" ? code : describe(error);
+  return { kind: refused ? "start" : "unclear", detail };
+}
+
+export function reportedVersion(executable: string, timeout: number): Promise<VersionCheck> {
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
     execFile(
       executable,
       ["--version"],
-      { encoding: "utf-8", timeout: VERSION_CHECK_TIMEOUT_MS },
-      (error, stdout) => (error ? reject(error) : resolve(stdout.trim())),
+      { encoding: "utf-8", timeout, killSignal: "SIGKILL" },
+      (error, stdout) =>
+        resolve(
+          error
+            ? { ok: false, failure: failureKind(error, Date.now() - startedAt) }
+            : { ok: true, reported: stdout.trim() },
+        ),
     );
   });
 }

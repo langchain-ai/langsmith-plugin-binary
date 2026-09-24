@@ -34,7 +34,12 @@ function releaseQuery(
 }
 
 function stagingOptions(options: HostOptions) {
-  return { verifySignature: options.verifySignature, now: options.now };
+  return {
+    verifySignature: options.verifySignature,
+    now: options.now,
+    pause: options.pause,
+    versionCheckBudget: options.versionCheckBudget,
+  };
 }
 
 function resolveInstallDir(target: BinaryTarget, options: HostOptions): string {

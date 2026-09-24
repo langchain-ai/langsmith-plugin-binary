@@ -63,11 +63,42 @@ export interface PluginBinary {
   update(options: UpdateOptions): Promise<UpdateResult>;
 }
 
+export interface ExecFileFailure {
+  killed?: boolean | undefined;
+  signal?: string | null | undefined;
+  code?: number | string | null | undefined;
+}
+
+export type VersionCheckFailure =
+  | { kind: "stopped"; signal: string }
+  | { kind: "crashed"; signal: string }
+  | { kind: "timeout"; seconds: number }
+  | { kind: "exit"; status: number }
+  | { kind: "start"; detail: string }
+  | { kind: "unclear"; detail: string };
+
+export type VersionCheck =
+  | { ok: true; reported: string }
+  | { ok: false; failure: VersionCheckFailure };
+
 export type SignatureVerifier = (binary: string) => Promise<void>;
+
+export type Pause = (milliseconds: number) => Promise<void>;
 
 export interface StagingOptions {
   verifySignature?: SignatureVerifier | undefined;
   now?: (() => number) | undefined;
+  pause?: Pause | undefined;
+  versionCheckBudget?: number | undefined;
+}
+
+export interface StagingPlan {
+  target: BinaryTarget;
+  installDir: string;
+  version: string;
+  options: StagingOptions;
+  fill: (temporary: string) => Promise<void>;
+  confirmVersion: boolean;
 }
 
 export interface ReleaseAsset {
@@ -113,6 +144,8 @@ export interface HostOptions {
   environment?: NodeJS.ProcessEnv | undefined;
   verifySignature?: SignatureVerifier | undefined;
   now?: (() => number) | undefined;
+  pause?: Pause | undefined;
+  versionCheckBudget?: number | undefined;
 }
 
 export interface UpdateOptions extends HostOptions {

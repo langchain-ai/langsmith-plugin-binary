@@ -20,7 +20,24 @@ export const RELEASES_PER_PAGE = 100;
 export const LIST_TIMEOUT_MS = 15_000;
 export const DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
 export const CODESIGN_TIMEOUT_MS = 120_000;
-export const VERSION_CHECK_TIMEOUT_MS = 30_000;
+export const VERSION_CHECK_BUDGET_MS = 10_000;
+export const VERSION_CHECK_MINIMUM_ATTEMPT_MS = 2_000;
+export const VERSION_CHECK_RETRY_PAUSES_MS = [300, 900] as const;
+
+export const CRASH_SIGNALS: ReadonlySet<string> = new Set([
+  "SIGABRT",
+  "SIGBUS",
+  "SIGEMT",
+  "SIGFPE",
+  "SIGILL",
+  "SIGSEGV",
+  "SIGSYS",
+  "SIGTRAP",
+]);
+
+export const NODE_ERROR_PREFIX = "ERR_";
+
+export const KERNEL_LOG_COMMAND = `log show --last 5m --predicate 'sender == "AppleMobileFileIntegrity" or sender == "AppleSystemPolicy"'`;
 
 export const MAX_BINARY_BYTES = 250 * 1024 * 1024;
 export const MAX_CHECKSUM_BYTES = 1024;
@@ -28,6 +45,7 @@ export const MAX_CHECKSUM_BYTES = 1024;
 export const ABANDONED_LOCK_MS = 10 * 60 * 1000;
 
 export const LOCK_FILE_NAME = ".update.lock";
+export const REJECTED_FILE_SUFFIX = ".rejected";
 
 export const DEFAULT_INSTALL_DIRECTORY_NAME = ".langsmith";
 
