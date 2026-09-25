@@ -4,12 +4,13 @@ Shared build, sign, install and update pipeline for the LangSmith plugin binarie
 
 Releases land in each plugin's own repo. This one publishes nothing.
 
-## Onboarded plugins
+## Plugins on the pipeline
 
-| Plugin      | Repo                            | Status      |
-| ----------- | ------------------------------- | ----------- |
-| Claude Code | `langsmith-claude-code-plugins` | not started |
-| Codex       | `langsmith-codex-plugins`       | not started |
+| Plugin      | Repo                            | Status                       |
+| ----------- | ------------------------------- | ---------------------------- |
+| Claude Code | `langsmith-claude-code-plugins` | onboarded, binaries released |
+| Codex       | `langsmith-codex-plugins`       | onboarded, binaries released |
+| Cursor      | `langsmith-cursor-plugins`      | onboarding PR in review      |
 
 ## What happens on a release
 

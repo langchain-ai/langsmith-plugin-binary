@@ -14,14 +14,15 @@ What you end up adding or changing:
 
 Copy from whichever is closer to your plugin.
 
-| Plugin      | Repo                                                                                           | Onboarding PR |
-| ----------- | ---------------------------------------------------------------------------------------------- | ------------- |
-| Claude Code | [langsmith-claude-code-plugins](https://github.com/langchain-ai/langsmith-claude-code-plugins) | not yet       |
-| Codex       | [langsmith-codex-plugins](https://github.com/langchain-ai/langsmith-codex-plugins)             | not yet       |
+| Plugin      | Repo                                                                                           | Onboarding PR                                                                  |
+| ----------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Claude Code | [langsmith-claude-code-plugins](https://github.com/langchain-ai/langsmith-claude-code-plugins) | [#113](https://github.com/langchain-ai/langsmith-claude-code-plugins/pull/113) |
+| Codex       | [langsmith-codex-plugins](https://github.com/langchain-ai/langsmith-codex-plugins)             | [#63](https://github.com/langchain-ai/langsmith-codex-plugins/pull/63)         |
 
-Neither is onboarded yet. Each PR link gets filled in when that plugin lands, tracked in
-[issue #9](https://github.com/langchain-ai/langsmith-plugin-binary/issues/9). That diff
-is the clearest example of what a plugin has to add.
+Both are merged and both now publish signed binaries from this pipeline, so open either
+diff and copy the five files from it. Read those diffs with the deletions in mind, since
+each plugin already had its own build and signing setup and most of what you see is that
+older setup being thrown away. The files listed above are the part worth copying.
 
 ## 1. binary.config.json
 
@@ -113,10 +114,11 @@ jobs:
   binary:
     permissions:
       contents: write
-    uses: langchain-ai/langsmith-plugin-binary/.github/workflows/build-binary.yml@v0.1.0
+    uses: langchain-ai/langsmith-plugin-binary/.github/workflows/build-binary.yml@12889bb099ff1115cb538a3f4b71709efb6858e1 # v0.1.0
     secrets: inherit
 ```
 
+- Pin the commit and name the tag beside it, which is what both onboarded repos do
 - `contents: write` is required or the release upload fails
 - `secrets: inherit` is required or signing stops the release
 - No `paths:` filter. One that names files breaks silently on a rename
