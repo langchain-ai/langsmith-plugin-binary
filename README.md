@@ -17,8 +17,9 @@ Releases land in each plugin's own repo. This one publishes nothing.
 2. Run the Intel one on a real Intel machine
 3. Sign both and wait for Apple to notarize them
 4. Attach both to a draft release with a checksum beside each
-5. A user runs the install script. It finds that release and checks the checksum
-6. Later the installed binary spots a newer release and replaces itself
+5. On a beta, open a pull request putting both binaries on the plugin's beta branch
+6. A user runs the install script. It finds that release and checks the checksum
+7. Later the installed binary spots a newer release and replaces itself
 
 Three things stop a release instead of shipping something broken. A binary built for the
 wrong chip. A binary reporting the wrong version. A missing Apple credential.

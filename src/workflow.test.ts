@@ -1,7 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 import { defineBinaryTarget } from "./binary.js";
@@ -14,7 +24,7 @@ interface Step {
   env?: Record<string, string>;
   run?: string;
   uses?: string;
-  with?: { name?: string; pattern?: string };
+  with?: { name?: string; pattern?: string; ref?: string; repository?: string; path?: string };
 }
 
 interface Job {
@@ -36,16 +46,35 @@ const WORKFLOW = parse(
 const PUBLISHING_GATE = "needs.plan.outputs.publishing == 'true'";
 const TAG_TEST = /startsWith\(\s*github\.ref\s*,\s*'([^']*)'\s*\)/;
 const APPLE_SECRET = /secrets\.(?:APPLE|CSC)_/;
-const SECRET_READ = /^\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}$/;
+const MANIFEST = ".claude-plugin/plugin.json";
+const PIPELINE_STEP = "Check Out the Scripts This Workflow Runs";
+const CONFIG_STEP = "Read the Binary Config";
+const VERSION_STEP = "Check the Version Matches the Tag";
+const SIGN_STEP = "Sign and Notarize the Binary";
+const PROPOSE_STEP = "Offer the Binaries to the Plugin's Beta Branch";
+const GATE_STEP = "Decide Whether This Run Is Releasing";
+const PIPELINE_ROOT = new URL("../", import.meta.url).pathname;
+const SIGNED_PATTERN = "${{ needs.plan.outputs.executable }}-darwin-*-signed";
+const BETA_BRANCH = "ejaimez/beta-1.2.0";
+const RELEASED_TAG = "1.2.3-beta.4";
+const EXECUTABLE = "langsmith-codex-tracing";
+const CARRIED_DIRECTORY = "binary";
+const SIGNED_BYTES: Readonly<Record<string, string>> = {
+  arm64: "signed arm64 bytes",
+  x64: "signed x64 bytes",
+};
+const ISOLATED_GIT = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 
-function fixtureRoot(consumer: string): string {
-  return new URL(`../test/fixtures/${consumer}/`, import.meta.url).pathname;
+function scratch(prefix = "plugin-binary-workflow-"): string {
+  return mkdtempSync(join(tmpdir(), prefix));
 }
 
-function handedOver(job: string, action: string): string[] {
-  return (WORKFLOW.jobs[job]?.steps ?? [])
-    .filter((step) => step.uses?.startsWith(`actions/${action}-artifact@`) === true)
-    .map((step) => step.with?.name ?? "");
+function fixtureCopy(consumer: string, at = "."): string {
+  const root = scratch();
+  cpSync(new URL(`../test/fixtures/${consumer}/`, import.meta.url).pathname, join(root, at), {
+    recursive: true,
+  });
+  return root;
 }
 
 function stepNamed(job: string, step: string): Step {
@@ -58,34 +87,10 @@ function script(job: string, step: string): string {
   return stepNamed(job, step).run ?? "";
 }
 
-function jobsWhere(holds: (job: Job, name: string) => boolean): string[] {
-  return Object.keys(WORKFLOW.jobs).filter((name) => holds(WORKFLOW.jobs[name] ?? {}, name));
-}
-
-function entersAnEnvironment(job: Job): boolean {
-  return job.environment !== undefined;
-}
-
-function readsAnAppleCredential(job: Job): boolean {
-  return APPLE_SECRET.test(JSON.stringify(job));
-}
-
-function waitsForThePublishingGate(job: Job): boolean {
-  return (job.if ?? "").replace(/\s+/g, " ").trim() === PUBLISHING_GATE;
-}
-
-function credentialsWiredInto(job: string, step: string): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(stepNamed(job, step).env ?? {})
-      .map(([variable, value]) => [variable, SECRET_READ.exec(value)?.[1]])
-      .filter(([, secret]) => secret !== undefined),
-  ) as Record<string, string>;
-}
-
-function tagPrefix(expression: string): string {
-  const found = TAG_TEST.exec(expression);
-  if (found === null) throw new Error(`${expression} never tests github.ref against a tag`);
-  return found[1] ?? "";
+function handedOver(job: string, action: string): string[] {
+  return (WORKFLOW.jobs[job]?.steps ?? [])
+    .filter((step) => step.uses?.startsWith(`actions/${action}-artifact@`) === true)
+    .map((step) => step.with?.name ?? "");
 }
 
 function stepsRunning(job: string, command: string): string[] {
@@ -94,24 +99,28 @@ function stepsRunning(job: string, command: string): string[] {
     .filter((run) => run.includes(command));
 }
 
-function runsABinaryItDownloaded(_job: Job, name: string): boolean {
-  return handedOver(name, "download").length > 0 && stepsRunning(name, "test:binary").length > 0;
+function jobsWhere(holds: (job: Job, name: string) => boolean): string[] {
+  return Object.keys(WORKFLOW.jobs).filter((name) => holds(WORKFLOW.jobs[name] ?? {}, name));
 }
 
-function alwaysRestoresTheExecutableBit(job: Job): boolean {
-  return (job.steps ?? []).some(
-    (step) => step.run?.includes("chmod +x") === true && step.if === undefined,
-  );
+function tagPrefix(expression: string): string {
+  const found = TAG_TEST.exec(expression);
+  if (found === null) throw new Error(`${expression} never tests github.ref against a tag`);
+  return found[1] ?? "";
 }
 
 function runStep(
   job: string,
   step: string,
-  consumer: string,
+  cwd: string,
   env: Record<string, string> = {},
-  cwd = fixtureRoot(consumer),
 ): Record<string, string> {
-  const outputFile = join(mkdtempSync(join(tmpdir(), "plugin-binary-workflow-")), "output");
+  const pipeline = join(cwd, stepNamed("plan", PIPELINE_STEP).with?.path ?? "");
+  if (!existsSync(pipeline)) {
+    mkdirSync(dirname(pipeline), { recursive: true });
+    symlinkSync(PIPELINE_ROOT, pipeline, "dir");
+  }
+  const outputFile = join(scratch(), "output");
   writeFileSync(outputFile, "");
   execFileSync("/bin/bash", ["-e", "-c", script(job, step)], {
     cwd,
@@ -133,17 +142,15 @@ function runStep(
 }
 
 describe("reading the plugin's config", () => {
-  it("finds where Claude Code's build leaves each binary", () => {
-    expect(runStep("plan", "Read the Binary Config", "claude-code")).toEqual({
-      executable: "langsmith-claude-code-tracing",
-      "output-directory": "bin",
-      "host-binary": "bin/langsmith-claude-code-tracing",
-      "cross-binary": "bin/darwin-x64/langsmith-claude-code-tracing",
+  it("runs the checks from the commit the plugin pinned, not whatever a branch holds today", () => {
+    expect(stepNamed("plan", PIPELINE_STEP).with).toMatchObject({
+      repository: "${{ job.workflow_repository }}",
+      ref: "${{ job.workflow_sha }}",
     });
   });
 
-  it("finds where Codex's build leaves each binary", () => {
-    expect(runStep("plan", "Read the Binary Config", "codex")).toEqual({
+  it("finds where the build leaves each binary, however deep the plugin keeps them", () => {
+    expect(runStep("plan", CONFIG_STEP, fixtureCopy("codex"))).toEqual({
       executable: "langsmith-codex-tracing",
       "output-directory": "plugins/tracing/bin",
       "host-binary": "plugins/tracing/bin/langsmith-codex-tracing",
@@ -151,20 +158,9 @@ describe("reading the plugin's config", () => {
     });
   });
 
-  it("finds a plugin that keeps its config in a folder", () => {
-    const root = mkdtempSync(join(tmpdir(), "plugin-binary-workflow-"));
-    cpSync(fixtureRoot("claude-code"), join(root, "tools"), { recursive: true });
-    expect(
-      runStep(
-        "plan",
-        "Read the Binary Config",
-        "claude-code",
-        {
-          CONFIG: "tools/binary.config.json",
-        },
-        root,
-      ),
-    ).toEqual({
+  it("reads those paths from the config's own folder, not the repository root", () => {
+    const root = fixtureCopy("claude-code", "tools");
+    expect(runStep("plan", CONFIG_STEP, root, { CONFIG: "tools/binary.config.json" })).toEqual({
       executable: "langsmith-claude-code-tracing",
       "output-directory": "tools/bin",
       "host-binary": "tools/bin/langsmith-claude-code-tracing",
@@ -174,54 +170,74 @@ describe("reading the plugin's config", () => {
 
   it("builds and signs from the config the plan read", () => {
     for (const [job, step] of [
-      ["plan", "Read the Binary Config"],
+      ["plan", CONFIG_STEP],
       ["build", "Build the Unsigned Binaries"],
-      ["sign", "Sign and Notarize the Binary"],
+      ["sign", SIGN_STEP],
     ] as const) {
       expect(stepNamed(job, step).env?.CONFIG).toBe("${{ inputs.config }}");
     }
     expect(script("build", "Build the Unsigned Binaries")).toContain('--config "$CONFIG"');
-    expect(script("sign", "Sign and Notarize the Binary")).toContain('--config "$CONFIG"');
+    expect(script("sign", SIGN_STEP)).toContain('--config "$CONFIG"');
   });
 
   it("stops when a plugin asks for a chip this pipeline cannot build", () => {
-    const root = mkdtempSync(join(tmpdir(), "plugin-binary-workflow-"));
-    const config = JSON.parse(
-      readFileSync(join(fixtureRoot("codex"), "binary.config.json"), "utf-8"),
-    ) as Record<string, unknown>;
+    const root = fixtureCopy("codex");
+    const config = JSON.parse(readFileSync(join(root, "binary.config.json"), "utf-8")) as Record<
+      string,
+      unknown
+    >;
     config.publishedTargets = { linux: ["x64"] };
     writeFileSync(join(root, "binary.config.json"), JSON.stringify(config));
-    expect(() =>
-      execFileSync("/bin/bash", ["-e", "-c", script("plan", "Read the Binary Config")], {
-        cwd: root,
-        stdio: "pipe",
-        env: {
-          PATH: process.env.PATH ?? "",
-          CONFIG: "binary.config.json",
-          GITHUB_OUTPUT: "/dev/null",
-        },
-      }),
-    ).toThrow();
+    expect(() => runStep("plan", CONFIG_STEP, root)).toThrow();
   });
 });
 
 describe("checking the tag against the version", () => {
-  it("lets a tag through that matches the version being released", () => {
+  it("reads the tag and the plugin's config, and takes no file list of its own", () => {
+    expect(stepNamed("plan", VERSION_STEP).env).toEqual({
+      CONFIG: "${{ inputs.config }}",
+      TAG: "${{ github.ref_name }}",
+    });
+  });
+
+  it("lets a tag through for a plugin that names one version file", () => {
     expect(() =>
-      runStep("plan", "Check the Version Matches the Tag", "claude-code", { TAG: "0.3.1" }),
+      runStep("plan", VERSION_STEP, fixtureCopy("codex"), { TAG: "0.2.0-beta" }),
     ).not.toThrow();
   });
 
-  it("stops a tag that does not match", () => {
+  it("lets a tag through for a plugin whose every named file advertises it", () => {
     expect(() =>
-      runStep("plan", "Check the Version Matches the Tag", "claude-code", { TAG: "9.9.9" }),
-    ).toThrow();
+      runStep("plan", VERSION_STEP, fixtureCopy("claude-code"), { TAG: "0.3.1" }),
+    ).not.toThrow();
   });
 
-  it("reads the version from wherever each plugin keeps it", () => {
+  it("stops a tag the version file the binary is built from does not match", () => {
+    const root = fixtureCopy("claude-code");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "0.3.0" }));
+    expect(() => runStep("plan", VERSION_STEP, root, { TAG: "0.3.1" })).toThrow(
+      "package.json is 0.3.0 but the tag is 0.3.1. Bump the version, then retag.",
+    );
+  });
+
+  it("stops a release where another file the plugin names advertises a different version", () => {
+    const root = fixtureCopy("claude-code", "tools");
+    writeFileSync(join(root, "tools", MANIFEST), JSON.stringify({ version: "0.3.0" }));
     expect(() =>
-      runStep("plan", "Check the Version Matches the Tag", "codex", { TAG: "0.2.0-beta" }),
-    ).not.toThrow();
+      runStep("plan", VERSION_STEP, root, { CONFIG: "tools/binary.config.json", TAG: "0.3.1" }),
+    ).toThrow(`tools/${MANIFEST} is 0.3.0 but the tag is 0.3.1. Bump the version, then retag.`);
+  });
+
+  it("stops a plugin naming a file outside its own repository", () => {
+    const root = fixtureCopy("claude-code");
+    const config = JSON.parse(readFileSync(join(root, "binary.config.json"), "utf-8")) as {
+      build: Record<string, unknown>;
+    };
+    config.build.matchingVersionFiles = ["../elsewhere/package.json"];
+    writeFileSync(join(root, "binary.config.json"), JSON.stringify(config));
+    expect(() => runStep("plan", VERSION_STEP, root, { TAG: "0.3.1" })).toThrow(
+      "build.matchingVersionFiles must be an array of paths inside the repository",
+    );
   });
 });
 
@@ -230,27 +246,16 @@ describe("the names the pipeline publishes under", () => {
 
   it("uploads exactly the file the install script and the updater download", () => {
     const codex = defineBinaryTarget({
-      executableName: "langsmith-codex-tracing",
+      executableName: EXECUTABLE,
       repository: "langchain-ai/langsmith-codex-plugins",
       userAgent: "langsmith-codex",
       releasesApiOverrideEnvVar: "LANGSMITH_CODEX_RELEASES_API",
     });
-    const named = execFileSync(
-      "/bin/bash",
-      [
-        "-c",
-        `${publish.split("\n").find((line) => line.includes('NAME="$EXECUTABLE'))!}; printf '%s' "$NAME"`,
-      ],
-      {
-        encoding: "utf-8",
-        env: {
-          PATH: process.env.PATH ?? "",
-          EXECUTABLE: "langsmith-codex-tracing",
-          ARCH: "arm64",
-          TAG: "0.6.0",
-        },
-      },
-    );
+    const naming = publish.split("\n").find((line) => line.includes('NAME="$EXECUTABLE'));
+    const named = execFileSync("/bin/bash", ["-c", `${naming}; printf '%s' "$NAME"`], {
+      encoding: "utf-8",
+      env: { PATH: process.env.PATH ?? "", EXECUTABLE, ARCH: "arm64", TAG: "0.6.0" },
+    });
     expect(named).toBe(codex.assetName("darwin", "arm64", "0.6.0"));
   });
 
@@ -281,13 +286,11 @@ describe("keeping the signed and unsigned binaries apart", () => {
   });
 
   it("publishes nothing that has not been through signing", () => {
-    expect(stepNamed("publish", "Download the Signed Binaries").with?.pattern).toBe(
-      "${{ needs.plan.outputs.executable }}-darwin-*-signed",
-    );
+    expect(stepNamed("publish", "Download the Signed Binaries").with?.pattern).toBe(SIGNED_PATTERN);
   });
 
   it("never lets a signing run turn itself off", () => {
-    expect(stepNamed("sign", "Sign and Notarize the Binary").if).toBeUndefined();
+    expect(stepNamed("sign", SIGN_STEP).if).toBeUndefined();
   });
 
   it("only publishes once the Intel run and both signings have passed", () => {
@@ -303,23 +306,25 @@ describe("keeping the signed and unsigned binaries apart", () => {
 });
 
 describe("keeping the Apple credentials inside the signing environment", () => {
-  it("asks for a deployment environment in one job and no other", () => {
-    expect(jobsWhere(entersAnEnvironment)).toEqual(["sign"]);
-  });
-
   it("never reads an Apple credential outside a job that entered the environment", () => {
-    expect(jobsWhere(readsAnAppleCredential)).toEqual(jobsWhere(entersAnEnvironment));
-  });
-
-  it("never enters the signing environment on a run that is not publishing", () => {
-    expect(jobsWhere((job) => entersAnEnvironment(job) && waitsForThePublishingGate(job))).toEqual(
-      jobsWhere(entersAnEnvironment),
+    expect(jobsWhere((job) => APPLE_SECRET.test(JSON.stringify(job)))).toEqual(
+      jobsWhere((job) => job.environment !== undefined),
     );
   });
 
+  it("never enters the signing environment on a run that is not publishing", () => {
+    expect(
+      jobsWhere(
+        (job) =>
+          job.environment !== undefined &&
+          (job.if ?? "").replace(/\s+/g, " ").trim() === PUBLISHING_GATE,
+      ),
+    ).toEqual(jobsWhere((job) => job.environment !== undefined));
+  });
+
   it("wires every credential the signing script asks for into the signing step", () => {
-    expect(credentialsWiredInto("sign", "Sign and Notarize the Binary")).toEqual(
-      Object.fromEntries(APPLE_CREDENTIALS.map((credential) => [credential, credential])),
+    expect(stepNamed("sign", SIGN_STEP).env).toMatchObject(
+      Object.fromEntries(APPLE_CREDENTIALS.map((name) => [name, `\${{ secrets.${name} }}`])),
     );
   });
 });
@@ -327,16 +332,21 @@ describe("keeping the Apple credentials inside the signing environment", () => {
 describe("the release path no pull request ever runs", () => {
   it("agrees on what a tag looks like everywhere it decides that", () => {
     expect(tagPrefix(WORKFLOW.concurrency["cancel-in-progress"])).toBe(
-      tagPrefix(stepNamed("plan", "Decide Whether This Run Is Releasing").env?.PUBLISHING ?? ""),
+      tagPrefix(stepNamed("plan", GATE_STEP).env?.PUBLISHING ?? ""),
     );
   });
 
   it("restores the executable bit in every job that runs a binary it downloaded", () => {
-    expect(
-      jobsWhere(
-        (job, name) => runsABinaryItDownloaded(job, name) && alwaysRestoresTheExecutableBit(job),
+    const downloadsAndRuns = jobsWhere(
+      (_job, name) =>
+        handedOver(name, "download").length > 0 && stepsRunning(name, "test:binary").length > 0,
+    );
+    const restoresTheBit = jobsWhere((job) =>
+      (job.steps ?? []).some(
+        (step) => step.run?.includes("chmod +x") === true && step.if === undefined,
       ),
-    ).toEqual(jobsWhere(runsABinaryItDownloaded));
+    );
+    expect(downloadsAndRuns.filter((name) => !restoresTheBit.includes(name))).toEqual([]);
   });
 
   it("puts the signed binary through the same test the unsigned one passed", () => {
@@ -345,5 +355,136 @@ describe("the release path no pull request ever runs", () => {
 
   it("keeps the trigger the plugin repositories release through", () => {
     expect(Object.keys(WORKFLOW.on)).toContain("workflow_call");
+  });
+});
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf-8",
+    stdio: "pipe",
+    env: { PATH: process.env.PATH ?? "", ...ISOLATED_GIT },
+  });
+}
+
+function proposeTheBinaries(directory = CARRIED_DIRECTORY): { origin: string; body: string } {
+  const root = scratch("plugin-binary-propose-");
+  const origin = join(root, "origin.git");
+  const work = join(root, "work");
+  const path = join(root, "path");
+
+  git(root, "init", "--bare", `--initial-branch=${BETA_BRANCH}`, origin);
+  git(root, "clone", origin, work);
+  mkdirSync(join(work, CARRIED_DIRECTORY), { recursive: true });
+  writeFileSync(join(work, CARRIED_DIRECTORY, ".gitkeep"), "");
+  git(work, "add", "-A");
+  git(work, "-c", "user.name=Seed", "-c", "user.email=s@example.invalid", "commit", "-m", "Seed");
+  git(work, "push", "origin", `HEAD:refs/heads/${BETA_BRANCH}`);
+
+  for (const [arch, bytes] of Object.entries(SIGNED_BYTES)) {
+    const uploaded = join(work, "signed", `${EXECUTABLE}-darwin-${arch}-signed`);
+    mkdirSync(uploaded, { recursive: true });
+    writeFileSync(join(uploaded, EXECUTABLE), bytes);
+  }
+  mkdirSync(path);
+  writeFileSync(
+    join(path, "gh"),
+    [
+      "#!/bin/sh",
+      'case "$1 $2" in',
+      "  'release view') echo 'https://example.invalid/releases/tag' ;;",
+      "  'pr view') exit 1 ;;",
+      "esac",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(join(path, "gh"), 0o755);
+
+  execFileSync("/bin/bash", ["-e", "-c", script("propose", PROPOSE_STEP)], {
+    cwd: work,
+    encoding: "utf-8",
+    stdio: "pipe",
+    env: {
+      PATH: `${path}:${process.env.PATH ?? ""}`,
+      ...ISOLATED_GIT,
+      GH_TOKEN: "unused by the stub",
+      GH_REPO: "langchain-ai/example-plugins",
+      BASE: BETA_BRANCH,
+      DIRECTORY: directory,
+      EXECUTABLE,
+      TAG: RELEASED_TAG,
+      RUNNER_TEMP: root,
+    },
+  });
+
+  return { origin, body: readFileSync(join(root, "pull-request-body.md"), "utf-8") };
+}
+
+describe("offering the binaries to the plugin's beta branch", () => {
+  const branch = `binary/${RELEASED_TAG}`;
+
+  it("pushes both binaries still runnable, so a clone can execute what gets merged", () => {
+    const { origin } = proposeTheBinaries();
+    for (const [arch, bytes] of Object.entries(SIGNED_BYTES)) {
+      const carried = `${CARRIED_DIRECTORY}/${EXECUTABLE}-darwin-${arch}`;
+      expect(git(origin, "ls-tree", branch, carried)).toMatch(/^100755 blob/);
+      expect(git(origin, "show", `${branch}:${carried}`)).toBe(bytes);
+    }
+    expect(git(origin, "log", "-1", "--format=%s", branch).trim()).toBe(
+      `chore(binary): Add the Signed Binaries for ${RELEASED_TAG}`,
+    );
+  });
+
+  it("stops when the folder named is not the one the plugin runs its builds from", () => {
+    expect(() => proposeTheBinaries("somewhere/else")).toThrow(
+      /has no somewhere\/else folder\. Point binary-directory at the folder/,
+    );
+  });
+
+  it("aims at the beta branch alone, so no existing user is moved onto a binary", () => {
+    expect(stepNamed("propose", "Check Out the Plugin's Beta Branch").with?.ref).toBe(
+      "${{ inputs.beta-branch }}",
+    );
+    expect(stepNamed("propose", PROPOSE_STEP).env?.BASE).toBe("${{ inputs.beta-branch }}");
+    expect(JSON.stringify(WORKFLOW.jobs.propose)).not.toContain("default_branch");
+  });
+
+  it("names the tag and checksums the bytes, so a swapped binary cannot pass as the signed one", () => {
+    const { body } = proposeTheBinaries();
+    expect(body).toContain(`Built from tag ${RELEASED_TAG}`);
+    for (const [arch, bytes] of Object.entries(SIGNED_BYTES)) {
+      const digest = createHash("sha256").update(bytes).digest("hex");
+      expect(body).toContain(
+        `- [x] ${arch} is ${Buffer.byteLength(bytes)} bytes, sha256 ${digest}`,
+      );
+    }
+  });
+
+  it("calls a dashed tag a beta and a plain one a full release", () => {
+    const beta = runStep("plan", GATE_STEP, fixtureCopy("claude-code"), { TAG: "0.4.0-beta.2" });
+    const full = runStep("plan", GATE_STEP, fixtureCopy("claude-code"), { TAG: "0.4.0" });
+    expect([beta.prerelease, full.prerelease]).toEqual(["true", "false"]);
+  });
+
+  it("offers nothing unless the run is releasing a beta", () => {
+    const gate = (WORKFLOW.jobs.propose?.if ?? "").replace(/\s+/g, " ");
+    expect(gate).toContain(PUBLISHING_GATE);
+    expect(gate).toContain("needs.plan.outputs.prerelease == 'true'");
+  });
+
+  it("offers nothing that has not been through signing", () => {
+    expect(stepNamed("propose", "Download the Signed Binaries").with?.pattern).toBe(SIGNED_PATTERN);
+  });
+
+  it("waits for the release, so a repository it cannot write to costs nobody the release", () => {
+    expect(WORKFLOW.jobs.propose?.needs).toContain("publish");
+  });
+
+  it("decides once what counts as a beta, so the release and the binaries cannot disagree", () => {
+    expect(script("publish", "Attach the Binaries to the Release")).not.toMatch(/PRERELEASE=/);
+    expect(stepNamed("publish", "Attach the Binaries to the Release").env?.PRERELEASE).toBe(
+      "${{ needs.plan.outputs.prerelease }}",
+    );
   });
 });

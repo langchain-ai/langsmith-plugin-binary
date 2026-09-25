@@ -19,6 +19,7 @@ export interface BuildConfig {
     entryPoint: string;
     outputDirectory: string;
     versionFile: string;
+    matchingVersionFiles: string[];
     minify: boolean;
     defines: Record<string, string>;
 }

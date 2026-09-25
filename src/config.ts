@@ -42,6 +42,10 @@ function parseBuild(root: Section): BuildConfig {
     entryPoint: build.repositoryPath("entryPoint"),
     outputDirectory: build.repositoryPath("outputDirectory"),
     versionFile: build.repositoryPath("versionFile"),
+    matchingVersionFiles:
+      build.raw("matchingVersionFiles") === undefined
+        ? []
+        : build.repositoryPaths("matchingVersionFiles"),
     minify: minify === true,
     defines,
   };

@@ -33,6 +33,10 @@ Both reference configs are in `test/fixtures/`. Start from one.
 `helpFooter` and `unsupportedPlatformHelp` are the wording users see in the install
 script. Keep the line `Only macOS arm64 and x64 are published` or the install tests fail.
 
+`build.versionFile` is the file the binary takes its version from. A plugin that repeats
+that version somewhere else, such as a manifest, lists those files under
+`build.matchingVersionFiles`, and a release stops unless every one of them matches the tag.
+
 ## 2. Dependency and scripts
 
 ```
@@ -113,12 +117,19 @@ jobs:
   binary:
     permissions:
       contents: write
+      pull-requests: write
     uses: langchain-ai/langsmith-plugin-binary/.github/workflows/build-binary.yml@v0.1.0
     secrets: inherit
+    with:
+      beta-branch: ejaimez/beta-0.4.0
 ```
 
 - `contents: write` is required or the release upload fails
+- `pull-requests: write` is required or the beta pull request is never opened
 - `secrets: inherit` is required or signing stops the release
+- `beta-branch` names the branch the binaries are offered to, and nothing else is ever written to
+- `binary-directory` has to be the folder the plugin already runs its builds from, which is inside
+  the plugin folder when installing copies only that folder
 - No `paths:` filter. One that names files breaks silently on a rename
 - No `concurrency:` block. A matching group name makes the run queue behind itself
 
@@ -131,3 +142,18 @@ Tag the version, then run the workflow by hand against that tag. A tag push alon
 publishes nothing. The draft release lands in the plugin's repo.
 
 Pass `release-notes:` to add a line to every release.
+
+## Betas
+
+Cut a `<user>/beta-<minor>` branch off the default branch, bump the version there only,
+and never merge it back, so the default branch's version stays put. Tag off that branch
+as `<minor>-beta` or `<minor>-beta.N`.
+
+A dash in the tag means beta, and only betas carry the binaries, which arrive as a pull
+request for someone to merge. A plain tag just publishes a release and moves nobody.
+
+People opt in by pointing the marketplace at the branch:
+
+```
+/plugin marketplace add langchain-ai/langsmith-claude-code-plugins@ejaimez/beta-0.4.0
+```
