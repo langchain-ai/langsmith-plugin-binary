@@ -34,6 +34,8 @@ jobs:
         run: pnpm lint:oxlint
       - name: Typecheck
         run: pnpm lint:types
+      - name: Check the Compiled Output Is Current
+        run: pnpm lint:dist
       - name: Test
         run: pnpm test
 

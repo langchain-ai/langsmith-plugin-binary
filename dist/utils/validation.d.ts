@@ -9,6 +9,7 @@ export declare class Section {
     text(field: string): string;
     matching(field: string, allowed: RegExp, wanted: string): string;
     repositoryPath(field: string): string;
+    repositoryPaths(field: string): string[];
     strings(field: string): string[];
     lines(field: string): string[];
     section(field: string): Section;

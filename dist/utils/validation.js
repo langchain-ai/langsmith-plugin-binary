@@ -42,6 +42,15 @@ export class Section {
         }
         return value;
     }
+    repositoryPaths(field) {
+        const values = this.lines(field);
+        for (const value of values) {
+            if (value.trim() === "" || isAbsolute(value) || value.split("/").includes("..")) {
+                fail(this.name(field), "an array of paths inside the repository");
+            }
+        }
+        return values;
+    }
     strings(field) {
         const value = this.source[field];
         if (!Array.isArray(value) || value.length === 0) {
