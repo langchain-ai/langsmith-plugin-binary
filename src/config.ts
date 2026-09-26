@@ -46,6 +46,10 @@ function parseBuild(root: Section): BuildConfig {
       build.raw("matchingVersionFiles") === undefined
         ? []
         : build.repositoryPaths("matchingVersionFiles"),
+    stampedVersionFiles:
+      build.raw("stampedVersionFiles") === undefined
+        ? []
+        : build.repositoryPaths("stampedVersionFiles"),
     minify: minify === true,
     defines,
   };

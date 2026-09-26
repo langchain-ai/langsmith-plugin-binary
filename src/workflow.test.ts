@@ -38,7 +38,7 @@ interface Job {
 const WORKFLOW = parse(
   readFileSync(new URL("../.github/workflows/build-binary.yml", import.meta.url), "utf-8"),
 ) as {
-  on: Record<string, unknown>;
+  on: Record<string, { inputs?: Record<string, unknown> }>;
   concurrency: { "cancel-in-progress": string };
   jobs: Record<string, Job>;
 };
@@ -47,16 +47,24 @@ const PUBLISHING_GATE = "needs.plan.outputs.publishing == 'true'";
 const TAG_TEST = /startsWith\(\s*github\.ref\s*,\s*'([^']*)'\s*\)/;
 const APPLE_SECRET = /secrets\.(?:APPLE|CSC)_/;
 const MANIFEST = ".claude-plugin/plugin.json";
+const BUNDLE = "bundle/dispatch.js";
 const PIPELINE_STEP = "Check Out the Scripts This Workflow Runs";
 const CONFIG_STEP = "Read the Binary Config";
 const VERSION_STEP = "Check the Version Matches the Tag";
+const BETA_STEP = "Find the Beta Branch This Tag Belongs To";
 const SIGN_STEP = "Sign and Notarize the Binary";
 const PROPOSE_STEP = "Offer the Binaries to the Plugin's Beta Branch";
 const GATE_STEP = "Decide Whether This Run Is Releasing";
 const PIPELINE_ROOT = new URL("../", import.meta.url).pathname;
 const SIGNED_PATTERN = "${{ needs.plan.outputs.executable }}-darwin-*-signed";
-const BETA_BRANCH = "ejaimez/beta-1.2.0";
-const RELEASED_TAG = "1.2.3-beta.4";
+const BETA_BRANCH = "beta-1.2.0";
+const RELEASED_TAG = "1.2.0-beta.4";
+const BRANCH_IS_MISSING = "gh: Branch not found (HTTP 404)";
+const REPOSITORY_IS_MISSING = "gh: Not Found (HTTP 404)";
+const CREDENTIALS_FAILED = "gh: Bad credentials (HTTP 401)";
+const GITHUB_IS_DOWN = "gh: HTTP 502";
+const UNAVAILABLE = "unavailable";
+const WORDLESS = "wordless";
 const EXECUTABLE = "langsmith-codex-tracing";
 const CARRIED_DIRECTORY = "binary";
 const SIGNED_BYTES: Readonly<Record<string, string>> = {
@@ -228,6 +236,22 @@ describe("checking the tag against the version", () => {
     ).toThrow(`tools/${MANIFEST} is 0.3.0 but the tag is 0.3.1. Bump the version, then retag.`);
   });
 
+  it("stops a tag whose built bundle still carries an older version", () => {
+    const root = fixtureCopy("claude-code");
+    writeFileSync(join(root, BUNDLE), 'var version = "0.3.0";\n');
+    expect(() => runStep("plan", VERSION_STEP, root, { TAG: "0.3.1" })).toThrow(
+      `${BUNDLE} was not built at 0.3.1. Rebuild it, commit it, then retag.`,
+    );
+  });
+
+  it("stops a tag the built bundle only begins with, so a beta build cannot pass as the release", () => {
+    const root = fixtureCopy("claude-code");
+    writeFileSync(join(root, BUNDLE), 'var version = "0.3.1-beta.1";\n');
+    expect(() => runStep("plan", VERSION_STEP, root, { TAG: "0.3.1" })).toThrow(
+      `${BUNDLE} was not built at 0.3.1.`,
+    );
+  });
+
   it("stops a plugin naming a file outside its own repository", () => {
     const root = fixtureCopy("claude-code");
     const config = JSON.parse(readFileSync(join(root, "binary.config.json"), "utf-8")) as {
@@ -238,6 +262,78 @@ describe("checking the tag against the version", () => {
     expect(() => runStep("plan", VERSION_STEP, root, { TAG: "0.3.1" })).toThrow(
       "build.matchingVersionFiles must be an array of paths inside the repository",
     );
+  });
+});
+
+describe("finding the beta branch a tag belongs to", () => {
+  function findTheBetaBranch(
+    answers: { lookup?: string; comparison?: string } = {},
+    tag = RELEASED_TAG,
+  ): Record<string, string> {
+    const path = scratch("plugin-binary-beta-");
+    writeFileSync(
+      join(path, "gh"),
+      [
+        "#!/bin/sh",
+        'case "$2" in',
+        `  */branches/*) [ -z "$LOOKUP" ] || { [ "$LOOKUP" = ${WORDLESS} ] || echo "$LOOKUP" >&2; exit 1; } ;;`,
+        `  */compare/*) [ "$COMPARISON" != ${UNAVAILABLE} ] || { echo "${GITHUB_IS_DOWN}" >&2; exit 1; }`,
+        '    echo "$COMPARISON" ;;',
+        "  *) echo main ;;",
+        "esac",
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(join(path, "gh"), 0o755);
+    return runStep("plan", BETA_STEP, path, {
+      PATH: `${path}:${process.env.PATH ?? ""}`,
+      GH_TOKEN: "unused by the stub",
+      GH_REPO: "langchain-ai/example-plugins",
+      TAG: tag,
+      LOOKUP: answers.lookup ?? "",
+      COMPARISON: answers.comparison ?? "ahead",
+    });
+  }
+
+  it("works out the branch from the tag, so nobody has to name it", () => {
+    expect(findTheBetaBranch()).toEqual({ branch: BETA_BRANCH });
+  });
+
+  it("stops a beta with no branch waiting for it", () => {
+    expect(() => findTheBetaBranch({ lookup: BRANCH_IS_MISSING })).toThrow(
+      `${RELEASED_TAG} belongs to ${BETA_BRANCH}, which does not exist.`,
+    );
+  });
+
+  it("stops a beta branch that is behind the work already on the default branch", () => {
+    expect(() => findTheBetaBranch({ comparison: "behind" })).toThrow(
+      `${BETA_BRANCH} is missing work that is already on main`,
+    );
+  });
+
+  it("repeats what GitHub said when the branch lookup fails for some other reason", () => {
+    const refused = (): Record<string, string> => findTheBetaBranch({ lookup: CREDENTIALS_FAILED });
+    expect(refused).toThrow(CREDENTIALS_FAILED);
+    expect(refused).not.toThrow(`belongs to ${BETA_BRANCH}, which does not exist`);
+  });
+
+  it("blames no branch when the repository itself is the thing GitHub cannot find", () => {
+    expect(() => findTheBetaBranch({ lookup: REPOSITORY_IS_MISSING })).toThrow(
+      REPOSITORY_IS_MISSING,
+    );
+  });
+
+  it("still says something when the lookup fails and GitHub says nothing at all", () => {
+    expect(() => findTheBetaBranch({ lookup: WORDLESS })).toThrow(
+      `Looking ${BETA_BRANCH} up failed and GitHub said nothing`,
+    );
+  });
+
+  it("repeats what GitHub said when it cannot say how the two branches compare", () => {
+    const silent = (): Record<string, string> => findTheBetaBranch({ comparison: UNAVAILABLE });
+    expect(silent).toThrow(GITHUB_IS_DOWN);
+    expect(silent).not.toThrow(`${BETA_BRANCH} is missing work`);
   });
 });
 
@@ -444,10 +540,16 @@ describe("offering the binaries to the plugin's beta branch", () => {
 
   it("aims at the beta branch alone, so no existing user is moved onto a binary", () => {
     expect(stepNamed("propose", "Check Out the Plugin's Beta Branch").with?.ref).toBe(
-      "${{ inputs.beta-branch }}",
+      "${{ needs.plan.outputs.beta-branch }}",
     );
-    expect(stepNamed("propose", PROPOSE_STEP).env?.BASE).toBe("${{ inputs.beta-branch }}");
+    expect(stepNamed("propose", PROPOSE_STEP).env?.BASE).toBe(
+      "${{ needs.plan.outputs.beta-branch }}",
+    );
     expect(JSON.stringify(WORKFLOW.jobs.propose)).not.toContain("default_branch");
+  });
+
+  it("lets no caller name a branch of its own", () => {
+    expect(Object.keys(WORKFLOW.on.workflow_call?.inputs ?? {})).not.toContain("beta-branch");
   });
 
   it("names the tag and checksums the bytes, so a swapped binary cannot pass as the signed one", () => {
@@ -471,6 +573,12 @@ describe("offering the binaries to the plugin's beta branch", () => {
     const gate = (WORKFLOW.jobs.propose?.if ?? "").replace(/\s+/g, " ");
     expect(gate).toContain(PUBLISHING_GATE);
     expect(gate).toContain("needs.plan.outputs.prerelease == 'true'");
+  });
+
+  it("works the branch out on exactly the runs that offer it, so nothing lands on the default branch", () => {
+    expect(stepNamed("plan", BETA_STEP).if).toBe(
+      (WORKFLOW.jobs.propose?.if ?? "").replaceAll("needs.plan.outputs", "steps.gate.outputs"),
+    );
   });
 
   it("offers nothing that has not been through signing", () => {
