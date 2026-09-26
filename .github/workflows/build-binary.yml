@@ -13,10 +13,6 @@ on:
       bun-version:
         type: string
         default: 1.4.2
-      beta-branch:
-        description: The plugin's beta branch, the only branch the binaries are offered to.
-        type: string
-        default: ""
       binary-directory:
         description: The folder in the plugin's repository the signed binaries are committed to.
         type: string
@@ -60,6 +56,7 @@ jobs:
       output-directory: ${{ steps.config.outputs.output-directory }}
       publishing: ${{ steps.gate.outputs.publishing }}
       prerelease: ${{ steps.gate.outputs.prerelease }}
+      beta-branch: ${{ steps.beta.outputs.branch }}
     steps:
       - name: Check Out the Plugin Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,6 +92,30 @@ jobs:
           CONFIG: ${{ inputs.config }}
           TAG: ${{ github.ref_name }}
         run: node pipeline/dist/workflow/check-version.js
+
+      - name: Find the Beta Branch This Tag Belongs To
+        id: beta
+        if: steps.gate.outputs.publishing == 'true' && steps.gate.outputs.prerelease == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          BRANCH="beta-${TAG%%-*}"
+          if ! gh api "repos/$GH_REPO/branches/$BRANCH" >/dev/null 2>&1; then
+            echo "$TAG belongs to $BRANCH, which does not exist. Cut $BRANCH off the default branch, bump the version on it, then retag." >&2
+            exit 1
+          fi
+          DEFAULT=$(gh api "repos/$GH_REPO" --jq .default_branch)
+          case "$(gh api "repos/$GH_REPO/compare/$DEFAULT...$BRANCH" --jq .status)" in
+            ahead|identical) ;;
+            *)
+              echo "$BRANCH is missing work that is already on $DEFAULT, so these binaries would land somewhere nothing matches them. Merge $DEFAULT into $BRANCH, then retag." >&2
+              exit 1
+              ;;
+          esac
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build the Unsigned Binaries
@@ -297,7 +318,7 @@ jobs:
       - name: Check Out the Plugin's Beta Branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.beta-branch }}
+          ref: ${{ needs.plan.outputs.beta-branch }}
       - name: Download the Signed Binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -307,16 +328,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          BASE: ${{ inputs.beta-branch }}
+          BASE: ${{ needs.plan.outputs.beta-branch }}
           DIRECTORY: ${{ inputs.binary-directory }}
           EXECUTABLE: ${{ needs.plan.outputs.executable }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if [ -z "$BASE" ]; then
-            echo "This release is a beta but no beta branch was named. Cut one, pass beta-branch, then rerun." >&2
-            exit 1
-          fi
           if [ ! -d "$DIRECTORY" ]; then
             echo "$BASE has no $DIRECTORY folder. Point binary-directory at the folder the plugin already runs its builds from, then rerun." >&2
             exit 1

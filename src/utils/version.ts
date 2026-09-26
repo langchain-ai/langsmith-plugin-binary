@@ -16,6 +16,10 @@ export function isVersion(version: string): boolean {
   return parseVersion(version) !== undefined;
 }
 
+export function stampsVersion(contents: string, version: string): boolean {
+  return contents.includes(`"${version}"`) || contents.includes(`'${version}'`);
+}
+
 function compare(next: ParsedVersion, installed: ParsedVersion): number {
   for (let index = 0; index < next.numbers.length; index += 1) {
     const difference = next.numbers[index]! - installed.numbers[index]!;
