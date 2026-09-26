@@ -23,6 +23,7 @@ export interface BuildConfig {
   outputDirectory: string;
   versionFile: string;
   matchingVersionFiles: string[];
+  stampedVersionFiles: string[];
   minify: boolean;
   defines: Record<string, string>;
 }

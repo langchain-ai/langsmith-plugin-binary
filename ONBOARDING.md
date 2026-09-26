@@ -37,6 +37,11 @@ script. Keep the line `Only macOS arm64 and x64 are published` or the install te
 that version somewhere else, such as a manifest, lists those files under
 `build.matchingVersionFiles`, and a release stops unless every one of them matches the tag.
 
+A plugin that commits build output with the version baked into it, such as a bundled
+hook script, lists those files under `build.stampedVersionFiles`. A release stops unless
+each one carries the tag, so a bundle nobody rebuilt after the version bump is caught in
+the first minute rather than by the beta pull request's own tests after signing.
+
 ## 2. Dependency and scripts
 
 ```
@@ -120,14 +125,13 @@ jobs:
       pull-requests: write
     uses: langchain-ai/langsmith-plugin-binary/.github/workflows/build-binary.yml@v0.1.0
     secrets: inherit
-    with:
-      beta-branch: ejaimez/beta-0.4.0
 ```
 
 - `contents: write` is required or the release upload fails
 - `pull-requests: write` is required or the beta pull request is never opened
 - `secrets: inherit` is required or signing stops the release
-- `beta-branch` names the branch the binaries are offered to, and nothing else is ever written to
+- The beta branch is worked out from the tag, so no caller names one and nothing else is ever
+  written to
 - `binary-directory` has to be the folder the plugin already runs its builds from, which is inside
   the plugin folder when installing copies only that folder
 - No `paths:` filter. One that names files breaks silently on a rename
@@ -145,9 +149,15 @@ Pass `release-notes:` to add a line to every release.
 
 ## Betas
 
-Cut a `<user>/beta-<minor>` branch off the default branch, bump the version there only,
-and never merge it back, so the default branch's version stays put. Tag off that branch
-as `<minor>-beta` or `<minor>-beta.N`.
+Cut a `beta-<minor>` branch off the default branch, bump the version there only, and never
+merge it back, so the default branch's version stays put. The branch belongs to the plugin
+rather than whoever cut it, so it carries no user prefix. Tag off that branch as
+`<minor>-beta` or `<minor>-beta.N`.
+
+The tag says which branch the binaries are offered to, so `0.5.0-beta.1` goes to
+`beta-0.5.0` and nothing has to be named anywhere. A release stops if that branch is
+missing or is behind the default branch, since binaries built for a beta line that never
+picked up recent work have nowhere to land.
 
 A dash in the tag means beta, and only betas carry the binaries, which arrive as a pull
 request for someone to merge. A plain tag just publishes a release and moves nobody.
@@ -155,5 +165,5 @@ request for someone to merge. A plain tag just publishes a release and moves nob
 People opt in by pointing the marketplace at the branch:
 
 ```
-/plugin marketplace add langchain-ai/langsmith-claude-code-plugins@ejaimez/beta-0.4.0
+/plugin marketplace add langchain-ai/langsmith-claude-code-plugins@beta-0.5.0
 ```
