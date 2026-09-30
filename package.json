@@ -49,7 +49,7 @@
     "lint:shell": "shellcheck test/install/*.sh test/fixtures/*/install.sh"
   },
   "devDependencies": {
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.6.3",
     "oxfmt": "^0.68.0",
     "oxlint": "^1.83.0",
     "typescript": "^7.0.2",
