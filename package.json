@@ -51,7 +51,7 @@
   "devDependencies": {
     "@types/node": "^26.4.0",
     "oxfmt": "^0.68.0",
-    "oxlint": "^1.83.0",
+    "oxlint": "^1.85.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2",
     "yaml": "^2.9.1"
