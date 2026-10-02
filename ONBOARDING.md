@@ -120,8 +120,16 @@ granted in Terraform, in `langchainplus`.
 
 ## Releasing
 
-Tag the version, then run the workflow by hand against that tag. A tag push alone
-publishes nothing. The draft release lands in the plugin's repo.
+Open one pull request that bumps the version, tag the tip of that branch, then run the
+workflow by hand against that tag. A tag push alone publishes nothing. The draft release
+lands in the plugin's repo, and the signed binaries are committed onto the branch the tag
+sits at the tip of, so the pull request already open carries both and one merge ships them.
+
+The branch is whichever one ends at the tagged commit, which GitHub answers the same way
+however the tag was made. A tag that ends no branch stops the release rather than landing
+the binaries somewhere nobody asked for, and so does a tag two branches both end at unless
+one of them is the default branch. Tagging the default branch itself still opens a separate
+pull request, since there is no pull request of yours to add to.
 
 Pass `release-notes:` to add a line to every release.
 
@@ -138,8 +146,8 @@ missing, or is short of anything the default branch already has, since binaries 
 a beta line that never picked up recent work have nowhere to land. Merge the default
 branch in and retag.
 
-A dash in the tag means beta, and only betas carry the binaries, which arrive as a pull
-request for someone to merge. A plain tag just publishes a release and moves nobody.
+A dash in the tag means beta, and a beta's binaries arrive as a pull request against the
+beta branch for someone to merge.
 
 People opt in by pointing the marketplace at the branch:
 

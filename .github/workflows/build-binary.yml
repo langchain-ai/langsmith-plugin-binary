@@ -56,7 +56,8 @@ jobs:
       output-directory: ${{ steps.config.outputs.output-directory }}
       publishing: ${{ steps.gate.outputs.publishing }}
       prerelease: ${{ steps.gate.outputs.prerelease }}
-      beta-branch: ${{ steps.beta.outputs.branch }}
+      target-branch: ${{ steps.target.outputs.branch }}
+      commit-directly: ${{ steps.target.outputs.commit-directly }}
     steps:
       - name: Check Out the Plugin Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,7 +95,7 @@ jobs:
         run: node pipeline/dist/workflow/check-version.js
 
       - name: Find the Branch This Tag Belongs To
-        id: beta
+        id: target
         if: steps.gate.outputs.publishing == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -104,8 +105,28 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${PRERELEASE:-true}" != "true" ]; then
-            gh api "repos/$GH_REPO" --jq .default_branch \
-              | sed 's/^/branch=/' >> "$GITHUB_OUTPUT"
+            DEFAULT=$(gh api "repos/$GH_REPO" --jq .default_branch)
+            COMMIT=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
+            HEADS=$(gh api "repos/$GH_REPO/commits/$COMMIT/branches-where-head" --jq '.[].name')
+            if [ -z "$HEADS" ]; then
+              echo "$TAG is not at the tip of any branch, so these binaries have nowhere to land. Move the tag to the tip of the branch carrying the version bump, then rerun." >&2
+              exit 1
+            fi
+            BRANCH="$HEADS"
+            if [ "$(printf '%s\n' "$HEADS" | wc -l | tr -d ' ')" -gt 1 ]; then
+              if printf '%s\n' "$HEADS" | grep -qx -- "$DEFAULT"; then
+                BRANCH="$DEFAULT"
+              else
+                echo "$TAG is at the tip of more than one branch: $(printf '%s\n' "$HEADS" | tr '\n' ' '). Nothing can tell which one these binaries belong on. Put the version bump on one branch only, then retag." >&2
+                exit 1
+              fi
+            fi
+            echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+            if [ "$BRANCH" = "$DEFAULT" ]; then
+              echo "commit-directly=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "commit-directly=true" >> "$GITHUB_OUTPUT"
+            fi
             exit 0
           fi
           BRANCH="beta-${TAG%%-*}"
@@ -129,6 +150,7 @@ jobs:
               ;;
           esac
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "commit-directly=false" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build the Unsigned Binaries
@@ -319,7 +341,7 @@ jobs:
             --notes-file release/notes.md
 
   propose:
-    name: Offer the Binaries to the Branch This Tag Belongs To
+    name: Land the Binaries on the Branch This Tag Belongs To
     needs: [plan, publish]
     if: needs.plan.outputs.publishing == 'true'
     runs-on: ubuntu-latest
@@ -331,17 +353,18 @@ jobs:
       - name: Check Out the Branch the Binaries Belong On
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.plan.outputs.beta-branch }}
+          ref: ${{ needs.plan.outputs.target-branch }}
       - name: Download the Signed Binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: ${{ needs.plan.outputs.executable }}-darwin-*-signed
           path: signed
-      - name: Offer the Binaries to the Branch This Tag Belongs To
+      - name: Land the Binaries on the Branch This Tag Belongs To
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          BASE: ${{ needs.plan.outputs.beta-branch }}
+          BASE: ${{ needs.plan.outputs.target-branch }}
+          DIRECTLY: ${{ needs.plan.outputs.commit-directly }}
           DIRECTORY: ${{ inputs.binary-directory }}
           EXECUTABLE: ${{ needs.plan.outputs.executable }}
           TAG: ${{ github.ref_name }}
@@ -361,7 +384,7 @@ jobs:
           for ARCH in arm64 x64; do
             SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
             if [ ! -f "$SIGNED" ]; then
-              echo "The $ARCH signing job uploaded no binary. No pull request is opened." >&2
+              echo "The $ARCH signing job uploaded no binary. Nothing lands on $BASE." >&2
               exit 1
             fi
             CARRIED="$DIRECTORY/$EXECUTABLE-darwin-$ARCH"
@@ -372,10 +395,17 @@ jobs:
 
           git add -- "$DIRECTORY"
           if git diff --cached --quiet; then
-            echo "$BASE already carries the $TAG binaries. No pull request is opened."
+            echo "$BASE already carries the $TAG binaries. Nothing is pushed."
             exit 0
           fi
           git commit -m "chore(binary): Add the Signed Binaries for $TAG"
+
+          if [ "${DIRECTLY:-false}" = "true" ]; then
+            git push origin "HEAD:refs/heads/$BASE"
+            echo "$BASE now carries the $TAG binaries beside its version bump, so one merge ships both."
+            exit 0
+          fi
+
           git push --force origin "HEAD:refs/heads/$BRANCH"
 
           RELEASE=$(gh release view "$TAG" --json url --jq .url 2>/dev/null || true)

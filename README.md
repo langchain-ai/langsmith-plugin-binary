@@ -17,7 +17,8 @@ Releases land in each plugin's own repo. This one publishes nothing.
 2. Run the Intel one on a real Intel machine
 3. Sign both and wait for Apple to notarize them
 4. Attach both to a draft release with a checksum beside each
-5. On a beta, open a pull request putting both binaries on the plugin's beta branch
+5. Commit both binaries onto the branch the tag was cut from, so one merge ships the version
+   and the builds together
 
 Three things stop a release instead of shipping something broken. A binary built for the
 wrong chip. A binary reporting the wrong version. A missing Apple credential.

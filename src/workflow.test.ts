@@ -53,12 +53,16 @@ const CONFIG_STEP = "Read the Binary Config";
 const VERSION_STEP = "Check the Version Matches the Tag";
 const BETA_STEP = "Find the Branch This Tag Belongs To";
 const SIGN_STEP = "Sign and Notarize the Binary";
-const PROPOSE_STEP = "Offer the Binaries to the Branch This Tag Belongs To";
+const PROPOSE_STEP = "Land the Binaries on the Branch This Tag Belongs To";
 const GATE_STEP = "Decide Whether This Run Is Releasing";
 const PIPELINE_ROOT = new URL("../", import.meta.url).pathname;
 const SIGNED_PATTERN = "${{ needs.plan.outputs.executable }}-darwin-*-signed";
 const BETA_BRANCH = "beta-1.2.0";
 const RELEASED_TAG = "1.2.0-beta.4";
+const STABLE_TAG = "0.5.0";
+const DEFAULT_BRANCH = "main";
+const BUMP_BRANCH = "ejaimez/bump-0-5-0";
+const TAGGED_COMMIT = "c0ffee1c0ffee2c0ffee3c0ffee4c0ffee5c0ffe";
 const BRANCH_IS_MISSING = "gh: Branch not found (HTTP 404)";
 const REPOSITORY_IS_MISSING = "gh: Not Found (HTTP 404)";
 const CREDENTIALS_FAILED = "gh: Bad credentials (HTTP 401)";
@@ -298,24 +302,70 @@ function findTheBetaBranch(
 const comparisonUnavailable = (): Record<string, string> =>
   findTheBetaBranch({ comparison: UNAVAILABLE });
 
-describe("finding the beta branch a tag belongs to", () => {
-  it("sends a stable release to the default branch, so stable users get a build too", () => {
-    const path = scratch("plugin-binary-stable-");
-    writeFileSync(join(path, "gh"), "#!/bin/sh\necho main\n");
-    chmodSync(join(path, "gh"), 0o755);
-    expect(
-      runStep("plan", BETA_STEP, path, {
-        PATH: `${path}:${process.env.PATH ?? ""}`,
-        GH_TOKEN: "unused by the stub",
-        GH_REPO: "langchain-ai/example-plugins",
-        TAG: "0.5.0",
-        PRERELEASE: "false",
-      }),
-    ).toEqual({ branch: "main" });
+function findTheStableBranch(heads: string[], tag = STABLE_TAG): Record<string, string> {
+  const path = scratch("plugin-binary-stable-");
+  writeFileSync(
+    join(path, "gh"),
+    [
+      "#!/bin/sh",
+      'case "$2" in',
+      '  */branches-where-head) [ -z "$HEADS" ] || printf \'%s\\n\' "$HEADS" ;;',
+      '  */commits/*) echo "$COMMIT_SHA" ;;',
+      '  *) echo "$DEFAULT" ;;',
+      "esac",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(join(path, "gh"), 0o755);
+  return runStep("plan", BETA_STEP, path, {
+    PATH: `${path}:${process.env.PATH ?? ""}`,
+    GH_TOKEN: "unused by the stub",
+    GH_REPO: "langchain-ai/example-plugins",
+    TAG: tag,
+    PRERELEASE: "false",
+    HEADS: heads.join("\n"),
+    DEFAULT: DEFAULT_BRANCH,
+    COMMIT_SHA: TAGGED_COMMIT,
+  });
+}
+
+describe("finding the branch a tag belongs to", () => {
+  it("sends a stable release to the branch the tag sits at the tip of", () => {
+    expect(findTheStableBranch([BUMP_BRANCH])).toEqual({
+      branch: BUMP_BRANCH,
+      "commit-directly": "true",
+    });
+  });
+
+  it("keeps the separate pull request when somebody tags the default branch itself", () => {
+    expect(findTheStableBranch([DEFAULT_BRANCH])).toEqual({
+      branch: DEFAULT_BRANCH,
+      "commit-directly": "false",
+    });
+  });
+
+  it("stops a stable tag that sits at the tip of no branch at all", () => {
+    expect(() => findTheStableBranch([])).toThrow(
+      `${STABLE_TAG} is not at the tip of any branch, so these binaries have nowhere to land.`,
+    );
+  });
+
+  it("stops a stable tag that two branches both end at, rather than guessing between them", () => {
+    expect(() => findTheStableBranch([BUMP_BRANCH, "someone-else/bump"])).toThrow(
+      `${STABLE_TAG} is at the tip of more than one branch: ${BUMP_BRANCH} someone-else/bump`,
+    );
+  });
+
+  it("settles on the default branch when it is one of the branches ending at the tag", () => {
+    expect(findTheStableBranch([BUMP_BRANCH, DEFAULT_BRANCH])).toEqual({
+      branch: DEFAULT_BRANCH,
+      "commit-directly": "false",
+    });
   });
 
   it("works out the branch from the tag, so nobody has to name it", () => {
-    expect(findTheBetaBranch()).toEqual({ branch: BETA_BRANCH });
+    expect(findTheBetaBranch()).toEqual({ branch: BETA_BRANCH, "commit-directly": "false" });
   });
 
   it("stops a beta with no branch waiting for it", () => {
@@ -480,7 +530,10 @@ function git(cwd: string, ...args: string[]): string {
   });
 }
 
-function proposeTheBinaries(directory = CARRIED_DIRECTORY): { origin: string; body: string } {
+function proposeTheBinaries(
+  directory = CARRIED_DIRECTORY,
+  directly = "false",
+): { origin: string; body: string; log: string } {
   const root = scratch("plugin-binary-propose-");
   const origin = join(root, "origin.git");
   const work = join(root, "work");
@@ -504,6 +557,7 @@ function proposeTheBinaries(directory = CARRIED_DIRECTORY): { origin: string; bo
     join(path, "gh"),
     [
       "#!/bin/sh",
+      'echo "$1 $2" >> "$GH_LOG"',
       'case "$1 $2" in',
       "  'release view') echo 'https://example.invalid/releases/tag' ;;",
       "  'pr view') exit 1 ;;",
@@ -513,6 +567,8 @@ function proposeTheBinaries(directory = CARRIED_DIRECTORY): { origin: string; bo
     ].join("\n"),
   );
   chmodSync(join(path, "gh"), 0o755);
+  const log = join(root, "gh-calls.txt");
+  writeFileSync(log, "");
 
   execFileSync("/bin/bash", ["-e", "-c", script("propose", PROPOSE_STEP)], {
     cwd: work,
@@ -522,8 +578,10 @@ function proposeTheBinaries(directory = CARRIED_DIRECTORY): { origin: string; bo
       PATH: `${path}:${process.env.PATH ?? ""}`,
       ...ISOLATED_GIT,
       GH_TOKEN: "unused by the stub",
+      GH_LOG: log,
       GH_REPO: "langchain-ai/example-plugins",
       BASE: BETA_BRANCH,
+      DIRECTLY: directly,
       DIRECTORY: directory,
       EXECUTABLE,
       TAG: RELEASED_TAG,
@@ -531,7 +589,12 @@ function proposeTheBinaries(directory = CARRIED_DIRECTORY): { origin: string; bo
     },
   });
 
-  return { origin, body: readFileSync(join(root, "pull-request-body.md"), "utf-8") };
+  const bodyPath = join(root, "pull-request-body.md");
+  return {
+    origin,
+    body: existsSync(bodyPath) ? readFileSync(bodyPath, "utf-8") : "",
+    log: readFileSync(log, "utf-8"),
+  };
 }
 
 describe("offering the binaries to the plugin's beta branch", () => {
@@ -557,12 +620,29 @@ describe("offering the binaries to the plugin's beta branch", () => {
 
   it("aims at whichever branch the tag belongs to, never at one the job picks itself", () => {
     expect(stepNamed("propose", "Check Out the Branch the Binaries Belong On").with?.ref).toBe(
-      "${{ needs.plan.outputs.beta-branch }}",
+      "${{ needs.plan.outputs.target-branch }}",
     );
     expect(stepNamed("propose", PROPOSE_STEP).env?.BASE).toBe(
-      "${{ needs.plan.outputs.beta-branch }}",
+      "${{ needs.plan.outputs.target-branch }}",
     );
     expect(JSON.stringify(WORKFLOW.jobs.propose)).not.toContain("default_branch");
+  });
+
+  it("commits onto the branch the tag came from, so one merge ships the version and the builds", () => {
+    const { origin, log } = proposeTheBinaries(CARRIED_DIRECTORY, "true");
+    for (const [arch, bytes] of Object.entries(SIGNED_BYTES)) {
+      const carried = `${CARRIED_DIRECTORY}/${EXECUTABLE}-darwin-${arch}`;
+      expect(git(origin, "ls-tree", BETA_BRANCH, carried)).toMatch(/^100755 blob/);
+      expect(git(origin, "show", `${BETA_BRANCH}:${carried}`)).toBe(bytes);
+    }
+    expect(git(origin, "branch", "--list", branch).trim()).toBe("");
+    expect(log).not.toContain("pr create");
+  });
+
+  it("takes the choice between the two from the plan, not from a guess of its own", () => {
+    expect(stepNamed("propose", PROPOSE_STEP).env?.DIRECTLY).toBe(
+      "${{ needs.plan.outputs.commit-directly }}",
+    );
   });
 
   it("offers the binaries on a stable release too, so a stable user is not left without one", () => {
