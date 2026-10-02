@@ -13,6 +13,9 @@ export function parseVersion(version) {
 export function isVersion(version) {
     return parseVersion(version) !== undefined;
 }
+export function stampsVersion(contents, version) {
+    return contents.includes(`"${version}"`) || contents.includes(`'${version}'`);
+}
 function compare(next, installed) {
     for (let index = 0; index < next.numbers.length; index += 1) {
         const difference = next.numbers[index] - installed.numbers[index];
