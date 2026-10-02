@@ -1,16 +1,13 @@
 #!/usr/bin/env node
-import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { build } from "./build.js";
 import { loadConfig } from "./config.js";
-import { renderInstaller } from "./install-script.js";
 import { sign } from "./sign.js";
 import { describe } from "./utils/errors.js";
-const COMMANDS = ["installer", "build", "sign"];
+const COMMANDS = ["build", "sign"];
 const USAGE = `Usage: langsmith-plugin-binary <command> [--config <path>]
 
-  installer          Write the repository's install script from its binary config.
-                     --check compares the committed file instead of writing it.
   build [--arch=X]   Compile the plugin into a macOS binary. --arch=all builds both.
   sign [<binary>]    Sign and notarize a built binary with Apple.
 `;
@@ -28,21 +25,6 @@ function binaryToSign(argv) {
     const rest = flag < 0 ? argv : [...argv.slice(0, flag), ...argv.slice(flag + 2)];
     return rest.find((argument) => !argument.startsWith("-"));
 }
-function runInstallerCommand(loaded, argv, log) {
-    const target = resolve(loaded.repositoryRoot, loaded.config.installer.output);
-    const rendered = renderInstaller(loaded.config);
-    if (!argv.includes("--check")) {
-        writeFileSync(target, rendered);
-        chmodSync(target, 0o755);
-        log(`Wrote ${target}`);
-        return;
-    }
-    const committed = readFileSync(target, "utf-8");
-    if (committed !== rendered) {
-        throw new Error(`${target} does not match the generator. Run the installer command and commit the result.`);
-    }
-    log(`${target} matches the generator`);
-}
 export function entrypointPath(argv1) {
     try {
         return realpathSync(resolve(argv1));
@@ -56,8 +38,6 @@ export async function run(argv, log) {
     if (!COMMANDS.includes(command))
         throw new Error(USAGE);
     const loaded = loadConfig(flagValue(rest, "--config") ?? "binary.config.json");
-    if (command === "installer")
-        return runInstallerCommand(loaded, rest, log);
     if (command === "build")
         return build(loaded, rest, log);
     await sign(loaded, { binaryPath: binaryToSign(rest), log });

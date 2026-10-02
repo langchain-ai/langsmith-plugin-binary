@@ -1,30 +1,9 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import {
-  DEFAULT_PUBLISHED_TARGETS,
-  ENVIRONMENT_PREFIX,
-  EXECUTABLE_NAME,
-  REPOSITORY_PATH,
-} from "./constants.js";
-import type { BuildConfig, InstallerConfig, LoadedConfig, PluginBinaryConfig } from "./models.js";
+import { DEFAULT_PUBLISHED_TARGETS, EXECUTABLE_NAME, REPOSITORY_PATH } from "./constants.js";
+import type { BuildConfig, LoadedConfig, PluginBinaryConfig } from "./models.js";
 import { describe } from "./utils/errors.js";
 import { fail, Section } from "./utils/validation.js";
-
-function parseInstaller(root: Section): InstallerConfig {
-  const installer = root.section("installer");
-  return {
-    productName: installer.text("productName"),
-    shortUrl: installer.text("shortUrl"),
-    environmentPrefix: installer.matching(
-      "environmentPrefix",
-      ENVIRONMENT_PREFIX,
-      "an upper-case shell variable name",
-    ),
-    output: installer.repositoryPath("output"),
-    helpFooter: installer.lines("helpFooter"),
-    unsupportedPlatformHelp: installer.lines("unsupportedPlatformHelp"),
-  };
-}
 
 function parseBuild(root: Section): BuildConfig {
   const build = root.section("build");
@@ -78,7 +57,6 @@ export function parseConfig(raw: unknown): PluginBinaryConfig {
     ),
     repository: root.matching("repository", REPOSITORY_PATH, "an owner/name repository path"),
     publishedTargets: parsePublishedTargets(root),
-    installer: parseInstaller(root),
     build: parseBuild(root),
     sign: { entitlements: root.section("sign").repositoryPath("entitlements") },
   };

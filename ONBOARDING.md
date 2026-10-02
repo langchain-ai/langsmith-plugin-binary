@@ -1,13 +1,12 @@
 # Onboarding a plugin onto the shared pipeline
 
-Five edits in the plugin's repo. Releases land in that repo, not this one.
+Four edits in the plugin's repo. Releases land in that repo, not this one.
 
 What you end up adding or changing:
 
 - `binary.config.json`
-- `package.json`, one dependency and six scripts
+- `package.json`, one dependency and two scripts
 - one source file that calls `defineBinaryTarget`
-- `install.sh`, generated not hand written
 - `.github/workflows/build-binary.yml`
 
 ## Reference implementations
@@ -30,9 +29,6 @@ steps find their inputs. Every later step reads from it.
 
 Both reference configs are in `test/fixtures/`. Start from one.
 
-`helpFooter` and `unsupportedPlatformHelp` are the wording users see in the install
-script. Keep the line `Only macOS arm64 and x64 are published` or the install tests fail.
-
 `build.versionFile` is the file the binary takes its version from. A plugin that repeats
 that version somewhere else, such as a manifest, lists those files under
 `build.matchingVersionFiles`, and a release stops unless every one of them matches the tag.
@@ -54,17 +50,13 @@ Add to `package.json`:
 
 ```json
 "build:binary": "langsmith-plugin-binary build",
-"sign:binary": "langsmith-plugin-binary sign",
-"installer": "langsmith-plugin-binary installer",
-"lint:installer": "langsmith-plugin-binary installer --check",
-"test:install": "bash node_modules/@langchain/langsmith-plugin-binary/test/install/cases.sh",
-"test:install:mutations": "bash node_modules/@langchain/langsmith-plugin-binary/test/install/variants.sh"
+"sign:binary": "langsmith-plugin-binary sign"
 ```
 
 The plugin also needs its own `test:binary` script. The pipeline runs it on every machine
 it builds or signs on.
 
-## 3. Wire up the updater
+## 3. Name the binary target
 
 ```ts
 import { defineBinaryTarget } from "@langchain/langsmith-plugin-binary";
@@ -79,33 +71,18 @@ export const binary = defineBinaryTarget({
 ```
 
 Read the two names out of the settings file rather than spreading the whole thing in. That
-keeps the name the installer downloads and the name the binary looks for in sync, without
-shipping your build and signing settings to every user in the plugin bundle.
+keeps the published name and the name the binary looks for in sync, without shipping your
+build and signing settings to every user in the plugin bundle.
 
 Check the bundle afterwards. Some bundlers keep every key of an imported JSON file even
 when only two are read, in which case strip the unused sections at build time.
 
-| Call                                         | When                                               |
-| -------------------------------------------- | -------------------------------------------------- |
-| `binary.update({ currentVersion })`          | `--update` and the background check                |
-| `binary.install({ tag })`                    | `--install` with or without a named release        |
-| `binary.installLocalCopy(path, version)`     | `--install` from a binary the user downloaded      |
-| `binary.isInstalledBinary(process.execPath)` | Before the background check, to skip a stray copy  |
-| `binary.supportsHost()`                      | Before telling a user the binary will not run here |
+| Call                                    | When                                               |
+| --------------------------------------- | -------------------------------------------------- |
+| `binary.supportsHost()`                 | Before telling a user the binary will not run here |
+| `binary.assetName(platform, arch, tag)` | To name the published file for a chip              |
 
-`isInstalledBinary` is a separate call rather than part of `update`, because `--update`
-has to keep working from any directory.
-
-## 4. install.sh
-
-```
-pnpm installer
-```
-
-Commit the result. Add `pnpm lint:installer` to the lint job so the committed file cannot
-drift from the settings.
-
-## 5. Caller workflow
+## 4. Caller workflow
 
 `.github/workflows/build-binary.yml`:
 
