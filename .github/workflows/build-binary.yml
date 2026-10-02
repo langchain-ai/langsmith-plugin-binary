@@ -306,9 +306,9 @@ jobs:
           fi
 
           cat > release/notes.md <<'NOTES'
-          These macOS arm64 and x64 binaries are signed and notarized. Download the one matching
-          your Mac, then run `chmod +x <binary>` and `./<binary> --install`. Check it against its
-          SHA-256 sidecar first if you want to.
+          These macOS arm64 and x64 binaries are signed and notarized. The plugin carries the
+          one matching your Mac, so there is nothing to download by hand. Each binary has a
+          SHA-256 sidecar if you want to check it.
           NOTES
           if [ -n "$EXTRA_NOTES" ]; then printf '\n%s\n' "$EXTRA_NOTES" >> release/notes.md; fi
           gh release create "$TAG" "${ASSETS[@]}" \
