@@ -93,15 +93,21 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: node pipeline/dist/workflow/check-version.js
 
-      - name: Find the Beta Branch This Tag Belongs To
+      - name: Find the Branch This Tag Belongs To
         id: beta
-        if: steps.gate.outputs.publishing == 'true' && steps.gate.outputs.prerelease == 'true'
+        if: steps.gate.outputs.publishing == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ steps.gate.outputs.prerelease }}
         run: |
           set -euo pipefail
+          if [ "${PRERELEASE:-true}" != "true" ]; then
+            gh api "repos/$GH_REPO" --jq .default_branch \
+              | sed 's/^/branch=/' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           BRANCH="beta-${TAG%%-*}"
           if ! LOOKUP=$(gh api "repos/$GH_REPO/branches/$BRANCH" --silent 2>&1); then
             case "$LOOKUP" in
@@ -313,16 +319,16 @@ jobs:
             --notes-file release/notes.md
 
   propose:
-    name: Offer the Binaries to the Plugin's Beta Branch
+    name: Offer the Binaries to the Branch This Tag Belongs To
     needs: [plan, publish]
-    if: needs.plan.outputs.publishing == 'true' && needs.plan.outputs.prerelease == 'true'
+    if: needs.plan.outputs.publishing == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - name: Check Out the Plugin's Beta Branch
+      - name: Check Out the Branch the Binaries Belong On
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.beta-branch }}
@@ -331,7 +337,7 @@ jobs:
         with:
           pattern: ${{ needs.plan.outputs.executable }}-darwin-*-signed
           path: signed
-      - name: Offer the Binaries to the Plugin's Beta Branch
+      - name: Offer the Binaries to the Branch This Tag Belongs To
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

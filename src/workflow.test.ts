@@ -51,9 +51,9 @@ const BUNDLE = "bundle/dispatch.js";
 const PIPELINE_STEP = "Check Out the Scripts This Workflow Runs";
 const CONFIG_STEP = "Read the Binary Config";
 const VERSION_STEP = "Check the Version Matches the Tag";
-const BETA_STEP = "Find the Beta Branch This Tag Belongs To";
+const BETA_STEP = "Find the Branch This Tag Belongs To";
 const SIGN_STEP = "Sign and Notarize the Binary";
-const PROPOSE_STEP = "Offer the Binaries to the Plugin's Beta Branch";
+const PROPOSE_STEP = "Offer the Binaries to the Branch This Tag Belongs To";
 const GATE_STEP = "Decide Whether This Run Is Releasing";
 const PIPELINE_ROOT = new URL("../", import.meta.url).pathname;
 const SIGNED_PATTERN = "${{ needs.plan.outputs.executable }}-darwin-*-signed";
@@ -295,6 +295,21 @@ describe("finding the beta branch a tag belongs to", () => {
       COMPARISON: answers.comparison ?? "ahead",
     });
   }
+
+  it("sends a stable release to the default branch, so stable users get a build too", () => {
+    const path = scratch("plugin-binary-stable-");
+    writeFileSync(join(path, "gh"), "#!/bin/sh\necho main\n");
+    chmodSync(join(path, "gh"), 0o755);
+    expect(
+      runStep("plan", BETA_STEP, path, {
+        PATH: `${path}:${process.env.PATH ?? ""}`,
+        GH_TOKEN: "unused by the stub",
+        GH_REPO: "langchain-ai/example-plugins",
+        TAG: "0.5.0",
+        PRERELEASE: "false",
+      }),
+    ).toEqual({ branch: "main" });
+  });
 
   it("works out the branch from the tag, so nobody has to name it", () => {
     expect(findTheBetaBranch()).toEqual({ branch: BETA_BRANCH });
@@ -538,14 +553,18 @@ describe("offering the binaries to the plugin's beta branch", () => {
     );
   });
 
-  it("aims at the beta branch alone, so no existing user is moved onto a binary", () => {
-    expect(stepNamed("propose", "Check Out the Plugin's Beta Branch").with?.ref).toBe(
+  it("aims at whichever branch the tag belongs to, never at one the job picks itself", () => {
+    expect(stepNamed("propose", "Check Out the Branch the Binaries Belong On").with?.ref).toBe(
       "${{ needs.plan.outputs.beta-branch }}",
     );
     expect(stepNamed("propose", PROPOSE_STEP).env?.BASE).toBe(
       "${{ needs.plan.outputs.beta-branch }}",
     );
     expect(JSON.stringify(WORKFLOW.jobs.propose)).not.toContain("default_branch");
+  });
+
+  it("offers the binaries on a stable release too, so a stable user is not left without one", () => {
+    expect(WORKFLOW.jobs.propose.if).toBe("needs.plan.outputs.publishing == 'true'");
   });
 
   it("lets no caller name a branch of its own", () => {
@@ -569,10 +588,9 @@ describe("offering the binaries to the plugin's beta branch", () => {
     expect([beta.prerelease, full.prerelease]).toEqual(["true", "false"]);
   });
 
-  it("offers nothing unless the run is releasing a beta", () => {
+  it("offers nothing unless the run is releasing", () => {
     const gate = (WORKFLOW.jobs.propose?.if ?? "").replace(/\s+/g, " ");
     expect(gate).toContain(PUBLISHING_GATE);
-    expect(gate).toContain("needs.plan.outputs.prerelease == 'true'");
   });
 
   it("works the branch out on exactly the runs that offer it, so nothing lands on the default branch", () => {
