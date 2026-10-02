@@ -265,37 +265,40 @@ describe("checking the tag against the version", () => {
   });
 });
 
-describe("finding the beta branch a tag belongs to", () => {
-  function findTheBetaBranch(
-    answers: { lookup?: string; comparison?: string } = {},
-    tag = RELEASED_TAG,
-  ): Record<string, string> {
-    const path = scratch("plugin-binary-beta-");
-    writeFileSync(
-      join(path, "gh"),
-      [
-        "#!/bin/sh",
-        'case "$2" in',
-        `  */branches/*) [ -z "$LOOKUP" ] || { [ "$LOOKUP" = ${WORDLESS} ] || echo "$LOOKUP" >&2; exit 1; } ;;`,
-        `  */compare/*) [ "$COMPARISON" != ${UNAVAILABLE} ] || { echo "${GITHUB_IS_DOWN}" >&2; exit 1; }`,
-        '    echo "$COMPARISON" ;;',
-        "  *) echo main ;;",
-        "esac",
-        "exit 0",
-        "",
-      ].join("\n"),
-    );
-    chmodSync(join(path, "gh"), 0o755);
-    return runStep("plan", BETA_STEP, path, {
-      PATH: `${path}:${process.env.PATH ?? ""}`,
-      GH_TOKEN: "unused by the stub",
-      GH_REPO: "langchain-ai/example-plugins",
-      TAG: tag,
-      LOOKUP: answers.lookup ?? "",
-      COMPARISON: answers.comparison ?? "ahead",
-    });
-  }
+function findTheBetaBranch(
+  answers: { lookup?: string; comparison?: string } = {},
+  tag = RELEASED_TAG,
+): Record<string, string> {
+  const path = scratch("plugin-binary-beta-");
+  writeFileSync(
+    join(path, "gh"),
+    [
+      "#!/bin/sh",
+      'case "$2" in',
+      `  */branches/*) [ -z "$LOOKUP" ] || { [ "$LOOKUP" = ${WORDLESS} ] || echo "$LOOKUP" >&2; exit 1; } ;;`,
+      `  */compare/*) [ "$COMPARISON" != ${UNAVAILABLE} ] || { echo "${GITHUB_IS_DOWN}" >&2; exit 1; }`,
+      '    echo "$COMPARISON" ;;',
+      "  *) echo main ;;",
+      "esac",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(join(path, "gh"), 0o755);
+  return runStep("plan", BETA_STEP, path, {
+    PATH: `${path}:${process.env.PATH ?? ""}`,
+    GH_TOKEN: "unused by the stub",
+    GH_REPO: "langchain-ai/example-plugins",
+    TAG: tag,
+    LOOKUP: answers.lookup ?? "",
+    COMPARISON: answers.comparison ?? "ahead",
+  });
+}
 
+const comparisonUnavailable = (): Record<string, string> =>
+  findTheBetaBranch({ comparison: UNAVAILABLE });
+
+describe("finding the beta branch a tag belongs to", () => {
   it("sends a stable release to the default branch, so stable users get a build too", () => {
     const path = scratch("plugin-binary-stable-");
     writeFileSync(join(path, "gh"), "#!/bin/sh\necho main\n");
@@ -346,9 +349,8 @@ describe("finding the beta branch a tag belongs to", () => {
   });
 
   it("repeats what GitHub said when it cannot say how the two branches compare", () => {
-    const silent = (): Record<string, string> => findTheBetaBranch({ comparison: UNAVAILABLE });
-    expect(silent).toThrow(GITHUB_IS_DOWN);
-    expect(silent).not.toThrow(`${BETA_BRANCH} is missing work`);
+    expect(comparisonUnavailable).toThrow(GITHUB_IS_DOWN);
+    expect(comparisonUnavailable).not.toThrow(`${BETA_BRANCH} is missing work`);
   });
 });
 
@@ -564,7 +566,7 @@ describe("offering the binaries to the plugin's beta branch", () => {
   });
 
   it("offers the binaries on a stable release too, so a stable user is not left without one", () => {
-    expect(WORKFLOW.jobs.propose.if).toBe("needs.plan.outputs.publishing == 'true'");
+    expect(WORKFLOW.jobs.propose?.if).toBe("needs.plan.outputs.publishing == 'true'");
   });
 
   it("lets no caller name a branch of its own", () => {
