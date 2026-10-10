@@ -6,6 +6,15 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+export interface CaptureScope {
+  integration: string;
+  sessionId: string;
+  turnId: string;
+  eventId: string;
+}
+
+export type CaptureDependency = CaptureScope;
+
 export interface CaptureInput {
   integration: string;
   sessionId: string;
@@ -17,6 +26,7 @@ export interface CaptureInput {
   normalizedPayload: JsonValue;
   turnEvidence: JsonValue;
   metadataProvenance: JsonValue;
+  dependencies?: CaptureDependency[];
 }
 
 export interface StoredCapture extends CaptureInput {
@@ -30,13 +40,6 @@ export interface EnumeratedCapture {
 }
 
 export type StorageFailure = { status: "failed"; code: string; message: string };
-
-export interface CaptureScope {
-  integration: string;
-  sessionId: string;
-  turnId: string;
-  eventId: string;
-}
 
 export type CaptureWriteResult =
   | { status: "published"; record: StoredCapture }

@@ -92,6 +92,65 @@ describe("immutable capture storage", () => {
     });
   });
 
+  it("persists optional full-scope dependencies", async () => {
+    const store = createCaptureStore(temporaryRoot());
+    const input = {
+      ...captureInput("child-event"),
+      dependencies: [
+        {
+          integration: "claude-code",
+          sessionId: "parent-session",
+          turnId: "parent-turn",
+          eventId: "parent-event",
+        },
+      ],
+    };
+    await expect(store.capture(input)).resolves.toMatchObject({ status: "published" });
+    await expect(store.read(input)).resolves.toMatchObject({ dependencies: input.dependencies });
+    const legacy = captureInput("legacy-event");
+    await expect(store.capture(legacy)).resolves.toMatchObject({ status: "published" });
+    await expect(store.read(legacy)).resolves.toMatchObject({ eventId: "legacy-event" });
+  });
+
+  it("rejects invalid capture dependencies", async () => {
+    const store = createCaptureStore(temporaryRoot());
+    const duplicate = {
+      integration: "claude-code",
+      sessionId: "parent-session",
+      turnId: "parent-turn",
+      eventId: "parent-event",
+    };
+    const invalidInputs = [
+      {
+        ...captureInput("self-event"),
+        dependencies: [
+          {
+            integration: "claude-code",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            eventId: "self-event",
+          },
+        ],
+      },
+      { ...captureInput("duplicate-event"), dependencies: [duplicate, duplicate] },
+      {
+        ...captureInput("integration-event"),
+        dependencies: [{ ...duplicate, integration: "codex" }],
+      },
+      {
+        ...captureInput("identifier-event"),
+        dependencies: [{ ...duplicate, eventId: "" }],
+      },
+      { ...captureInput("shape-event"), dependencies: null as never },
+    ];
+    for (const input of invalidInputs) {
+      await expect(store.capture(input)).resolves.toMatchObject({
+        status: "failed",
+        code: "SERIALIZATION_FAILED",
+      });
+    }
+  });
+
   it("treats stable replay as duplicate and refuses conflicting content", async () => {
     const store = createCaptureStore(temporaryRoot());
     const input = captureInput();

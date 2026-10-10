@@ -1,5 +1,6 @@
 export { createCaptureStore } from "./capture-store.js";
 export type {
+  CaptureDependency,
   CaptureInput,
   CaptureScope,
   CaptureStore,

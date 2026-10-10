@@ -8,4 +8,5 @@ export const DELIVERY_STAGING_FILE = /^\.[0-9a-f-]{36}\.tmp$/u;
 export const DELIVERY_EXPIRED_REASON = "expired";
 export const DELIVERY_CAPACITY_REASON = "capacity";
 export const DELIVERY_RETRY_EXHAUSTED_REASON = "retry-exhausted";
+export const DELIVERY_DEPENDENCY_DROPPED_REASON = "dependency-dropped";
 //# sourceMappingURL=constants.js.map

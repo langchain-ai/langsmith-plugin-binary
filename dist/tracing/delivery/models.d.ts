@@ -1,4 +1,4 @@
-import type { CaptureInput, CaptureScope, CaptureWriteResult, EnumeratedCapture, StoredCapture } from "../../storage/capture/models.js";
+import type { CaptureInput, CaptureScope, CaptureWriteResult, EnumeratedCapture, OutcomeInput, OutcomeReadResult, OutcomeReceipt, StoredCapture } from "../../storage/capture/models.js";
 export type DeliveryCaptureInput = Omit<CaptureInput, "integration" | "sessionId">;
 export interface DeliveryPolicy {
     maxAttempts: number;
@@ -50,9 +50,16 @@ export interface DeliveryAttemptStore {
     count(scope: CaptureScope, destination: string): Promise<number>;
     record(scope: CaptureScope, destination: string, attempt: number, startedAt: string): Promise<void>;
 }
+export interface DeliveryDrainCache {
+    read(scope: CaptureScope): Promise<StoredCapture | undefined>;
+    readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
+    recordOutcome(input: OutcomeInput): Promise<OutcomeReceipt>;
+    rememberCapture(record: StoredCapture): void;
+}
 export interface DeliveryPendingCandidate {
     entry: EnumeratedCapture;
     scope: CaptureScope;
     pending: DeliveryDestination[];
 }
+export type DeliveryDependencyState = "ready" | "pending" | "dropped";
 //# sourceMappingURL=models.d.ts.map

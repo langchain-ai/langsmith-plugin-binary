@@ -9,6 +9,7 @@ import {
   CAPTURE_STAGING_FILE,
 } from "./constants.js";
 import type {
+  CaptureDependency,
   CaptureScope,
   CaptureStore,
   EnumeratedCapture,
@@ -38,6 +39,7 @@ export function createCaptureStore(root: string): CaptureStore {
       let contents: string;
       try {
         validateScope(input);
+        const dependencies = normalizeDependencies(input.dependencies, input);
         validateIdentifier(input.runId, "run ID");
         validateIdentifier(input.destinationFingerprint, "destination fingerprint");
         validateIdentifier(input.eventKind, "event kind");
@@ -54,6 +56,7 @@ export function createCaptureStore(root: string): CaptureStore {
           normalizedPayload: canonicalValue(input.normalizedPayload, new Set<object>()),
           turnEvidence: canonicalValue(input.turnEvidence, new Set<object>()),
           metadataProvenance: canonicalValue(input.metadataProvenance, new Set<object>()),
+          ...(dependencies === undefined ? {} : { dependencies }),
         };
         contents = canonicalJson(record);
       } catch (error) {
@@ -266,7 +269,18 @@ async function readRecord(root: string, path: string): Promise<StoredCapture | u
   ] as const) {
     validateIdentifier(identifier as string, name);
   }
-  return value as unknown as StoredCapture;
+  const scope = {
+    integration: value.integration,
+    sessionId: value.sessionId,
+    turnId: value.turnId,
+    eventId: value.eventId,
+  };
+  validateScope(scope);
+  const dependencies = normalizeDependencies(value.dependencies, scope);
+  return {
+    ...(value as unknown as StoredCapture),
+    ...(dependencies === undefined ? {} : { dependencies }),
+  };
 }
 
 async function readReceipt(root: string, path: string): Promise<OutcomeReceipt | undefined> {
@@ -306,6 +320,42 @@ function validateScope(scope: CaptureScope): void {
   validateIdentifier(scope.sessionId, "session ID");
   validateIdentifier(scope.turnId, "turn ID");
   validateIdentifier(scope.eventId, "event ID");
+}
+
+function normalizeDependencies(
+  value: unknown,
+  dependent: CaptureScope,
+): CaptureDependency[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new TypeError("Invalid capture dependencies");
+  const seen = new Set<string>();
+  return value.map((item) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item))
+      throw new TypeError("Invalid capture dependency");
+    const candidate = item as Record<string, unknown>;
+    if (
+      typeof candidate.integration !== "string" ||
+      typeof candidate.sessionId !== "string" ||
+      typeof candidate.turnId !== "string" ||
+      typeof candidate.eventId !== "string"
+    ) {
+      throw new TypeError("Invalid capture dependency");
+    }
+    const dependency: CaptureDependency = {
+      integration: candidate.integration,
+      sessionId: candidate.sessionId,
+      turnId: candidate.turnId,
+      eventId: candidate.eventId,
+    };
+    validateScope(dependency);
+    if (dependency.integration !== dependent.integration)
+      throw new TypeError("Capture dependencies must use the same integration");
+    if (sameScope(dependency, dependent)) throw new TypeError("Capture cannot depend on itself");
+    const key = canonicalJson(dependency);
+    if (seen.has(key)) throw new TypeError("Capture dependencies must be unique");
+    seen.add(key);
+    return dependency;
+  });
 }
 
 function sameScope(record: CaptureScope, scope: CaptureScope): boolean {

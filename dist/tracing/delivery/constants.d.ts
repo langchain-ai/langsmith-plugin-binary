@@ -8,4 +8,5 @@ export declare const DELIVERY_STAGING_FILE: RegExp;
 export declare const DELIVERY_EXPIRED_REASON = "expired";
 export declare const DELIVERY_CAPACITY_REASON = "capacity";
 export declare const DELIVERY_RETRY_EXHAUSTED_REASON = "retry-exhausted";
+export declare const DELIVERY_DEPENDENCY_DROPPED_REASON = "dependency-dropped";
 //# sourceMappingURL=constants.d.ts.map

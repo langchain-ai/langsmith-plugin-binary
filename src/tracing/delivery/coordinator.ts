@@ -5,7 +5,6 @@ import type {
   CaptureInput,
   CaptureScope,
   EnumeratedCapture,
-  OutcomeInput,
   OutcomeReadResult,
   StoredCapture,
 } from "../../storage/capture/models.js";
@@ -17,6 +16,7 @@ import {
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import {
   DELIVERY_CAPACITY_REASON,
+  DELIVERY_DEPENDENCY_DROPPED_REASON,
   DELIVERY_DEFAULT_MAX_AGE_MS,
   DELIVERY_DEFAULT_MAX_ATTEMPTS,
   DELIVERY_DEFAULT_MAX_ENTRIES,
@@ -28,7 +28,9 @@ import { createDeliveryAttemptStore } from "./attempt-store.js";
 import type {
   DeliveryCoordinator,
   DeliveryCoordinatorOptions,
+  DeliveryDependencyState,
   DeliveryDestination,
+  DeliveryDrainCache,
   DeliveryDrainCounts,
   DeliveryPendingCandidate,
   DeliveryPolicy,
@@ -70,6 +72,7 @@ export function createDeliveryCoordinator(
       ]);
       const lock = await tryAcquireFileLock(join(sessionDirectory, "drain"));
       if (!lock) return { status: "busy" };
+      const drainCache = createDrainCache(captureStore);
       let counts: DeliveryDrainCounts;
       try {
         counts = await drainLocked(
@@ -79,6 +82,7 @@ export function createDeliveryCoordinator(
           sessionId,
           policy,
           drainRequest,
+          drainCache,
         );
       } finally {
         await lock.release();
@@ -90,7 +94,7 @@ export function createDeliveryCoordinator(
       return {
         status: "drained",
         ...counts,
-        pending: await countPending(captureStore, eligible, writer.destinations),
+        pending: await countPending(drainCache, eligible, writer.destinations),
         accountMismatch: captures.length - eligible.length,
       };
     },
@@ -104,77 +108,129 @@ async function drainLocked(
   sessionId: string,
   policy: DeliveryPolicy,
   request: DrainOptions,
+  drainCache: DeliveryDrainCache,
 ): Promise<DeliveryDrainCounts> {
   const captures = await captureStore.enumerate(integration, sessionId);
   const eligible = captures.filter(
     ({ record }) => record.destinationFingerprint === request.writer.accountFingerprint,
   );
+  for (const { record } of eligible) drainCache.rememberCapture(record);
   let dropped = 0;
   let failed = 0;
   let delivered = 0;
   const now = request.now ?? Date.now();
-  const candidates = await pendingCandidates(captureStore, eligible, request.writer.destinations);
-  const expired = candidates.filter(({ entry }) => now - entry.capturedAtMs >= policy.maxAgeMs);
-  for (const candidate of expired) {
-    dropped += await dropPending(captureStore, candidate, DELIVERY_EXPIRED_REASON);
-  }
-  const fresh = candidates.filter(({ entry }) => now - entry.capturedAtMs < policy.maxAgeMs);
-  const overCapacity = Math.max(0, fresh.length - policy.maxEntries);
-  for (const candidate of fresh.slice(0, overCapacity)) {
-    dropped += await dropPending(captureStore, candidate, DELIVERY_CAPACITY_REASON);
-  }
-  for (const candidate of fresh.slice(overCapacity)) {
+  const candidates = await pendingCandidates(drainCache, eligible, request.writer.destinations);
+  for (const candidate of candidates) {
+    const pending: DeliveryDestination[] = [];
     for (const destination of candidate.pending) {
-      const attemptCount = await attemptStore.count(candidate.scope, destination.id);
-      if (attemptCount >= policy.maxAttempts) {
+      const dependencyState = await dependenciesForDestination(
+        drainCache,
+        candidate.entry.record,
+        destination.id,
+      );
+      if (dependencyState === "dropped") {
         dropped += await recordDropped(
-          captureStore,
+          drainCache,
           candidate.scope,
           destination.id,
-          DELIVERY_RETRY_EXHAUSTED_REASON,
+          DELIVERY_DEPENDENCY_DROPPED_REASON,
         );
-        continue;
+      } else {
+        pending.push(destination);
       }
-      const attempt = attemptCount + 1;
-      await attemptStore.record(
-        candidate.scope,
-        destination.id,
-        attempt,
-        new Date(now).toISOString(),
-      );
-      if (candidate.entry.record.destinationFingerprint !== request.writer.accountFingerprint)
-        continue;
-      try {
-        await request.writer.send(
-          structuredClone(candidate.entry.record),
-          destination,
-          request.writer.accountFingerprint,
+    }
+    candidate.pending = pending;
+  }
+  const active = candidates.filter((candidate) => candidate.pending.length > 0);
+  const expired = active.filter(({ entry }) => now - entry.capturedAtMs >= policy.maxAgeMs);
+  for (const candidate of expired) {
+    dropped += await dropPending(drainCache, candidate, DELIVERY_EXPIRED_REASON);
+  }
+  const fresh = active.filter(({ entry }) => now - entry.capturedAtMs < policy.maxAgeMs);
+  const overCapacity = Math.max(0, fresh.length - policy.maxEntries);
+  for (const candidate of fresh.slice(0, overCapacity)) {
+    dropped += await dropPending(drainCache, candidate, DELIVERY_CAPACITY_REASON);
+  }
+  const sendable = fresh.slice(overCapacity);
+  const attempted = new Set<string>();
+  let progressed: boolean;
+  do {
+    progressed = false;
+    for (const candidate of sendable) {
+      for (const destination of candidate.pending) {
+        const key = deliveryKey(candidate.scope, destination.id);
+        if (attempted.has(key)) continue;
+        const dependencyState = await dependenciesForDestination(
+          drainCache,
+          candidate.entry.record,
+          destination.id,
         );
-      } catch {
-        failed += 1;
-        if (attempt >= policy.maxAttempts) {
+        if (dependencyState === "pending") continue;
+        attempted.add(key);
+        if (dependencyState === "dropped") {
           dropped += await recordDropped(
-            captureStore,
+            drainCache,
+            candidate.scope,
+            destination.id,
+            DELIVERY_DEPENDENCY_DROPPED_REASON,
+          );
+          progressed = true;
+          continue;
+        }
+        const attemptCount = await attemptStore.count(candidate.scope, destination.id);
+        if (attemptCount >= policy.maxAttempts) {
+          dropped += await recordDropped(
+            drainCache,
             candidate.scope,
             destination.id,
             DELIVERY_RETRY_EXHAUSTED_REASON,
           );
+          progressed = true;
+          continue;
         }
-        continue;
+        const attempt = attemptCount + 1;
+        await attemptStore.record(
+          candidate.scope,
+          destination.id,
+          attempt,
+          new Date(now).toISOString(),
+        );
+        if (candidate.entry.record.destinationFingerprint !== request.writer.accountFingerprint)
+          continue;
+        try {
+          await request.writer.send(
+            structuredClone(candidate.entry.record),
+            destination,
+            request.writer.accountFingerprint,
+          );
+        } catch {
+          failed += 1;
+          if (attempt >= policy.maxAttempts) {
+            dropped += await recordDropped(
+              drainCache,
+              candidate.scope,
+              destination.id,
+              DELIVERY_RETRY_EXHAUSTED_REASON,
+            );
+            progressed = true;
+          }
+          continue;
+        }
+        await drainCache.recordOutcome({
+          ...candidate.scope,
+          destination: destination.id,
+          outcome: "delivered",
+        });
+        delivered += 1;
+        progressed = true;
       }
-      await recordOutcome(captureStore, {
-        ...candidate.scope,
-        destination: destination.id,
-        outcome: "delivered",
-      });
-      delivered += 1;
     }
-  }
+  } while (progressed);
   return { delivered, dropped, failed };
 }
 
 async function pendingCandidates(
-  store: ReturnType<typeof createCaptureStore>,
+  drainCache: DeliveryDrainCache,
   entries: EnumeratedCapture[],
   destinations: readonly DeliveryDestination[],
 ): Promise<DeliveryPendingCandidate[]> {
@@ -183,7 +239,7 @@ async function pendingCandidates(
     const scope = scopeOf(entry.record);
     const pending: DeliveryDestination[] = [];
     for (const destination of destinations) {
-      if ((await readOutcome(store, scope, destination.id)).status === "pending")
+      if ((await requireOutcome(drainCache, scope, destination.id)).status === "pending")
         pending.push(destination);
     }
     if (pending.length > 0) candidates.push({ entry, scope, pending });
@@ -191,47 +247,124 @@ async function pendingCandidates(
   return candidates;
 }
 
+async function dependenciesForDestination(
+  drainCache: DeliveryDrainCache,
+  dependent: StoredCapture,
+  destination: string,
+): Promise<DeliveryDependencyState> {
+  let pending = false;
+  for (const dependency of dependent.dependencies ?? []) {
+    const prerequisite = await drainCache.read(dependency);
+    if (prerequisite === undefined) {
+      pending = true;
+      continue;
+    }
+    if (prerequisite.destinationFingerprint !== dependent.destinationFingerprint) {
+      pending = true;
+      continue;
+    }
+    const outcome = await drainCache.readOutcome(dependency, destination);
+    if (outcome.status === "failed")
+      throw new Error(`Could not read prerequisite receipt: ${outcome.status}`);
+    if (outcome.status === "pending" || outcome.status === "missing-capture") {
+      pending = true;
+      continue;
+    }
+    if (outcome.receipt.outcome === "dropped") return "dropped";
+  }
+  return pending ? "pending" : "ready";
+}
+
+function deliveryKey(scope: CaptureScope, destination: string): string {
+  return JSON.stringify([
+    scope.integration,
+    scope.sessionId,
+    scope.turnId,
+    scope.eventId,
+    destination,
+  ]);
+}
+
 async function dropPending(
-  store: ReturnType<typeof createCaptureStore>,
+  drainCache: DeliveryDrainCache,
   candidate: DeliveryPendingCandidate,
   reason: string,
 ): Promise<number> {
   let dropped = 0;
   for (const destination of candidate.pending) {
-    dropped += await recordDropped(store, candidate.scope, destination.id, reason);
+    dropped += await recordDropped(drainCache, candidate.scope, destination.id, reason);
   }
   return dropped;
 }
 
 async function recordDropped(
-  store: ReturnType<typeof createCaptureStore>,
+  drainCache: DeliveryDrainCache,
   scope: CaptureScope,
   destination: string,
   reason: string,
 ): Promise<number> {
-  await recordOutcome(store, { ...scope, destination, outcome: "dropped", reason });
+  await drainCache.recordOutcome({ ...scope, destination, outcome: "dropped", reason });
   return 1;
 }
 
-async function recordOutcome(store: ReturnType<typeof createCaptureStore>, input: OutcomeInput) {
-  const result = await store.recordOutcome(input);
-  if (result.status !== "recorded" && result.status !== "duplicate")
-    throw new Error(`Could not persist ${input.outcome} delivery receipt: ${result.status}`);
+function createDrainCache(store: ReturnType<typeof createCaptureStore>): DeliveryDrainCache {
+  const captures = new Map<string, Promise<StoredCapture | undefined>>();
+  const outcomes = new Map<string, Promise<OutcomeReadResult>>();
+  return {
+    read(scope) {
+      const key = captureKey(scope);
+      let record = captures.get(key);
+      if (record === undefined) {
+        record = store.read(scope);
+        captures.set(key, record);
+      }
+      return record;
+    },
+    readOutcome(scope, destination) {
+      const key = deliveryKey(scope, destination);
+      let outcome = outcomes.get(key);
+      if (outcome === undefined) {
+        outcome = store.readOutcome(scope, destination);
+        outcomes.set(key, outcome);
+      }
+      return outcome;
+    },
+    async recordOutcome(input) {
+      const result = await store.recordOutcome(input);
+      if (result.status !== "recorded" && result.status !== "duplicate")
+        throw new Error(`Could not persist ${input.outcome} delivery receipt: ${result.status}`);
+      outcomes.set(
+        deliveryKey(input, input.destination),
+        Promise.resolve({
+          status: "settled",
+          receipt: result.receipt,
+        }),
+      );
+      return result.receipt;
+    },
+    rememberCapture(record) {
+      captures.set(captureKey(record), Promise.resolve(record));
+    },
+  };
 }
 
-async function readOutcome(
-  store: ReturnType<typeof createCaptureStore>,
+function captureKey(scope: CaptureScope): string {
+  return JSON.stringify([scope.integration, scope.sessionId, scope.turnId, scope.eventId]);
+}
+
+async function requireOutcome(
+  drainCache: DeliveryDrainCache,
   scope: CaptureScope,
   destination: string,
 ): Promise<OutcomeReadResult> {
-  const result = await store.readOutcome(scope, destination);
+  const result = await drainCache.readOutcome(scope, destination);
   if (result.status === "failed" || result.status === "missing-capture")
     throw new Error(`Could not read delivery receipt: ${result.status}`);
   return result;
 }
 
 async function countPending(
-  store: ReturnType<typeof createCaptureStore>,
+  drainCache: DeliveryDrainCache,
   entries: EnumeratedCapture[],
   destinations: readonly DeliveryDestination[],
 ): Promise<number> {
@@ -239,7 +372,8 @@ async function countPending(
   for (const entry of entries) {
     const scope = scopeOf(entry.record);
     for (const destination of destinations) {
-      if ((await readOutcome(store, scope, destination.id)).status === "pending") count += 1;
+      if ((await requireOutcome(drainCache, scope, destination.id)).status === "pending")
+        count += 1;
     }
   }
   return count;

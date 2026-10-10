@@ -3,7 +3,7 @@ import { tryAcquireFileLock } from "../../storage/index.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import { identifierHash, validateIdentifier, validateIntegration, } from "../../storage/capture/paths.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
-import { DELIVERY_CAPACITY_REASON, DELIVERY_DEFAULT_MAX_AGE_MS, DELIVERY_DEFAULT_MAX_ATTEMPTS, DELIVERY_DEFAULT_MAX_ENTRIES, DELIVERY_DIRECTORY, DELIVERY_EXPIRED_REASON, DELIVERY_RETRY_EXHAUSTED_REASON, } from "./constants.js";
+import { DELIVERY_CAPACITY_REASON, DELIVERY_DEPENDENCY_DROPPED_REASON, DELIVERY_DEFAULT_MAX_AGE_MS, DELIVERY_DEFAULT_MAX_ATTEMPTS, DELIVERY_DEFAULT_MAX_ENTRIES, DELIVERY_DIRECTORY, DELIVERY_EXPIRED_REASON, DELIVERY_RETRY_EXHAUSTED_REASON, } from "./constants.js";
 import { createDeliveryAttemptStore } from "./attempt-store.js";
 export function createDeliveryCoordinator(options) {
     const { integration, sessionId } = options;
@@ -39,9 +39,10 @@ export function createDeliveryCoordinator(options) {
             const lock = await tryAcquireFileLock(join(sessionDirectory, "drain"));
             if (!lock)
                 return { status: "busy" };
+            const drainCache = createDrainCache(captureStore);
             let counts;
             try {
-                counts = await drainLocked(captureStore, attemptStore, integration, sessionId, policy, drainRequest);
+                counts = await drainLocked(captureStore, attemptStore, integration, sessionId, policy, drainRequest, drainCache);
             }
             finally {
                 await lock.release();
@@ -51,67 +52,104 @@ export function createDeliveryCoordinator(options) {
             return {
                 status: "drained",
                 ...counts,
-                pending: await countPending(captureStore, eligible, writer.destinations),
+                pending: await countPending(drainCache, eligible, writer.destinations),
                 accountMismatch: captures.length - eligible.length,
             };
         },
     };
 }
-async function drainLocked(captureStore, attemptStore, integration, sessionId, policy, request) {
+async function drainLocked(captureStore, attemptStore, integration, sessionId, policy, request, drainCache) {
     const captures = await captureStore.enumerate(integration, sessionId);
     const eligible = captures.filter(({ record }) => record.destinationFingerprint === request.writer.accountFingerprint);
+    for (const { record } of eligible)
+        drainCache.rememberCapture(record);
     let dropped = 0;
     let failed = 0;
     let delivered = 0;
     const now = request.now ?? Date.now();
-    const candidates = await pendingCandidates(captureStore, eligible, request.writer.destinations);
-    const expired = candidates.filter(({ entry }) => now - entry.capturedAtMs >= policy.maxAgeMs);
-    for (const candidate of expired) {
-        dropped += await dropPending(captureStore, candidate, DELIVERY_EXPIRED_REASON);
+    const candidates = await pendingCandidates(drainCache, eligible, request.writer.destinations);
+    for (const candidate of candidates) {
+        const pending = [];
+        for (const destination of candidate.pending) {
+            const dependencyState = await dependenciesForDestination(drainCache, candidate.entry.record, destination.id);
+            if (dependencyState === "dropped") {
+                dropped += await recordDropped(drainCache, candidate.scope, destination.id, DELIVERY_DEPENDENCY_DROPPED_REASON);
+            }
+            else {
+                pending.push(destination);
+            }
+        }
+        candidate.pending = pending;
     }
-    const fresh = candidates.filter(({ entry }) => now - entry.capturedAtMs < policy.maxAgeMs);
+    const active = candidates.filter((candidate) => candidate.pending.length > 0);
+    const expired = active.filter(({ entry }) => now - entry.capturedAtMs >= policy.maxAgeMs);
+    for (const candidate of expired) {
+        dropped += await dropPending(drainCache, candidate, DELIVERY_EXPIRED_REASON);
+    }
+    const fresh = active.filter(({ entry }) => now - entry.capturedAtMs < policy.maxAgeMs);
     const overCapacity = Math.max(0, fresh.length - policy.maxEntries);
     for (const candidate of fresh.slice(0, overCapacity)) {
-        dropped += await dropPending(captureStore, candidate, DELIVERY_CAPACITY_REASON);
+        dropped += await dropPending(drainCache, candidate, DELIVERY_CAPACITY_REASON);
     }
-    for (const candidate of fresh.slice(overCapacity)) {
-        for (const destination of candidate.pending) {
-            const attemptCount = await attemptStore.count(candidate.scope, destination.id);
-            if (attemptCount >= policy.maxAttempts) {
-                dropped += await recordDropped(captureStore, candidate.scope, destination.id, DELIVERY_RETRY_EXHAUSTED_REASON);
-                continue;
-            }
-            const attempt = attemptCount + 1;
-            await attemptStore.record(candidate.scope, destination.id, attempt, new Date(now).toISOString());
-            if (candidate.entry.record.destinationFingerprint !== request.writer.accountFingerprint)
-                continue;
-            try {
-                await request.writer.send(structuredClone(candidate.entry.record), destination, request.writer.accountFingerprint);
-            }
-            catch {
-                failed += 1;
-                if (attempt >= policy.maxAttempts) {
-                    dropped += await recordDropped(captureStore, candidate.scope, destination.id, DELIVERY_RETRY_EXHAUSTED_REASON);
+    const sendable = fresh.slice(overCapacity);
+    const attempted = new Set();
+    let progressed;
+    do {
+        progressed = false;
+        for (const candidate of sendable) {
+            for (const destination of candidate.pending) {
+                const key = deliveryKey(candidate.scope, destination.id);
+                if (attempted.has(key))
+                    continue;
+                const dependencyState = await dependenciesForDestination(drainCache, candidate.entry.record, destination.id);
+                if (dependencyState === "pending")
+                    continue;
+                attempted.add(key);
+                if (dependencyState === "dropped") {
+                    dropped += await recordDropped(drainCache, candidate.scope, destination.id, DELIVERY_DEPENDENCY_DROPPED_REASON);
+                    progressed = true;
+                    continue;
                 }
-                continue;
+                const attemptCount = await attemptStore.count(candidate.scope, destination.id);
+                if (attemptCount >= policy.maxAttempts) {
+                    dropped += await recordDropped(drainCache, candidate.scope, destination.id, DELIVERY_RETRY_EXHAUSTED_REASON);
+                    progressed = true;
+                    continue;
+                }
+                const attempt = attemptCount + 1;
+                await attemptStore.record(candidate.scope, destination.id, attempt, new Date(now).toISOString());
+                if (candidate.entry.record.destinationFingerprint !== request.writer.accountFingerprint)
+                    continue;
+                try {
+                    await request.writer.send(structuredClone(candidate.entry.record), destination, request.writer.accountFingerprint);
+                }
+                catch {
+                    failed += 1;
+                    if (attempt >= policy.maxAttempts) {
+                        dropped += await recordDropped(drainCache, candidate.scope, destination.id, DELIVERY_RETRY_EXHAUSTED_REASON);
+                        progressed = true;
+                    }
+                    continue;
+                }
+                await drainCache.recordOutcome({
+                    ...candidate.scope,
+                    destination: destination.id,
+                    outcome: "delivered",
+                });
+                delivered += 1;
+                progressed = true;
             }
-            await recordOutcome(captureStore, {
-                ...candidate.scope,
-                destination: destination.id,
-                outcome: "delivered",
-            });
-            delivered += 1;
         }
-    }
+    } while (progressed);
     return { delivered, dropped, failed };
 }
-async function pendingCandidates(store, entries, destinations) {
+async function pendingCandidates(drainCache, entries, destinations) {
     const candidates = [];
     for (const entry of entries) {
         const scope = scopeOf(entry.record);
         const pending = [];
         for (const destination of destinations) {
-            if ((await readOutcome(store, scope, destination.id)).status === "pending")
+            if ((await requireOutcome(drainCache, scope, destination.id)).status === "pending")
                 pending.push(destination);
         }
         if (pending.length > 0)
@@ -119,34 +157,102 @@ async function pendingCandidates(store, entries, destinations) {
     }
     return candidates;
 }
-async function dropPending(store, candidate, reason) {
+async function dependenciesForDestination(drainCache, dependent, destination) {
+    let pending = false;
+    for (const dependency of dependent.dependencies ?? []) {
+        const prerequisite = await drainCache.read(dependency);
+        if (prerequisite === undefined) {
+            pending = true;
+            continue;
+        }
+        if (prerequisite.destinationFingerprint !== dependent.destinationFingerprint) {
+            pending = true;
+            continue;
+        }
+        const outcome = await drainCache.readOutcome(dependency, destination);
+        if (outcome.status === "failed")
+            throw new Error(`Could not read prerequisite receipt: ${outcome.status}`);
+        if (outcome.status === "pending" || outcome.status === "missing-capture") {
+            pending = true;
+            continue;
+        }
+        if (outcome.receipt.outcome === "dropped")
+            return "dropped";
+    }
+    return pending ? "pending" : "ready";
+}
+function deliveryKey(scope, destination) {
+    return JSON.stringify([
+        scope.integration,
+        scope.sessionId,
+        scope.turnId,
+        scope.eventId,
+        destination,
+    ]);
+}
+async function dropPending(drainCache, candidate, reason) {
     let dropped = 0;
     for (const destination of candidate.pending) {
-        dropped += await recordDropped(store, candidate.scope, destination.id, reason);
+        dropped += await recordDropped(drainCache, candidate.scope, destination.id, reason);
     }
     return dropped;
 }
-async function recordDropped(store, scope, destination, reason) {
-    await recordOutcome(store, { ...scope, destination, outcome: "dropped", reason });
+async function recordDropped(drainCache, scope, destination, reason) {
+    await drainCache.recordOutcome({ ...scope, destination, outcome: "dropped", reason });
     return 1;
 }
-async function recordOutcome(store, input) {
-    const result = await store.recordOutcome(input);
-    if (result.status !== "recorded" && result.status !== "duplicate")
-        throw new Error(`Could not persist ${input.outcome} delivery receipt: ${result.status}`);
+function createDrainCache(store) {
+    const captures = new Map();
+    const outcomes = new Map();
+    return {
+        read(scope) {
+            const key = captureKey(scope);
+            let record = captures.get(key);
+            if (record === undefined) {
+                record = store.read(scope);
+                captures.set(key, record);
+            }
+            return record;
+        },
+        readOutcome(scope, destination) {
+            const key = deliveryKey(scope, destination);
+            let outcome = outcomes.get(key);
+            if (outcome === undefined) {
+                outcome = store.readOutcome(scope, destination);
+                outcomes.set(key, outcome);
+            }
+            return outcome;
+        },
+        async recordOutcome(input) {
+            const result = await store.recordOutcome(input);
+            if (result.status !== "recorded" && result.status !== "duplicate")
+                throw new Error(`Could not persist ${input.outcome} delivery receipt: ${result.status}`);
+            outcomes.set(deliveryKey(input, input.destination), Promise.resolve({
+                status: "settled",
+                receipt: result.receipt,
+            }));
+            return result.receipt;
+        },
+        rememberCapture(record) {
+            captures.set(captureKey(record), Promise.resolve(record));
+        },
+    };
 }
-async function readOutcome(store, scope, destination) {
-    const result = await store.readOutcome(scope, destination);
+function captureKey(scope) {
+    return JSON.stringify([scope.integration, scope.sessionId, scope.turnId, scope.eventId]);
+}
+async function requireOutcome(drainCache, scope, destination) {
+    const result = await drainCache.readOutcome(scope, destination);
     if (result.status === "failed" || result.status === "missing-capture")
         throw new Error(`Could not read delivery receipt: ${result.status}`);
     return result;
 }
-async function countPending(store, entries, destinations) {
+async function countPending(drainCache, entries, destinations) {
     let count = 0;
     for (const entry of entries) {
         const scope = scopeOf(entry.record);
         for (const destination of destinations) {
-            if ((await readOutcome(store, scope, destination.id)).status === "pending")
+            if ((await requireOutcome(drainCache, scope, destination.id)).status === "pending")
                 count += 1;
         }
     }

@@ -3,6 +3,9 @@ import type {
   CaptureScope,
   CaptureWriteResult,
   EnumeratedCapture,
+  OutcomeInput,
+  OutcomeReadResult,
+  OutcomeReceipt,
   StoredCapture,
 } from "../../storage/capture/models.js";
 
@@ -78,8 +81,17 @@ export interface DeliveryAttemptStore {
   ): Promise<void>;
 }
 
+export interface DeliveryDrainCache {
+  read(scope: CaptureScope): Promise<StoredCapture | undefined>;
+  readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
+  recordOutcome(input: OutcomeInput): Promise<OutcomeReceipt>;
+  rememberCapture(record: StoredCapture): void;
+}
+
 export interface DeliveryPendingCandidate {
   entry: EnumeratedCapture;
   scope: CaptureScope;
   pending: DeliveryDestination[];
 }
+
+export type DeliveryDependencyState = "ready" | "pending" | "dropped";

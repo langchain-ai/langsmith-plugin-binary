@@ -13,6 +13,7 @@ export function createCaptureStore(root) {
             let contents;
             try {
                 validateScope(input);
+                const dependencies = normalizeDependencies(input.dependencies, input);
                 validateIdentifier(input.runId, "run ID");
                 validateIdentifier(input.destinationFingerprint, "destination fingerprint");
                 validateIdentifier(input.eventKind, "event kind");
@@ -29,6 +30,7 @@ export function createCaptureStore(root) {
                     normalizedPayload: canonicalValue(input.normalizedPayload, new Set()),
                     turnEvidence: canonicalValue(input.turnEvidence, new Set()),
                     metadataProvenance: canonicalValue(input.metadataProvenance, new Set()),
+                    ...(dependencies === undefined ? {} : { dependencies }),
                 };
                 contents = canonicalJson(record);
             }
@@ -229,7 +231,18 @@ async function readRecord(root, path) {
     ]) {
         validateIdentifier(identifier, name);
     }
-    return value;
+    const scope = {
+        integration: value.integration,
+        sessionId: value.sessionId,
+        turnId: value.turnId,
+        eventId: value.eventId,
+    };
+    validateScope(scope);
+    const dependencies = normalizeDependencies(value.dependencies, scope);
+    return {
+        ...value,
+        ...(dependencies === undefined ? {} : { dependencies }),
+    };
 }
 async function readReceipt(root, path) {
     const contents = await readPrivateFile(root, path);
@@ -266,6 +279,40 @@ function validateScope(scope) {
     validateIdentifier(scope.sessionId, "session ID");
     validateIdentifier(scope.turnId, "turn ID");
     validateIdentifier(scope.eventId, "event ID");
+}
+function normalizeDependencies(value, dependent) {
+    if (value === undefined)
+        return undefined;
+    if (!Array.isArray(value))
+        throw new TypeError("Invalid capture dependencies");
+    const seen = new Set();
+    return value.map((item) => {
+        if (item === null || typeof item !== "object" || Array.isArray(item))
+            throw new TypeError("Invalid capture dependency");
+        const candidate = item;
+        if (typeof candidate.integration !== "string" ||
+            typeof candidate.sessionId !== "string" ||
+            typeof candidate.turnId !== "string" ||
+            typeof candidate.eventId !== "string") {
+            throw new TypeError("Invalid capture dependency");
+        }
+        const dependency = {
+            integration: candidate.integration,
+            sessionId: candidate.sessionId,
+            turnId: candidate.turnId,
+            eventId: candidate.eventId,
+        };
+        validateScope(dependency);
+        if (dependency.integration !== dependent.integration)
+            throw new TypeError("Capture dependencies must use the same integration");
+        if (sameScope(dependency, dependent))
+            throw new TypeError("Capture cannot depend on itself");
+        const key = canonicalJson(dependency);
+        if (seen.has(key))
+            throw new TypeError("Capture dependencies must be unique");
+        seen.add(key);
+        return dependency;
+    });
 }
 function sameScope(record, scope) {
     return (record.integration === scope.integration &&
