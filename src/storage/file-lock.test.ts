@@ -64,7 +64,8 @@ if (mode === "hold") {
       writeFileSync(marker + ".complete", "complete");
     }, { timeoutMs: Number(timeout) });
     writeFileSync(marker + ".released", "released");
-  } catch {
+  } catch (error) {
+    writeFileSync(marker + ".failed", String(error.stack ?? error));
     process.exitCode = 4;
   }
 } else if (mode === "die") {
@@ -87,7 +88,14 @@ function spawnWorker(
 ): ChildProcess {
   const moduleUrl = pathToFileURL(resolve("dist/storage/file-lock.js")).href;
   return spawn(process.execPath, ["-e", childProgram, moduleUrl, mode, area.lockPath, ...args], {
-    env: { HOME: area.directory, TMPDIR: area.directory, CI: "1" },
+    env: {
+      HOME: area.directory,
+      USERPROFILE: area.directory,
+      TMPDIR: area.directory,
+      TEMP: area.directory,
+      TMP: area.directory,
+      CI: "1",
+    },
     stdio: "ignore",
   });
 }
@@ -130,9 +138,18 @@ function filesWithPrefix(area: ReturnType<typeof createArea>, prefix: string): s
 
 function readClaims(area: ReturnType<typeof createArea>): FileLockClaim[] {
   const directory = `${area.lockPath}${FILE_LOCK_DIRECTORY_SUFFIX}`;
+  const failed = filesWithPrefix(area, "worker-").find((name) => name.endsWith(".failed"));
+  if (failed) throw new Error(readFileSync(join(area.directory, failed), "utf-8"));
   return readdirSync(directory)
     .filter((name) => name.endsWith(FILE_LOCK_CLAIM_EXTENSION))
-    .map((name) => JSON.parse(readFileSync(join(directory, name), "utf-8")));
+    .flatMap((name) => {
+      try {
+        return [JSON.parse(readFileSync(join(directory, name), "utf-8")) as FileLockClaim];
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
+    });
 }
 
 async function replaceClaim(
