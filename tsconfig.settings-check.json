@@ -1,5 +1,5 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "./tsconfig.settings.json",
   "compilerOptions": {
     "composite": false,
     "declaration": false,
@@ -7,6 +7,5 @@
     "sourceMap": false,
     "noEmit": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/settings/**/*.ts"]
+  "exclude": []
 }

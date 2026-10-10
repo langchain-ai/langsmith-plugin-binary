@@ -3,5 +3,14 @@
   "categories": {
     "correctness": "error",
     "suspicious": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/settings/common-config.ts"],
+      "rules": {
+        "no-new": "off",
+        "unicorn/no-array-reverse": "off"
+      }
+    }
+  ]
 }
