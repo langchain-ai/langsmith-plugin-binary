@@ -32,6 +32,10 @@
       "types": "./dist/settings/index.d.ts",
       "default": "./dist/settings/index.js"
     },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "default": "./dist/storage/index.js"
+    },
     "./storage/capture": {
       "types": "./dist/storage/capture/index.d.ts",
       "default": "./dist/storage/capture/index.js"
