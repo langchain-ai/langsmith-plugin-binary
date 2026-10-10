@@ -324,6 +324,9 @@ function patchPayload(source, metadata, integration, endTime, causalRunError = f
         operation: "patch",
         integration,
         privacyMode: source.payload.privacyMode,
+        ...(source.payload.redactedFields === undefined
+            ? {}
+            : { redactedFields: source.payload.redactedFields }),
         metadata,
         run: {
             id: context.id,

@@ -20,6 +20,7 @@ export interface CaptureInput {
     turnEvidence: JsonValue;
     metadataProvenance: JsonValue;
     sourceAgeStartedAtMs?: number;
+    priorDeliveryAttempts?: number;
     dependencies?: CaptureDependency[];
 }
 export interface StoredCapture extends CaptureInput {
@@ -83,6 +84,7 @@ export interface CaptureStore {
     capture(input: CaptureInput): Promise<CaptureWriteResult>;
     read(scope: CaptureScope): Promise<StoredCapture | undefined>;
     enumerate(integration: string, sessionId: string): Promise<EnumeratedCapture[]>;
+    enumerateTurn(integration: string, sessionId: string, turnId: string): Promise<EnumeratedCapture[]>;
     enumerateSessions(integration: string): Promise<EnumeratedCaptureSession[]>;
     recordOutcome(input: OutcomeInput): Promise<OutcomeWriteResult>;
     readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;

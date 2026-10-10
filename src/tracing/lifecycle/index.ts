@@ -6,6 +6,7 @@ export type {
   LifecycleBridgeOptions,
   LifecycleCaptureInput,
   LifecycleCaptureResult,
+  LifecycleSnapshotCaptureInput,
   LifecycleDrainResult,
   LifecycleDrainInput,
   LifecycleSettlementProgress,

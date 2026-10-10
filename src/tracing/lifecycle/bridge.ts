@@ -1,7 +1,7 @@
 import { join, resolve } from "node:path";
 import { tryAcquireFileLock } from "../../storage/index.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
-import type { CaptureScope, JsonValue, StoredCapture } from "../../storage/capture/models.js";
+import type { CaptureScope, StoredCapture } from "../../storage/capture/models.js";
 import { identifierHash } from "../../storage/capture/paths.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import { createDeliveryCoordinator } from "../delivery/index.js";
@@ -15,10 +15,10 @@ import {
   canonicalJsonValue,
   ownDataField,
   requireNonBlankString,
+  requireNonNegativeInteger,
   requireOwnDataField,
   requirePlainRecord,
   requireSafeEpochMilliseconds,
-  requireStringArray,
   requireTimestamp,
 } from "../../utils/validation/objects.js";
 import { snapshotData } from "../../utils/validation/snapshot.js";
@@ -29,10 +29,9 @@ import type {
   LifecycleCaptureResult,
   LifecycleDrainInput,
   LifecycleDrainResult,
-  LifecycleTurnEvidence,
+  LifecycleSnapshotCaptureInput,
 } from "./models.js";
 import {
-  LIFECYCLE_ATTRIBUTION_READY_FIELD,
   LIFECYCLE_PATCH_EVENT_KIND,
   LIFECYCLE_POST_EVENT_KIND,
   LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY,
@@ -40,9 +39,9 @@ import {
   LIFECYCLE_SETTLEMENT_LOCK_FILE,
   LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY,
   LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY,
-  LIFECYCLE_TURN_CLOSURE_STATES,
 } from "./constants.js";
-import { projectSubmission } from "./projection.js";
+import { projectSubmission, projectTurnEvidence } from "./projection.js";
+import { captureLifecycleSnapshot } from "./snapshot.js";
 import {
   deriveAttributionReadiness,
   indexCaptureSources,
@@ -62,79 +61,99 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
     ...(options.policy === undefined ? {} : { policy: options.policy }),
   });
   const writer = createLangSmithUploadWriter(options.writer);
+  const capture = async (input: LifecycleCaptureInput): Promise<LifecycleCaptureResult> => {
+    const captureRecord = requirePlainRecord(
+      snapshotData(requirePlainRecord(input, "Lifecycle capture")),
+      "Lifecycle capture",
+    );
+    const turnId = requireNonBlankString(captureRecord["turnId"], "Turn ID");
+    const eventId = requireNonBlankString(captureRecord["eventId"], "Event ID");
+    const sourceAge = ownDataField(captureRecord, "sourceAgeStartedAtMs");
+    const sourceAgeStartedAtMs = sourceAge.present
+      ? requireSafeEpochMilliseconds(sourceAge.value, "Source age")
+      : undefined;
+    const priorAttempts = ownDataField(captureRecord, "priorDeliveryAttempts");
+    const priorDeliveryAttempts = priorAttempts.present
+      ? requireNonNegativeInteger(priorAttempts.value, "Prior delivery attempts")
+      : undefined;
+    const scope: CaptureScope = { integration, sessionId, turnId, eventId };
+    const previous = await captureStore.read(scope);
+    const projected = projectSubmission(
+      captureRecord["submission"],
+      integration,
+      previous === undefined ? undefined : previousRunContext(previous),
+    );
+    if (projected.status === "deferred") {
+      return { status: "deferred", reason: "missing-thread-identity" };
+    }
+    const turnEvidence = projectTurnEvidence(
+      captureRecord["turnEvidence"],
+      projected.value.payload.privacyMode,
+      deriveAttributionReadiness(captureRecord["submission"], integration),
+    );
+    const dependencies = captureRecord["dependencies"] as LifecycleCaptureInput["dependencies"];
+    const identityPresence =
+      projected.value.payload.operation === "post"
+        ? suppliedRunIdentityFields(captureRecord["submission"])
+        : undefined;
+    const captureProjected = (value: typeof projected.value) =>
+      coordinator.capture({
+        turnId,
+        eventId,
+        runId: value.payload.run.id,
+        destinationFingerprint: writer.accountFingerprint,
+        eventKind:
+          value.payload.operation === "post"
+            ? LIFECYCLE_POST_EVENT_KIND
+            : LIFECYCLE_PATCH_EVENT_KIND,
+        normalizedPayload: canonicalJsonValue(value.payload),
+        turnEvidence,
+        metadataProvenance: canonicalJsonValue(value.metadata),
+        ...(sourceAgeStartedAtMs === undefined ? {} : { sourceAgeStartedAtMs }),
+        ...(priorDeliveryAttempts === undefined ? {} : { priorDeliveryAttempts }),
+        ...(dependencies === undefined ? {} : { dependencies }),
+      });
+    let result = await captureProjected(projected.value);
+    if (
+      result.status === "conflict" &&
+      previous === undefined &&
+      identityPresence !== undefined &&
+      projected.value.payload.operation === "post"
+    ) {
+      const winner = await captureStore.read(scope);
+      if (winner?.runId === projected.value.payload.run.id) {
+        const run = { ...projected.value.payload.run };
+        if (!identityPresence.startTime) delete run.start_time;
+        if (!identityPresence.traceId) delete run.trace_id;
+        if (!identityPresence.dottedOrder) delete run.dotted_order;
+        const retry = projectSubmission(
+          { ...projected.value.payload, run, metadata: projected.value.metadata },
+          integration,
+          previousRunContext(winner),
+        );
+        if (retry.status === "ready") result = await captureProjected(retry.value);
+      }
+    }
+    if (result.status === "published" || result.status === "duplicate")
+      await wakeCapturedWork(result, () => wake?.());
+    return result;
+  };
   return Object.freeze({
     accountFingerprint: writer.accountFingerprint,
-    async capture(input: LifecycleCaptureInput): Promise<LifecycleCaptureResult> {
-      const capture = requirePlainRecord(
-        snapshotData(requirePlainRecord(input, "Lifecycle capture")),
-        "Lifecycle capture",
-      );
-      const turnId = requireNonBlankString(capture["turnId"], "Turn ID");
-      const eventId = requireNonBlankString(capture["eventId"], "Event ID");
-      const sourceAge = ownDataField(capture, "sourceAgeStartedAtMs");
-      const sourceAgeStartedAtMs = sourceAge.present
-        ? requireSafeEpochMilliseconds(sourceAge.value, "Source age")
-        : undefined;
-      const scope: CaptureScope = { integration, sessionId, turnId, eventId };
-      const previous = await captureStore.read(scope);
-      const projected = projectSubmission(
-        capture["submission"],
-        integration,
-        previous === undefined ? undefined : previousRunContext(previous),
-      );
-      if (projected.status === "deferred") {
-        return { status: "deferred", reason: "missing-thread-identity" };
-      }
-      const turnEvidence = projectTurnEvidence(
-        capture["turnEvidence"],
-        projected.value.payload.privacyMode,
-        deriveAttributionReadiness(capture["submission"], integration),
-      );
-      const dependencies = capture["dependencies"] as LifecycleCaptureInput["dependencies"];
-      const identityPresence =
-        projected.value.payload.operation === "post"
-          ? suppliedRunIdentityFields(capture["submission"])
-          : undefined;
-      const captureProjected = (value: typeof projected.value) =>
-        coordinator.capture({
-          turnId,
-          eventId,
-          runId: value.payload.run.id,
+    capture,
+    captureSnapshot(input: LifecycleSnapshotCaptureInput) {
+      return captureLifecycleSnapshot(
+        {
+          storageRoot,
+          integration,
+          sessionId,
           destinationFingerprint: writer.accountFingerprint,
-          eventKind:
-            value.payload.operation === "post"
-              ? LIFECYCLE_POST_EVENT_KIND
-              : LIFECYCLE_PATCH_EVENT_KIND,
-          normalizedPayload: canonicalJsonValue(value.payload),
-          turnEvidence,
-          metadataProvenance: canonicalJsonValue(value.metadata),
-          ...(sourceAgeStartedAtMs === undefined ? {} : { sourceAgeStartedAtMs }),
-          ...(dependencies === undefined ? {} : { dependencies }),
-        });
-      let result = await captureProjected(projected.value);
-      if (
-        result.status === "conflict" &&
-        previous === undefined &&
-        identityPresence !== undefined &&
-        projected.value.payload.operation === "post"
-      ) {
-        const winner = await captureStore.read(scope);
-        if (winner?.runId === projected.value.payload.run.id) {
-          const run = { ...projected.value.payload.run };
-          if (!identityPresence.startTime) delete run.start_time;
-          if (!identityPresence.traceId) delete run.trace_id;
-          if (!identityPresence.dottedOrder) delete run.dotted_order;
-          const retry = projectSubmission(
-            { ...projected.value.payload, run, metadata: projected.value.metadata },
-            integration,
-            previousRunContext(winner),
-          );
-          if (retry.status === "ready") result = await captureProjected(retry.value);
-        }
-      }
-      if (result.status === "published" || result.status === "duplicate")
-        await wakeCapturedWork(result, () => wake?.());
-      return result;
+          store: captureStore,
+          capture,
+          wake: async () => wake?.(),
+        },
+        input,
+      );
     },
     async drain(input: LifecycleDrainInput = {}) {
       const settlementLockDirectory = await ensurePrivateDirectory(storageRoot, [
@@ -197,7 +216,7 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
           sessionId,
           destinationFingerprint: writer.accountFingerprint,
           destinations: writer.destinations,
-          capture: (capture) => coordinator.capture(capture),
+          capture: (captureInput) => coordinator.capture(captureInput),
           readOutcome,
         });
         let result = first;
@@ -267,35 +286,6 @@ function previousRunContext(record: StoredCapture): NormalizedRunContext {
     context.dotted_order = requireNonBlankString(dottedOrder.value, "Dotted order");
   }
   return context;
-}
-
-function projectTurnEvidence(
-  value: unknown,
-  mode: "full" | "metadata",
-  attributionReady: boolean,
-): JsonValue {
-  const source = requirePlainRecord(value, "Lifecycle turn evidence");
-  const childRunIds = requireStringArray(
-    requireOwnDataField(source, "childRunIds"),
-    "Child run IDs",
-  ).map((runId) => requireNonBlankString(runId, "Child run ID"));
-  const closureState = requireOwnDataField(source, "closureState");
-  if (
-    typeof closureState !== "string" ||
-    !LIFECYCLE_TURN_CLOSURE_STATES.includes(closureState as LifecycleTurnEvidence["closureState"])
-  ) {
-    throw new TypeError("Lifecycle turn evidence has an invalid closure state");
-  }
-  const structural: LifecycleTurnEvidence = {
-    childRunIds,
-    closureState: closureState as LifecycleTurnEvidence["closureState"],
-  };
-  const persisted = { ...structural, [LIFECYCLE_ATTRIBUTION_READY_FIELD]: attributionReady };
-  const rootRunId = ownDataField(source, "rootRunId");
-  if (rootRunId.present && rootRunId.value !== undefined) {
-    persisted.rootRunId = requireNonBlankString(rootRunId.value, "Root run ID");
-  }
-  return canonicalJsonValue(mode === "metadata" ? persisted : { ...source, ...persisted });
 }
 
 function restoreSubmission(

@@ -8,7 +8,11 @@ import type {
   BackgroundWorkerWakeResult,
 } from "../background-worker/models.js";
 import type { DeliveryPolicy } from "../delivery/models.js";
-import type { LifecycleCaptureInput, LifecycleCaptureResult } from "../lifecycle/models.js";
+import type {
+  LifecycleCaptureInput,
+  LifecycleCaptureResult,
+  LifecycleSnapshotCaptureInput,
+} from "../lifecycle/models.js";
 import type { ReconstructionCallback, ReconstructionJobInput } from "../reconstruction/models.js";
 import type { LangSmithUploadWriterOptions } from "../upload/models.js";
 
@@ -65,6 +69,7 @@ export interface TracingEngineRecoveryReport {
 
 export interface TracingEngineSession {
   capture(input: LifecycleCaptureInput): Promise<LifecycleCaptureResult>;
+  captureSnapshot(input: LifecycleSnapshotCaptureInput): Promise<LifecycleCaptureResult>;
   queueReconstruction(input: ReconstructionJobInput): Promise<CaptureWriteResult>;
   wake(): Promise<BackgroundWorkerWakeResult>;
   drain(): Promise<BackgroundWorkerRunResult>;

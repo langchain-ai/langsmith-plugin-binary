@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import { eventPath } from "../../storage/capture/paths.js";
 import type { CaptureDependency, CaptureScope } from "../../storage/capture/models.js";
+import { canonicalJsonValue } from "../../utils/validation/objects.js";
 import { MUTED_TRACE_CONTENT } from "../../privacy/index.js";
 import type {
   LangSmithUploadDestinationConfig,
@@ -17,7 +18,12 @@ import type { LocalRequest } from "../../test-support/models/lifecycle.js";
 import { createLifecycleBridge } from "./index.js";
 import { createReconstructionWorker } from "../reconstruction/index.js";
 import type { ReconstructionJob } from "../reconstruction/models.js";
-import type { LifecycleCaptureInput, LifecycleTurnEvidence } from "./models.js";
+import type {
+  LifecycleCaptureInput,
+  LifecycleCaptureResult,
+  LifecycleSnapshotCaptureInput,
+  LifecycleTurnEvidence,
+} from "./models.js";
 
 const PRIVATE_MARKER = "lifecycle-private-content-marker";
 const PARENT_ID = "11111111-1111-4111-8111-111111111111";
@@ -103,6 +109,31 @@ function repositoryMetadata(branch: string): PreparedRunPostSubmission["metadata
   };
 }
 
+function snapshotInput(
+  eventId: string,
+  runOverrides: Partial<PreparedRunPostSubmission["run"]> = {},
+  metadataValue: PreparedRunPostSubmission["metadata"] = metadata("claude-code", "root"),
+  privacyMode: "full" | "metadata" = "full",
+  turnId = "turn-snapshot",
+): LifecycleSnapshotCaptureInput {
+  return {
+    turnId,
+    eventId,
+    submission: post(
+      PARENT_ID,
+      metadataValue,
+      {
+        start_time: "2026-10-10T12:00:00.000Z",
+        trace_id: PARENT_ID,
+        dotted_order: PARENT_DOTTED_ORDER,
+        ...runOverrides,
+      },
+      privacyMode,
+    ),
+    turnEvidence: evidence(),
+  };
+}
+
 function scope(turnId: string, eventId: string, sessionId = "session-1"): CaptureScope {
   return { integration: "claude-code", sessionId, turnId, eventId };
 }
@@ -150,6 +181,41 @@ async function reconstructRedactedSnapshot(job: ReconstructionJob) {
 }
 
 describe("durable run lifecycle bridge", () => {
+  it("preserves legacy failure counts across recreated delivery workers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-legacy-attempts-"));
+    const options = {
+      storageRoot: root,
+      integration: "claude-code" as const,
+      sessionId: "session-1",
+      writer: { destinations: [destination()], redact: false },
+      policy: { maxAttempts: 3 },
+    };
+    const bridge = createLifecycleBridge(options);
+    const input: LifecycleCaptureInput = {
+      turnId: "legacy-turn",
+      eventId: "legacy-event",
+      submission: post(PARENT_ID, metadata("claude-code", "root")),
+      turnEvidence: evidence(),
+      priorDeliveryAttempts: 1,
+    };
+    await expect(bridge.capture(input)).resolves.toMatchObject({ status: "published" });
+    failRequestIndexes = new Set([0, 1]);
+    await expect(bridge.drain()).resolves.toMatchObject({ failed: 1, dropped: 0, pending: 1 });
+    const restarted = createLifecycleBridge(options);
+    await expect(restarted.capture(input)).resolves.toMatchObject({ status: "duplicate" });
+    await expect(restarted.drain()).resolves.toMatchObject({ failed: 1, dropped: 1, pending: 0 });
+    await expect(restarted.drain()).resolves.toMatchObject({ failed: 0, pending: 0 });
+    expect(requests).toHaveLength(2);
+    await expect(
+      createCaptureStore(root).read(scope("legacy-turn", "legacy-event")),
+    ).resolves.toMatchObject({ priorDeliveryAttempts: 1 });
+    await expect(
+      restarted.capture({ ...input, eventId: "exhausted-legacy-event", priorDeliveryAttempts: 3 }),
+    ).resolves.toMatchObject({ status: "published" });
+    await expect(restarted.drain()).resolves.toMatchObject({ dropped: 1, pending: 0 });
+    expect(requests).toHaveLength(2);
+  });
+
   it("sends dependent creates and patches to localhost in prerequisite order", async () => {
     const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-dependent-"));
     const wake = vi.fn();
@@ -2027,6 +2093,532 @@ describe("durable run lifecycle bridge", () => {
       attributionReady: false,
     });
     expect(record?.dependencies).toEqual([scope("turn-prerequisite", "event-prerequisite")]);
+  });
+
+  it("replays reverts through ordered snapshot revisions after restart", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base lifecycle snapshot chain "));
+    const sessionId = "session-snapshot-chain";
+    const bridgeOptions = {
+      storageRoot: root,
+      integration: "claude-code" as const,
+      sessionId,
+      writer: { destinations: [destination()], redact: false },
+    };
+    const bridge = createLifecycleBridge(bridgeOptions);
+    const prerequisite = scope("turn-prerequisite", "event-prerequisite", sessionId);
+    await bridge.capture({
+      turnId: prerequisite.turnId,
+      eventId: prerequisite.eventId,
+      submission: post(SIBLING_ID, metadata("claude-code", "root")),
+      turnEvidence: evidence(),
+    });
+    const fixedTime = vi.spyOn(Date, "now").mockReturnValue(1_791_633_600_000);
+    const restartedBridge = createLifecycleBridge(bridgeOptions);
+    let firstResult: LifecycleCaptureResult | undefined;
+    let secondResult: LifecycleCaptureResult | undefined;
+    let thirdResult: LifecycleCaptureResult | undefined;
+    let duplicateResult: LifecycleCaptureResult | undefined;
+    try {
+      firstResult = await bridge.captureSnapshot({
+        ...snapshotInput(
+          "event-snapshot-post",
+          { outputs: { answer: "A" } },
+          metadata("claude-code", "root"),
+          "full",
+          "turn-snapshot-chain",
+        ),
+        dependencies: [prerequisite],
+      });
+      secondResult = await bridge.captureSnapshot({
+        ...snapshotInput(
+          "event-snapshot-b",
+          { outputs: { answer: "B" } },
+          metadata("claude-code", "root"),
+          "full",
+          "turn-snapshot-chain",
+        ),
+        dependencies: [prerequisite],
+      });
+      thirdResult = await restartedBridge.captureSnapshot(
+        snapshotInput(
+          "event-snapshot-revert",
+          { outputs: { answer: "A" } },
+          metadata("claude-code", "root"),
+          "full",
+          "turn-snapshot-chain",
+        ),
+      );
+      duplicateResult = await restartedBridge.captureSnapshot(
+        snapshotInput(
+          "event-snapshot-retry",
+          { outputs: { answer: "A" } },
+          metadata("claude-code", "root"),
+          "full",
+          "turn-snapshot-chain",
+        ),
+      );
+    } finally {
+      fixedTime.mockRestore();
+    }
+
+    expect(firstResult.status).toBe("published");
+    expect(secondResult.status).toBe("published");
+    expect(thirdResult.status).toBe("published");
+    expect(duplicateResult.status).toBe("duplicate");
+    const records = (
+      await createCaptureStore(root).enumerateTurn("claude-code", sessionId, "turn-snapshot-chain")
+    )
+      .map(({ record, capturedAtMs }) => ({ record, capturedAtMs }))
+      .filter(({ record }) => record.runId === PARENT_ID)
+      .toSorted((left, right) => left.record.eventId.localeCompare(right.record.eventId));
+    expect(records).toHaveLength(3);
+    expect(records.map(({ capturedAtMs }) => capturedAtMs)).toEqual([
+      1_791_633_600_000, 1_791_633_600_000, 1_791_633_600_000,
+    ]);
+    const postRecord = records.find(
+      ({ record }) => record.eventId === "event-snapshot-post",
+    )!.record;
+    const revisions = records
+      .filter(({ record }) => record !== postRecord)
+      .map(({ record }) => record);
+    const revisionPrefix = `run-snapshot-v1:${createHash("sha256")
+      .update(`claude-code\0${sessionId}\0turn-snapshot-chain\0${PARENT_ID}`)
+      .digest("hex")}:`;
+    expect(revisions.map(({ eventId }) => eventId)).toEqual([
+      `${revisionPrefix}000000000001`,
+      `${revisionPrefix}000000000002`,
+    ]);
+    expect(postRecord.dependencies).toEqual([prerequisite]);
+    expect(revisions[0]?.dependencies).toEqual([
+      scope("turn-snapshot-chain", postRecord.eventId, sessionId),
+      prerequisite,
+    ]);
+    expect(revisions[1]?.dependencies).toEqual([
+      scope("turn-snapshot-chain", revisions[0]!.eventId, sessionId),
+    ]);
+
+    await expect(restartedBridge.drain()).resolves.toMatchObject({
+      status: "drained",
+      delivered: 4,
+      pending: 0,
+    });
+    expect(
+      requests.map(({ method, payload }) => [method, payload["id"], payload["outputs"]]),
+    ).toEqual([
+      ["POST", SIBLING_ID, undefined],
+      ["POST", PARENT_ID, { answer: "A" }],
+      ["PATCH", undefined, { answer: "B" }],
+      ["PATCH", undefined, { answer: "A" }],
+    ]);
+    const revisionPath = eventPath(root, {
+      integration: "claude-code",
+      sessionId,
+      turnId: "turn-snapshot-chain",
+      eventId: revisions[1]!.eventId,
+    });
+    const corruptedRevision = JSON.parse(await readFile(revisionPath, "utf8")) as {
+      dependencies: CaptureDependency[];
+    };
+    corruptedRevision.dependencies = [scope("turn-snapshot-chain", postRecord.eventId, sessionId)];
+    await writeFile(revisionPath, JSON.stringify(corruptedRevision));
+    await expect(
+      restartedBridge.captureSnapshot(
+        snapshotInput(
+          "event-snapshot-invalid-chain",
+          { outputs: { answer: "A" } },
+          metadata("claude-code", "root"),
+          "full",
+          "turn-snapshot-chain",
+        ),
+      ),
+    ).resolves.toEqual({ status: "conflict" });
+  });
+
+  it("retains omitted optional fields and patches explicit empty collections", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-snapshot-fields-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-snapshot-fields",
+      writer: { destinations: [destination()], redact: false },
+    });
+    const turnId = "turn-snapshot-fields";
+    await bridge.captureSnapshot(
+      snapshotInput(
+        "event-snapshot-fields-post",
+        {
+          outputs: { answer: "kept" },
+          end_time: "2026-10-10T12:00:01.000Z",
+          error: "kept error",
+          tags: ["kept"],
+          serialized: { type: "chain" },
+          events: [{ name: "tool", message: "kept" }] as never,
+          reference_example_id: "44444444-4444-4444-8444-444444444444",
+        },
+        metadata("claude-code", "root"),
+        "full",
+        turnId,
+      ),
+    );
+    await expect(
+      bridge.captureSnapshot(
+        snapshotInput(
+          "event-snapshot-fields-omitted",
+          {},
+          metadata("claude-code", "root"),
+          "full",
+          turnId,
+        ),
+      ),
+    ).resolves.toMatchObject({ status: "duplicate" });
+    await expect(
+      bridge.captureSnapshot(
+        snapshotInput(
+          "event-snapshot-fields-cleared",
+          {
+            inputs: {},
+            outputs: {},
+            tags: [],
+            serialized: {},
+            events: [],
+          },
+          metadata("claude-code", "root"),
+          "full",
+          turnId,
+        ),
+      ),
+    ).resolves.toMatchObject({ status: "published" });
+
+    const revisions = (
+      await createCaptureStore(root).enumerateTurn("claude-code", "session-snapshot-fields", turnId)
+    )
+      .map(({ record }) => record)
+      .filter(({ eventKind }) => eventKind === "run-patch");
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]?.normalizedPayload).toMatchObject({
+      patch: {
+        fields: ["inputs", "outputs", "tags", "serialized", "events"],
+        values: { inputs: {}, outputs: {}, tags: [], serialized: {}, events: [] },
+      },
+    });
+    expect(revisions[0]?.normalizedPayload).not.toMatchObject({
+      patch: { values: { end_time: expect.anything(), error: expect.anything() } },
+    });
+  });
+
+  it("deduplicates concurrent captures of the same latest snapshot", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-snapshot-race-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-snapshot-race",
+      writer: { destinations: [destination()], redact: false },
+    });
+    await bridge.captureSnapshot(snapshotInput("event-snapshot-race-post", {}));
+    const next = snapshotInput("event-snapshot-race-next", { outputs: { result: "done" } });
+    const results = await Promise.all([bridge.captureSnapshot(next), bridge.captureSnapshot(next)]);
+
+    expect(results.map(({ status }) => status).toSorted()).toEqual(["duplicate", "published"]);
+    const runCaptures = (
+      await createCaptureStore(root).enumerateTurn(
+        "claude-code",
+        "session-snapshot-race",
+        "turn-snapshot",
+      )
+    ).filter(({ record }) => record.runId === PARENT_ID);
+    expect(runCaptures).toHaveLength(2);
+  });
+
+  it("retries waking an unchanged snapshot after the saved capture's wake fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-snapshot-wake-retry-"));
+    const failure = new Error("injected wake failure");
+    let attempts = 0;
+    const wake = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) throw failure;
+    });
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-snapshot-wake-retry",
+      writer: { destinations: [destination()], redact: false },
+      wake,
+    });
+    const input = snapshotInput("event-snapshot-wake-retry-post", {});
+
+    await expect(bridge.captureSnapshot(input)).rejects.toMatchObject({
+      captureResult: { status: "published", record: { eventId: input.eventId } },
+      cause: failure,
+    });
+    await expect(bridge.captureSnapshot(input)).resolves.toMatchObject({ status: "duplicate" });
+    expect(wake).toHaveBeenCalledTimes(2);
+  });
+
+  it("records new dependencies in a revision even when the run snapshot is unchanged", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-snapshot-dependency-only-"));
+    const sessionId = "session-snapshot-dependency-only";
+    const turnId = "turn-snapshot-dependency-only";
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId,
+      writer: { destinations: [destination()], redact: false },
+    });
+    const input = snapshotInput(
+      "event-snapshot-dependency-only-post",
+      {},
+      undefined,
+      "full",
+      turnId,
+    );
+    await bridge.captureSnapshot(input);
+
+    await expect(
+      bridge.captureSnapshot({
+        ...input,
+        dependencies: [scope(turnId, "event-new-prerequisite", sessionId)],
+      }),
+    ).resolves.toMatchObject({ status: "published" });
+    await expect(
+      bridge.captureSnapshot({
+        ...input,
+        eventId: "event-snapshot-dependency-only-next",
+        dependencies: [scope(turnId, "event-next-prerequisite", sessionId)],
+      }),
+    ).resolves.toMatchObject({ status: "published" });
+    await expect(
+      createCaptureStore(root).enumerateTurn("claude-code", sessionId, turnId),
+    ).resolves.toMatchObject([
+      { record: { eventId: input.eventId } },
+      {
+        record: {
+          eventKind: "run-patch",
+          dependencies: [
+            scope(turnId, input.eventId, sessionId),
+            scope(turnId, "event-new-prerequisite", sessionId),
+          ],
+          normalizedPayload: { patch: { fields: [], values: {} } },
+        },
+      },
+      {
+        record: {
+          eventKind: "run-patch",
+          dependencies: [
+            scope(turnId, expect.stringContaining("run-snapshot-v1:"), sessionId),
+            scope(turnId, "event-next-prerequisite", sessionId),
+          ],
+          normalizedPayload: { patch: { fields: [], values: {} } },
+        },
+      },
+    ]);
+  });
+
+  it("rejects run identity, privacy, and destination changes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-snapshot-reject-"));
+    const options = {
+      storageRoot: root,
+      integration: "claude-code" as const,
+      sessionId: "session-snapshot-reject",
+      writer: { destinations: [destination()], redact: false },
+    };
+    const bridge = createLifecycleBridge(options);
+    await bridge.captureSnapshot(snapshotInput("event-snapshot-reject-post", {}));
+
+    await expect(
+      bridge.captureSnapshot(
+        snapshotInput("event-snapshot-identity-change", {
+          start_time: "2026-10-10T12:00:00.001Z",
+        }),
+      ),
+    ).rejects.toThrow("Run identity changed");
+    await expect(
+      bridge.captureSnapshot(
+        snapshotInput(
+          "event-snapshot-privacy-change",
+          {},
+          metadata("claude-code", "root"),
+          "metadata",
+        ),
+      ),
+    ).resolves.toEqual({ status: "conflict" });
+    await expect(
+      createLifecycleBridge({
+        ...options,
+        writer: {
+          destinations: [{ ...destination(), projectName: "other-project" }],
+          redact: false,
+        },
+      }).captureSnapshot(snapshotInput("event-snapshot-account-change", {})),
+    ).resolves.toEqual({ status: "conflict" });
+    await expect(
+      createCaptureStore(root).enumerateTurn("claude-code", options.sessionId, "turn-snapshot"),
+    ).resolves.toHaveLength(1);
+  });
+
+  it("keeps settlement patches outside the snapshot revision head and rejects other patches", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-snapshot-settlement-"));
+    const sessionId = "session-snapshot-settlement";
+    const turnId = "turn-snapshot-settlement";
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId,
+      writer: { destinations: [destination()], redact: false },
+    });
+    const postResult = await bridge.captureSnapshot(
+      snapshotInput(
+        "event-snapshot-settlement-post",
+        { outputs: { answer: "before" } },
+        metadata("claude-code", "root"),
+        "full",
+        turnId,
+      ),
+    );
+    if (postResult.status !== "published") throw new Error("Snapshot post was not published");
+    const store = createCaptureStore(root);
+    await store.capture({
+      integration: "claude-code",
+      sessionId,
+      turnId,
+      eventId: `turn-settlement-${"a".repeat(64)}`,
+      runId: PARENT_ID,
+      destinationFingerprint: bridge.accountFingerprint,
+      eventKind: "run-settlement-patch",
+      normalizedPayload: canonicalJsonValue({
+        operation: "patch",
+        integration: "claude-code",
+        privacyMode: "full",
+        metadata: metadata("claude-code", "root"),
+        run: {
+          id: PARENT_ID,
+          name: "test run",
+          run_type: "chain",
+          start_time: "2026-10-10T12:00:00.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+        },
+        privacyContext: { status: "running" },
+        patch: { fields: [], values: {} },
+      }),
+      turnEvidence: { childRunIds: [], closureState: "open" },
+      metadataProvenance: canonicalJsonValue(metadata("claude-code", "root")),
+      dependencies: [scope(turnId, postResult.record.eventId, sessionId)],
+    });
+
+    await expect(
+      bridge.captureSnapshot(
+        snapshotInput(
+          "event-snapshot-after-settlement",
+          { outputs: { answer: "after" } },
+          metadata("claude-code", "root"),
+          "full",
+          turnId,
+        ),
+      ),
+    ).resolves.toMatchObject({ status: "published" });
+    await expect(
+      bridge.captureSnapshot(
+        snapshotInput(
+          "event-snapshot-after-settlement-again",
+          { outputs: { answer: "after again" } },
+          metadata("claude-code", "root"),
+          "full",
+          turnId,
+        ),
+      ),
+    ).resolves.toMatchObject({ status: "published" });
+    const patchRecord = (await store.enumerateTurn("claude-code", sessionId, turnId))
+      .map(({ record }) => record)
+      .find(({ eventKind }) => eventKind === "run-patch");
+    expect(patchRecord?.dependencies).toEqual([
+      scope(turnId, postResult.record.eventId, sessionId),
+    ]);
+    await expect(store.enumerateTurn("claude-code", sessionId, turnId)).resolves.toHaveLength(4);
+
+    await store.capture({
+      integration: "claude-code",
+      sessionId,
+      turnId,
+      eventId: "foreign-patch",
+      runId: PARENT_ID,
+      destinationFingerprint: bridge.accountFingerprint,
+      eventKind: "run-patch",
+      normalizedPayload: { operation: "patch" },
+      turnEvidence: { childRunIds: [], closureState: "open" },
+      metadataProvenance: {},
+    });
+    await expect(
+      bridge.captureSnapshot(
+        snapshotInput(
+          "event-snapshot-after-foreign-patch",
+          { outputs: { answer: "last" } },
+          metadata("claude-code", "root"),
+          "full",
+          turnId,
+        ),
+      ),
+    ).resolves.toEqual({ status: "conflict" });
+  });
+
+  it("rejects snapshot-incompatible settlement redactions and privacy status", async () => {
+    const cases = [
+      { suffix: "redactions", redactedFields: ["inputs"], status: "running", invalidStatus: false },
+      { suffix: "privacy", redactedFields: ["outputs"], status: "pending", invalidStatus: true },
+    ] as const;
+    for (const testCase of cases) {
+      const root = await mkdtemp(join(tmpdir(), `plugins-base-settlement-${testCase.suffix}-`));
+      const sessionId = `session-snapshot-settlement-${testCase.suffix}`;
+      const turnId = `turn-snapshot-settlement-${testCase.suffix}`;
+      const bridge = createLifecycleBridge({
+        storageRoot: root,
+        integration: "claude-code",
+        sessionId,
+        writer: { destinations: [destination()], redact: false },
+      });
+      const input = snapshotInput(
+        `event-snapshot-settlement-${testCase.suffix}-post`,
+        {},
+        metadata("claude-code", "root"),
+        "full",
+        turnId,
+      );
+      input.submission = { ...input.submission, redactedFields: ["outputs"] };
+      await bridge.captureSnapshot(input);
+      await createCaptureStore(root).capture({
+        integration: "claude-code",
+        sessionId,
+        turnId,
+        eventId: `turn-settlement-${"b".repeat(64)}`,
+        runId: PARENT_ID,
+        destinationFingerprint: bridge.accountFingerprint,
+        eventKind: "run-settlement-patch",
+        normalizedPayload: canonicalJsonValue({
+          operation: "patch",
+          integration: "claude-code",
+          privacyMode: "full",
+          redactedFields: testCase.redactedFields,
+          run: input.submission.run,
+          privacyContext: { status: testCase.status },
+          patch: { fields: [], values: {} },
+        }),
+        turnEvidence: { childRunIds: [], closureState: "open" },
+        metadataProvenance: canonicalJsonValue(input.submission.metadata),
+        dependencies: [scope(turnId, input.eventId, sessionId)],
+      });
+      const retry = {
+        ...input,
+        eventId: `event-snapshot-settlement-${testCase.suffix}-retry`,
+        submission: {
+          ...input.submission,
+          run: { ...input.submission.run, outputs: { answer: "new" } },
+        },
+      };
+      if (testCase.invalidStatus) {
+        await expect(bridge.captureSnapshot(retry)).rejects.toThrow("Invalid run privacy status");
+      } else {
+        await expect(bridge.captureSnapshot(retry)).resolves.toEqual({ status: "conflict" });
+      }
+    }
   });
 
   it("snapshots the wake callback when the bridge is created", async () => {

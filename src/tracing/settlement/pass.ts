@@ -461,6 +461,9 @@ function patchPayload(
     operation: "patch",
     integration,
     privacyMode: source.payload.privacyMode,
+    ...(source.payload.redactedFields === undefined
+      ? {}
+      : { redactedFields: source.payload.redactedFields }),
     metadata,
     run: {
       id: context.id,

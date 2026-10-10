@@ -95,3 +95,9 @@ export function requireSafeEpochMilliseconds(value: unknown, name: string): numb
   }
   return value;
 }
+
+export function requireNonNegativeInteger(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    throw new TypeError(`${name} must be a non-negative safe integer`);
+  return value;
+}

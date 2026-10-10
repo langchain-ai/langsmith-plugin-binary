@@ -11,5 +11,17 @@ export const LIFECYCLE_SETTLEMENT_LOCK_FILE = "drain";
 export const LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY = "integrations";
 export const LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY = "sessions";
 export const LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY = "accounts";
+export const LIFECYCLE_SNAPSHOT_LOCK_DIRECTORY = "lifecycle-snapshot-v1";
+export const LIFECYCLE_SNAPSHOT_LOCK_FILE = "capture";
+export const LIFECYCLE_SNAPSHOT_REVISION_EVENT_ID_PREFIX = "run-snapshot-v1:";
+export const LIFECYCLE_SNAPSHOT_OPTIONAL_RUN_FIELDS = [
+    "outputs",
+    "end_time",
+    "error",
+    "tags",
+    "serialized",
+    "events",
+    "reference_example_id",
+];
 export const LIFECYCLE_TURN_CLOSURE_STATES = ["open", "provisional", "authoritative"];
 //# sourceMappingURL=constants.js.map

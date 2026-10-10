@@ -75,4 +75,9 @@ export function requireSafeEpochMilliseconds(value, name) {
     }
     return value;
 }
+export function requireNonNegativeInteger(value, name) {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+        throw new TypeError(`${name} must be a non-negative safe integer`);
+    return value;
+}
 //# sourceMappingURL=objects.js.map

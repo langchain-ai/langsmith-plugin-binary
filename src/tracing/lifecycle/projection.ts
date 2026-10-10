@@ -10,9 +10,11 @@ import {
   type CodingAgentPrivacyContext,
   type CodingAgentPrivacyStatus,
 } from "../../privacy/index.js";
+import type { JsonValue } from "../../storage/capture/models.js";
 import {
   canonicalJsonArray,
   canonicalJsonObject,
+  canonicalJsonValue,
   ownDataField,
   requireNonBlankString,
   requireOwnDataField,
@@ -31,7 +33,13 @@ import type {
   NormalizedRunSnapshot,
 } from "../upload/models.js";
 import { createRunIdentity } from "./identity.js";
-import type { ProjectedSubmission, RunIdentity, SubmissionProjectionResult } from "./models.js";
+import type {
+  LifecycleTurnEvidence,
+  ProjectedSubmission,
+  RunIdentity,
+  SubmissionProjectionResult,
+} from "./models.js";
+import { LIFECYCLE_ATTRIBUTION_READY_FIELD, LIFECYCLE_TURN_CLOSURE_STATES } from "./constants.js";
 
 export function projectSubmission(
   value: unknown,
@@ -82,6 +90,7 @@ export function projectSubmission(
         run: privacyMode === "metadata" ? projectPost(run, metadata.value, status) : run,
       },
       metadata: metadata.value,
+      privacyStatus: status,
     };
     return { status: "ready", value: projected };
   }
@@ -114,8 +123,38 @@ export function projectSubmission(
           : patch,
     },
     metadata: metadata.value,
+    privacyStatus: privacyContext.status,
   };
   return { status: "ready", value: projected };
+}
+
+export function projectTurnEvidence(
+  value: unknown,
+  mode: "full" | "metadata",
+  attributionReady: boolean,
+): JsonValue {
+  const source = requirePlainRecord(value, "Lifecycle turn evidence");
+  const childRunIds = requireStringArray(
+    requireOwnDataField(source, "childRunIds"),
+    "Child run IDs",
+  ).map((runId) => requireNonBlankString(runId, "Child run ID"));
+  const closureState = requireOwnDataField(source, "closureState");
+  if (
+    typeof closureState !== "string" ||
+    !LIFECYCLE_TURN_CLOSURE_STATES.includes(closureState as LifecycleTurnEvidence["closureState"])
+  ) {
+    throw new TypeError("Lifecycle turn evidence has an invalid closure state");
+  }
+  const structural: LifecycleTurnEvidence = {
+    childRunIds,
+    closureState: closureState as LifecycleTurnEvidence["closureState"],
+  };
+  const persisted = { ...structural, [LIFECYCLE_ATTRIBUTION_READY_FIELD]: attributionReady };
+  const rootRunId = ownDataField(source, "rootRunId");
+  if (rootRunId.present && rootRunId.value !== undefined) {
+    persisted.rootRunId = requireNonBlankString(rootRunId.value, "Root run ID");
+  }
+  return canonicalJsonValue(mode === "metadata" ? persisted : { ...source, ...persisted });
 }
 
 function projectPost(

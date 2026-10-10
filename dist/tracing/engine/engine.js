@@ -47,6 +47,9 @@ export function createTracingEngine(options) {
             async capture(input) {
                 return lifecycleBridge.capture(input);
             },
+            async captureSnapshot(input) {
+                return lifecycleBridge.captureSnapshot(input);
+            },
             async queueReconstruction(input) {
                 const result = await reconstructionWorker.enqueue(input);
                 if (result.status === "published" || result.status === "duplicate")

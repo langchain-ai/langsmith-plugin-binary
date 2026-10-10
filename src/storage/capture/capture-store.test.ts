@@ -72,6 +72,23 @@ async function runCaptureChild(root: string, input: CaptureInput): Promise<strin
 }
 
 describe("immutable capture storage", () => {
+  it("rejects invalid imported delivery failure counts before writing and after reload", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input = { ...captureInput(), priorDeliveryAttempts: 2 };
+    for (const priorDeliveryAttempts of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, null, "2"]) {
+      await expect(
+        store.capture({ ...input, priorDeliveryAttempts } as CaptureInput),
+      ).resolves.toMatchObject({ status: "failed", code: "SERIALIZATION_FAILED" });
+    }
+    await expect(store.enumerate(input.integration, input.sessionId)).resolves.toEqual([]);
+    await expect(store.capture(input)).resolves.toMatchObject({ status: "published" });
+    const path = eventPath(root, input);
+    const saved = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, JSON.stringify({ ...saved, priorDeliveryAttempts: -1 }));
+    await expect(store.read(input)).rejects.toThrow("prior delivery attempts");
+  });
+
   it("keeps event payload and turn evidence together and distinguishes revisions of one run", async () => {
     const store = createCaptureStore(temporaryRoot());
     const first = captureInput("native-start");
@@ -193,6 +210,21 @@ describe("immutable capture storage", () => {
       status: "duplicate",
       record: { capturedAtMs: persisted.capturedAtMs },
     });
+  });
+
+  it("enumerates only the requested turn and validates its live event files", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const first = captureInput("turn-one-event");
+    const otherTurn = { ...captureInput("turn-two-event"), turnId: "turn-2" };
+    await store.capture(first);
+    await store.capture(otherTurn);
+    writeFileSync(eventPath(root, otherTurn), "invalid record");
+
+    await expect(
+      store.enumerateTurn(first.integration, first.sessionId, first.turnId),
+    ).resolves.toMatchObject([{ record: { eventId: first.eventId, runId: first.runId } }]);
+    await expect(store.enumerate(first.integration, first.sessionId)).rejects.toThrow();
   });
 
   it("discovers session IDs from validated records instead of directory hashes", async () => {

@@ -8,6 +8,7 @@ const TURN_REPOSITORY_KEYS = [
 const REPOSITORY_METADATA_KEYS = [...TURN_REPOSITORY_KEYS, "ls_attribution_identifier"];
 const REPOSITORY_NAME_KEY = "repository_name";
 const ATTRIBUTION_IDENTIFIER_KEY = "ls_attribution_identifier";
-const SETTLEMENT_EVENT_ID_PREFIX = "turn-settlement-";
-export { ATTRIBUTION_IDENTIFIER_KEY, REPOSITORY_METADATA_KEYS, REPOSITORY_NAME_KEY, SETTLEMENT_EVENT_ID_PREFIX, };
+export const SETTLEMENT_EVENT_ID_PREFIX = "turn-settlement-";
+export const SETTLEMENT_EVENT_ID_PATTERN = /^turn-settlement-[0-9a-f]{64}$/u;
+export { ATTRIBUTION_IDENTIFIER_KEY, REPOSITORY_METADATA_KEYS, REPOSITORY_NAME_KEY };
 //# sourceMappingURL=constants.js.map

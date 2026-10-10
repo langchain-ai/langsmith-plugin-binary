@@ -31,7 +31,10 @@ import {
 import { ensurePrivateDirectory, publishExclusive, readPrivateFile } from "./utils/atomic-file.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
-import { requireSafeEpochMilliseconds } from "../../utils/validation/objects.js";
+import {
+  requireNonNegativeInteger,
+  requireSafeEpochMilliseconds,
+} from "../../utils/validation/objects.js";
 
 export function createCaptureStore(root: string): CaptureStore {
   const storageRoot = resolve(root);
@@ -64,6 +67,14 @@ export function createCaptureStore(root: string): CaptureStore {
                 sourceAgeStartedAtMs: requireSafeEpochMilliseconds(
                   input.sourceAgeStartedAtMs,
                   "Source age",
+                ),
+              }),
+          ...(input.priorDeliveryAttempts === undefined
+            ? {}
+            : {
+                priorDeliveryAttempts: requireNonNegativeInteger(
+                  input.priorDeliveryAttempts,
+                  "Prior delivery attempts",
                 ),
               }),
           ...(dependencies === undefined ? {} : { dependencies }),
@@ -141,6 +152,9 @@ export function createCaptureStore(root: string): CaptureStore {
         }
       }
       return captures.toSorted(compareCaptures);
+    },
+    async enumerateTurn(integration, sessionId, turnId): Promise<EnumeratedCapture[]> {
+      return enumerateTurnCaptures(storageRoot, integration, sessionId, turnId);
     },
     async enumerateSessions(integration) {
       validateIntegration(integration);
@@ -255,6 +269,58 @@ function compareCaptures(left: EnumeratedCapture, right: EnumeratedCapture): num
   return left.record.eventId < right.record.eventId ? -1 : 1;
 }
 
+async function enumerateTurnCaptures(
+  root: string,
+  integration: string,
+  sessionId: string,
+  turnId: string,
+): Promise<EnumeratedCapture[]> {
+  validateIntegration(integration);
+  validateIdentifier(sessionId, "session ID");
+  validateIdentifier(turnId, "turn ID");
+  const turnsDirectory = join(
+    captureDirectory(root),
+    "integrations",
+    integration,
+    "sessions",
+    identifierHash(sessionId),
+    "turns",
+  );
+  const turns = await listPrivateDirectory(root, turnsDirectory);
+  if (turns === undefined) return [];
+  const turnHash = identifierHash(turnId);
+  const turn = turns.find((entry) => entry.name === turnHash);
+  if (turn === undefined) return [];
+  if (!turn.isDirectory() || turn.isSymbolicLink())
+    throw new Error("Invalid capture turn directory");
+  const eventDirectory = join(turnsDirectory, turnHash, "events");
+  const events = await listPrivateDirectory(root, eventDirectory);
+  if (events === undefined) return [];
+  const captures: EnumeratedCapture[] = [];
+  for (const event of events) {
+    if (event.isSymbolicLink() || !event.isFile())
+      throw new Error("Capture event must be a regular file");
+    if (CAPTURE_STAGING_FILE.test(event.name)) continue;
+    if (!CAPTURE_EVENT_FILE.test(event.name)) throw new Error("Invalid capture event path");
+    const path = join(eventDirectory, event.name);
+    const record = await readRecord(root, path);
+    if (
+      record === undefined ||
+      record.integration !== integration ||
+      record.sessionId !== sessionId ||
+      record.turnId !== turnId ||
+      `${identifierHash(record.eventId)}.json` !== event.name
+    ) {
+      throw new Error("Capture event namespace does not match");
+    }
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink() || !Number.isFinite(info.mtimeMs))
+      throw new Error("Capture event must be a regular file");
+    captures.push({ record, capturedAtMs: record.capturedAtMs });
+  }
+  return captures.toSorted(compareCaptures);
+}
+
 async function enumerateSession(
   root: string,
   integration: string,
@@ -353,6 +419,8 @@ async function readRecord(root: string, path: string): Promise<StoredCapture | u
   if ("sourceAgeStartedAtMs" in value) {
     requireSafeEpochMilliseconds(value["sourceAgeStartedAtMs"], "Stored source age");
   }
+  if ("priorDeliveryAttempts" in value)
+    requireNonNegativeInteger(value["priorDeliveryAttempts"], "Stored prior delivery attempts");
   for (const [identifier, name] of [
     [value.runId, "run ID"],
     [value.destinationFingerprint, "destination fingerprint"],

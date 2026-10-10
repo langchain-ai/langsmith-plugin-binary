@@ -1,9 +1,10 @@
 import { buildCodingAgentMetadata, prepareCodingAgentMetadataProvenance, } from "../../metadata/index.js";
 import { createCodingAgentRunTree, survivingCodingAgentPatchFields, } from "../../privacy/index.js";
-import { canonicalJsonArray, canonicalJsonObject, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireString, requireStringArray, requireTimestamp, } from "../../utils/validation/objects.js";
+import { canonicalJsonArray, canonicalJsonObject, canonicalJsonValue, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireString, requireStringArray, requireTimestamp, } from "../../utils/validation/objects.js";
 import { normalizedRedactedFields } from "../upload/redaction.js";
 import { UPLOAD_PATCH_FIELDS } from "../upload/constants.js";
 import { createRunIdentity } from "./identity.js";
+import { LIFECYCLE_ATTRIBUTION_READY_FIELD, LIFECYCLE_TURN_CLOSURE_STATES } from "./constants.js";
 export function projectSubmission(value, integration, priorIdentity) {
     const source = requirePlainRecord(value, "Prepared run submission");
     if (requireOwnDataField(source, "integration") !== integration) {
@@ -39,6 +40,7 @@ export function projectSubmission(value, integration, priorIdentity) {
                 run: privacyMode === "metadata" ? projectPost(run, metadata.value, status) : run,
             },
             metadata: metadata.value,
+            privacyStatus: status,
         };
         return { status: "ready", value: projected };
     }
@@ -61,8 +63,28 @@ export function projectSubmission(value, integration, priorIdentity) {
                 : patch,
         },
         metadata: metadata.value,
+        privacyStatus: privacyContext.status,
     };
     return { status: "ready", value: projected };
+}
+export function projectTurnEvidence(value, mode, attributionReady) {
+    const source = requirePlainRecord(value, "Lifecycle turn evidence");
+    const childRunIds = requireStringArray(requireOwnDataField(source, "childRunIds"), "Child run IDs").map((runId) => requireNonBlankString(runId, "Child run ID"));
+    const closureState = requireOwnDataField(source, "closureState");
+    if (typeof closureState !== "string" ||
+        !LIFECYCLE_TURN_CLOSURE_STATES.includes(closureState)) {
+        throw new TypeError("Lifecycle turn evidence has an invalid closure state");
+    }
+    const structural = {
+        childRunIds,
+        closureState: closureState,
+    };
+    const persisted = { ...structural, [LIFECYCLE_ATTRIBUTION_READY_FIELD]: attributionReady };
+    const rootRunId = ownDataField(source, "rootRunId");
+    if (rootRunId.present && rootRunId.value !== undefined) {
+        persisted.rootRunId = requireNonBlankString(rootRunId.value, "Root run ID");
+    }
+    return canonicalJsonValue(mode === "metadata" ? persisted : { ...source, ...persisted });
 }
 function projectPost(run, metadata, status) {
     const tree = createCodingAgentRunTree({

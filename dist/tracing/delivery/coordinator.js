@@ -111,7 +111,8 @@ async function drainLocked(captureStore, attemptStore, integration, sessionId, p
                     continue;
                 }
                 const attemptCount = await attemptStore.count(candidate.scope, destination.id);
-                if (attemptCount >= policy.maxAttempts) {
+                const remainingAttempts = policy.maxAttempts - (candidate.entry.record.priorDeliveryAttempts ?? 0);
+                if (attemptCount >= remainingAttempts) {
                     dropped += await recordDropped(drainCache, candidate.scope, destination.id, DELIVERY_RETRY_EXHAUSTED_REASON);
                     progressed = true;
                     continue;
@@ -125,7 +126,7 @@ async function drainLocked(captureStore, attemptStore, integration, sessionId, p
                 }
                 catch {
                     failed += 1;
-                    if (attempt >= policy.maxAttempts) {
+                    if (attempt >= remainingAttempts) {
                         dropped += await recordDropped(drainCache, candidate.scope, destination.id, DELIVERY_RETRY_EXHAUSTED_REASON);
                         progressed = true;
                     }

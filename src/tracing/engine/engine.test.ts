@@ -7,9 +7,11 @@ import { pathToFileURL } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import type { LocalRequest } from "../../test-support/models/lifecycle.js";
 import type { TestArea } from "../../test-support/models/engine.js";
+import { createCaptureStore } from "../../storage/capture/index.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import type { LangSmithUploadWriterOptions, PreparedRunPostSubmission } from "../upload/models.js";
 import { workerPendingPath } from "../background-worker/paths.js";
+import type { LifecycleSnapshotCaptureInput } from "../lifecycle/models.js";
 import { createTracingEngine } from "./engine.js";
 import { CaptureWakeError } from "../index.js";
 import type {
@@ -237,6 +239,73 @@ it("distinguishes saved captures from invalid retries after a failed wake", asyn
   await expect(invalid).rejects.not.toBeInstanceOf(CaptureWakeError);
 });
 
+it("forwards session snapshots through the shared revision capture", async () => {
+  const area = createArea();
+  const failure = new Error("injected launcher failure");
+  const session = createTracingEngine({ storageRoot: area.root, integration, writer }).forSession({
+    sessionId,
+    resolveScope: (expected) => expected,
+    scheduleWake: () => {
+      throw failure;
+    },
+    reconstruct: async () => ({ status: "deferred", reason: "missing-thread-identity" }),
+  });
+  const runId = "11111111-1111-4111-8111-111111111111";
+  const input: LifecycleSnapshotCaptureInput = {
+    turnId: "turn-engine-snapshot",
+    eventId: "event-engine-snapshot",
+    submission: {
+      operation: "post" as const,
+      integration,
+      privacyMode: "full" as const,
+      metadata: {
+        integration,
+        threadId: sessionId,
+        agentType: "root" as const,
+        runType: "root" as const,
+      },
+      run: {
+        id: runId,
+        name: "root",
+        run_type: "chain",
+        start_time: "2026-10-10T12:00:00.000Z",
+        trace_id: runId,
+        dotted_order: `20261010T120000000000Z${runId}`,
+        inputs: {},
+      },
+    },
+    turnEvidence: { rootRunId: runId, childRunIds: [], closureState: "open" as const },
+  };
+  const initial = session.captureSnapshot(input);
+  await expect(initial).rejects.toMatchObject({
+    captureResult: { status: "published", record: { eventKind: "run-post" } },
+    cause: failure,
+  });
+  const revised = session.captureSnapshot({
+    ...input,
+    eventId: "event-engine-snapshot-update",
+    submission: {
+      ...input.submission,
+      run: { ...input.submission.run, outputs: { answer: "done" } },
+    },
+  });
+  await expect(revised).rejects.toMatchObject({
+    captureResult: { status: "published", record: { eventKind: "run-patch" } },
+    cause: failure,
+  });
+  await expect(
+    createCaptureStore(area.root).enumerateTurn(integration, sessionId, input.turnId),
+  ).resolves.toMatchObject([
+    { record: { eventKind: "run-post" } },
+    {
+      record: {
+        eventKind: "run-patch",
+        normalizedPayload: { patch: { values: { outputs: { answer: "done" } } } },
+      },
+    },
+  ]);
+});
+
 it("recovers a persisted reconstruction job after a later explicit wake", async () => {
   const area = createArea();
   const engine = createTracingEngine({ storageRoot: area.root, integration, writer });
@@ -442,7 +511,7 @@ it("finishes settlement after its wake is queued during the worker run", async (
 
   try {
     await expect(
-      session.capture({
+      session.captureSnapshot({
         turnId: "turn-1",
         eventId: "event-root",
         submission: root,

@@ -2,7 +2,11 @@ import type { CaptureWriteResult } from "../../storage/capture/models.js";
 import { createBackgroundWorker } from "../background-worker/index.js";
 import type { BackgroundWorkerScope } from "../background-worker/models.js";
 import { createLifecycleBridge } from "../lifecycle/index.js";
-import type { LifecycleCaptureInput, LifecycleCaptureResult } from "../lifecycle/models.js";
+import type {
+  LifecycleCaptureInput,
+  LifecycleCaptureResult,
+  LifecycleSnapshotCaptureInput,
+} from "../lifecycle/models.js";
 import { createReconstructionWorker } from "../reconstruction/index.js";
 import { wakeCapturedWork } from "../capture-wake.js";
 import type { ReconstructionJobInput } from "../reconstruction/models.js";
@@ -60,6 +64,9 @@ export function createTracingEngine(options: TracingEngineOptions): TracingEngin
     return Object.freeze({
       async capture(input: LifecycleCaptureInput): Promise<LifecycleCaptureResult> {
         return lifecycleBridge.capture(input);
+      },
+      async captureSnapshot(input: LifecycleSnapshotCaptureInput): Promise<LifecycleCaptureResult> {
+        return lifecycleBridge.captureSnapshot(input);
       },
       async queueReconstruction(input: ReconstructionJobInput): Promise<CaptureWriteResult> {
         const result = await reconstructionWorker.enqueue(input);

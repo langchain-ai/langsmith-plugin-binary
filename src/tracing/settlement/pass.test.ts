@@ -194,6 +194,48 @@ describe("captured turn settlement", () => {
     ]);
   });
 
+  it("preserves run redactions in generated settlement patches", async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), "plugins-base-settlement-redactions-"));
+    const bridge = createLifecycleBridge({
+      storageRoot,
+      integration: "claude-code",
+      sessionId: SESSION_ID,
+      writer: {
+        destinations: [
+          {
+            apiKey: "synthetic-settlement-key",
+            apiUrl: "http://127.0.0.1:1/api/v1",
+            projectName: "settlement-test",
+          },
+        ],
+        redact: false,
+      },
+    });
+    const store = createCaptureStore(storageRoot);
+    await bridge.capture({
+      turnId: TURN_ID,
+      eventId: "event-redacted-root",
+      submission: {
+        ...post(ROOT_ID, "root", { end_time: "2026-10-10T12:00:01.000Z" }),
+        redactedFields: ["outputs"],
+      },
+      turnEvidence: {
+        rootRunId: ROOT_ID,
+        childRunIds: [],
+        closureState: "authoritative",
+      },
+    });
+    const captures = await sourceCaptures(store);
+    await recordReceipts(store, captures, ["destination-a"]);
+
+    await settle(store, bridge, ["destination-a"]);
+
+    const settlement = (await store.enumerate("claude-code", SESSION_ID)).find(
+      ({ record }) => record.eventKind === "run-settlement-patch",
+    );
+    expect(settlement?.record.normalizedPayload).toMatchObject({ redactedFields: ["outputs"] });
+  });
+
   it("reports authoritative evidence without a root run as deferred", async () => {
     const { bridge, store } = await fixture("authoritative", false);
     const work = await settle(store, bridge, ["destination-a"]);
