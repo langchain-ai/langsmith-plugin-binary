@@ -16,7 +16,12 @@ it("accepts only matching durable captures after a worker wake fails", async () 
     runId: "run",
     destinationFingerprint: "account",
     eventKind: "run-post",
-    normalizedPayload: { input: "synthetic" },
+    normalizedPayload: {
+      operation: "post",
+      integration: "cursor",
+      privacyMode: "full",
+      run: { inputs: { prompt: "synthetic" }, outputs: { result: "ok" } },
+    },
     turnEvidence: {},
     metadataProvenance: {},
   };
@@ -25,6 +30,32 @@ it("accepts only matching durable captures after a worker wake fails", async () 
   const error = new CaptureWakeError(result, new Error("Worker unavailable"));
   const options: SavedCaptureWakeOptions = { ...input, store };
   await expect(readSavedCaptureWake(error, options)).resolves.toEqual(result);
+  await expect(
+    readSavedCaptureWake(
+      new CaptureWakeError(
+        { ...result, record: { ...result.record, capturedAtMs: result.record.capturedAtMs + 1 } },
+        new Error("Worker unavailable"),
+      ),
+      options,
+    ),
+  ).resolves.toBeUndefined();
+  const markerStore = createCaptureStore(mkdtempSync(join(tmpdir(), "untrusted-capture-marker-")));
+  const markerPublished = await markerStore.capture(input);
+  if (markerPublished.status !== "published") throw new Error("Fixture capture failed");
+  const markerCompaction = await markerStore.compact(input, markerPublished.record);
+  if (markerCompaction.status !== "compacted") throw new Error("Fixture compaction failed");
+  await expect(
+    readSavedCaptureWake(
+      new CaptureWakeError(
+        {
+          ...result,
+          record: { ...markerCompaction.record, capturedAtMs: result.record.capturedAtMs },
+        },
+        new Error("Worker unavailable"),
+      ),
+      options,
+    ),
+  ).resolves.toBeUndefined();
   await expect(readSavedCaptureWake(new Error("Not saved"), options)).resolves.toBeUndefined();
   for (const key of [
     "integration",
@@ -75,7 +106,7 @@ it("accepts only matching durable captures after a worker wake fails", async () 
   ).resolves.toEqual(verified);
 });
 
-it("returns the trusted stored payload for a marker-bearing wake error", async () => {
+it("accepts only exact or durably compacted capture records", async () => {
   const store = createCaptureStore(mkdtempSync(join(tmpdir(), "saved-compacted-wake-")));
   const input = {
     integration: "cursor",
@@ -98,16 +129,82 @@ it("returns the trusted stored payload for a marker-bearing wake error", async (
   if (published.status !== "published") throw new Error("Fixture capture failed");
   const compaction = await store.compact(input, published.record);
   if (compaction.status !== "compacted") throw new Error("Fixture compaction failed");
-  const mutatedRecord = {
-    ...compaction.record,
-    normalizedPayload: { operation: "post", run: { id: "run", name: "changed" } },
-  };
-  const error = new CaptureWakeError(
-    { ...published, record: mutatedRecord },
-    new Error("Worker unavailable"),
-  );
-
+  const error = new CaptureWakeError(published, new Error("Worker unavailable"));
   await expect(readSavedCaptureWake(error, { ...input, store })).resolves.toMatchObject({
     record: compaction.record,
   });
+  await expect(
+    readSavedCaptureWake(
+      new CaptureWakeError(
+        { ...published, record: compaction.record },
+        new Error("Worker unavailable"),
+      ),
+      { ...input, store },
+    ),
+  ).resolves.toMatchObject({ record: compaction.record });
+  await expect(
+    readSavedCaptureWake(
+      new CaptureWakeError(
+        {
+          ...published,
+          record: {
+            ...compaction.record,
+            normalizedPayload: { operation: "post", run: { id: "run", name: "changed" } },
+          },
+        },
+        new Error("Worker unavailable"),
+      ),
+      { ...input, store },
+    ),
+  ).resolves.toBeUndefined();
+  await expect(
+    readSavedCaptureWake(
+      new CaptureWakeError(
+        {
+          ...published,
+          record: { ...published.record, capturedAtMs: published.record.capturedAtMs + 1 },
+        },
+        new Error("Worker unavailable"),
+      ),
+      { ...input, store },
+    ),
+  ).resolves.toBeUndefined();
+});
+
+it("preserves capture timestamps when reconstruction snapshots are cleaned up", async () => {
+  const store = createCaptureStore(mkdtempSync(join(tmpdir(), "saved-cleanup-wake-")));
+  const input = {
+    integration: "cursor",
+    sessionId: "session",
+    turnId: "turn",
+    eventId: "event",
+    runId: "reconstruction:run",
+    destinationFingerprint: "account",
+    eventKind: "reconstruction-job-v1",
+    normalizedPayload: { sourceSnapshots: [{ sourceRef: "source" }] },
+    turnEvidence: {},
+    metadataProvenance: {},
+  };
+  const published = await store.capture(input);
+  if (published.status !== "published") throw new Error("Fixture capture failed");
+  await store.recordOutcome({ ...input, destination: "account", outcome: "delivered" });
+  const cleanup = await store.compactReconstructionJob(input, published.record, "account");
+  if (cleanup.status !== "compacted") throw new Error("Fixture cleanup failed");
+  const error = new CaptureWakeError(published, new Error("Worker unavailable"));
+
+  await expect(readSavedCaptureWake(error, { ...input, store })).resolves.toMatchObject({
+    record: cleanup.record,
+  });
+  await expect(
+    readSavedCaptureWake(
+      new CaptureWakeError(
+        {
+          ...published,
+          record: { ...published.record, capturedAtMs: published.record.capturedAtMs + 1 },
+        },
+        new Error("Worker unavailable"),
+      ),
+      { ...input, store },
+    ),
+  ).resolves.toBeUndefined();
 });
