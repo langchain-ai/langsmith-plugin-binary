@@ -1,4 +1,5 @@
 import type { CodingAgentIntegration } from "../../metadata/models.js";
+import type { SavedCaptureResult } from "../capture-wake-models.js";
 import type { CaptureStore, CaptureWriteResult, EnumeratedCapture } from "../../storage/capture/models.js";
 import type { BackgroundWorkerOptions, BackgroundWorkerRetryPolicy, BackgroundWorkerRunResult, BackgroundWorkerScope, BackgroundWorkerWakeResult } from "../background-worker/models.js";
 import type { DeliveryDestination, DeliveryPolicy } from "../delivery/models.js";
@@ -96,6 +97,7 @@ export interface TracingEngineSession {
     capture(input: LifecycleCaptureInput): Promise<LifecycleCaptureResult>;
     captureSnapshot(input: LifecycleSnapshotCaptureInput): Promise<LifecycleCaptureResult>;
     queueReconstruction(input: ReconstructionJobInput): Promise<CaptureWriteResult>;
+    readSavedReconstructionWake(error: unknown, input: ReconstructionJobInput): Promise<SavedCaptureResult | undefined>;
     wake(): Promise<BackgroundWorkerWakeResult>;
     drain(): Promise<BackgroundWorkerRunResult>;
     recoverSessions(options: TracingEngineRecoveryOptions): Promise<TracingEngineRecoveryReport>;

@@ -14,6 +14,7 @@ import {
 } from "../../storage/capture/paths.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import { createDeliveryAttemptStore } from "../delivery/attempt-store.js";
+import { readSavedCaptureWake } from "../capture-wake.js";
 import {
   DELIVERY_CAPACITY_REASON,
   DELIVERY_DEFAULT_MAX_AGE_MS,
@@ -113,6 +114,28 @@ export function createReconstructionWorker(
     async enqueue(input: ReconstructionJobInput): Promise<CaptureWriteResult> {
       const job = validateJobInput(input, integration, sessionId, accountFingerprint);
       return captureStore.capture(jobRecord(job));
+    },
+    async readSavedWake(error: unknown, input: ReconstructionJobInput) {
+      const job = validateJobInput(input, integration, sessionId, accountFingerprint);
+      const expected = jobRecord(job);
+      const saved = await readSavedCaptureWake(error, {
+        store: captureStore,
+        integration,
+        sessionId,
+        turnId: job.turnId,
+        destinationFingerprint: accountFingerprint,
+        eventId: job.eventId,
+        runId: expected.runId,
+      });
+      if (saved === undefined) return undefined;
+      return canonicalJson(saved.record) ===
+        canonicalJson({
+          ...expected,
+          version: saved.record.version,
+          capturedAtMs: saved.record.capturedAtMs,
+        })
+        ? saved
+        : undefined;
     },
     async drain(request: ReconstructionDrainOptions = {}): Promise<ReconstructionDrainResult> {
       const now = request.now ?? Date.now();

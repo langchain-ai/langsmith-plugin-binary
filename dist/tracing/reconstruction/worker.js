@@ -4,6 +4,7 @@ import { createCaptureStore } from "../../storage/capture/index.js";
 import { identifierHash, validateIdentifier, validateIntegration, } from "../../storage/capture/paths.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import { createDeliveryAttemptStore } from "../delivery/attempt-store.js";
+import { readSavedCaptureWake } from "../capture-wake.js";
 import { DELIVERY_CAPACITY_REASON, DELIVERY_DEFAULT_MAX_AGE_MS, DELIVERY_DEFAULT_MAX_ATTEMPTS, DELIVERY_DEFAULT_MAX_ENTRIES, DELIVERY_EXPIRED_REASON, DELIVERY_RETRY_EXHAUSTED_REASON, } from "../delivery/constants.js";
 import { canonicalJson, canonicalValue } from "../../storage/capture/utils/serialization.js";
 import { canonicalJsonObject, ownDataField, requireBoolean, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireSafeEpochMilliseconds, requireStringArray, } from "../../utils/validation/objects.js";
@@ -29,6 +30,29 @@ export function createReconstructionWorker(options) {
         async enqueue(input) {
             const job = validateJobInput(input, integration, sessionId, accountFingerprint);
             return captureStore.capture(jobRecord(job));
+        },
+        async readSavedWake(error, input) {
+            const job = validateJobInput(input, integration, sessionId, accountFingerprint);
+            const expected = jobRecord(job);
+            const saved = await readSavedCaptureWake(error, {
+                store: captureStore,
+                integration,
+                sessionId,
+                turnId: job.turnId,
+                destinationFingerprint: accountFingerprint,
+                eventId: job.eventId,
+                runId: expected.runId,
+            });
+            if (saved === undefined)
+                return undefined;
+            return canonicalJson(saved.record) ===
+                canonicalJson({
+                    ...expected,
+                    version: saved.record.version,
+                    capturedAtMs: saved.record.capturedAtMs,
+                })
+                ? saved
+                : undefined;
         },
         async drain(request = {}) {
             const now = request.now ?? Date.now();

@@ -1,6 +1,7 @@
 import type { CodingAgentIntegration, CodingAgentMetadataMode } from "../../metadata/index.js";
 import type { CaptureDependency, CaptureScope, CaptureWriteResult, EnumeratedCapture } from "../../storage/capture/models.js";
 import type { DeliveryPolicy } from "../delivery/models.js";
+import type { SavedCaptureResult } from "../capture-wake-models.js";
 import type { LifecycleBridge, LifecycleTurnEvidence } from "../lifecycle/models.js";
 import type { PreparedRunSubmission } from "../upload/models.js";
 import type { RECONSTRUCTION_DEFERRED_REASON } from "./constants.js";
@@ -66,6 +67,7 @@ export interface ReconstructionDrainOptions {
 }
 export interface ReconstructionWorker {
     enqueue(input: ReconstructionJobInput): Promise<CaptureWriteResult>;
+    readSavedWake(error: unknown, input: ReconstructionJobInput): Promise<SavedCaptureResult | undefined>;
     drain(options?: ReconstructionDrainOptions): Promise<ReconstructionDrainResult>;
 }
 export interface ReconstructionDrainCounts {

@@ -1,6 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,6 +19,12 @@ import { createCaptureStore } from "../../storage/capture/index.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import type { LangSmithUploadWriterOptions, PreparedRunPostSubmission } from "../upload/models.js";
 import { workerPendingPath } from "../background-worker/paths.js";
+import { eventPath } from "../../storage/capture/paths.js";
+import type { JsonValue } from "../../storage/capture/models.js";
+import {
+  RECONSTRUCTION_DIRECTORY,
+  RECONSTRUCTION_MAPPING_KIND,
+} from "../reconstruction/constants.js";
 import type { LifecycleSnapshotCaptureInput } from "../lifecycle/models.js";
 import { createTracingEngine } from "./engine.js";
 import { CaptureWakeError } from "../index.js";
@@ -237,6 +251,70 @@ it("distinguishes saved captures from invalid retries after a failed wake", asyn
   });
   await expect(invalid).rejects.toBeInstanceOf(TypeError);
   await expect(invalid).rejects.not.toBeInstanceOf(CaptureWakeError);
+});
+
+it("verifies a saved reconstruction wake against the queued job", async () => {
+  const area = createArea();
+  const failure = new Error("injected launcher failure");
+  const session = createTracingEngine({ storageRoot: area.root, integration, writer }).forSession({
+    sessionId,
+    resolveScope: (expected) => expected,
+    scheduleWake: () => {
+      throw failure;
+    },
+    reconstruct: async () => ({ status: "deferred", reason: "missing-thread-identity" }),
+  });
+  const input = {
+    turnId: "turn-reconstruction-wake",
+    eventId: "event-reconstruction-wake",
+    sourceRefs: ["snapshot:reconstruction-wake"],
+    privacyMode: "full" as const,
+    turnEvidence: { childRunIds: [], closureState: "authoritative" as const },
+  };
+  let wakeError: unknown;
+  try {
+    await session.queueReconstruction(input);
+  } catch (error) {
+    wakeError = error;
+  }
+  expect(wakeError).toBeInstanceOf(CaptureWakeError);
+  if (!(wakeError instanceof CaptureWakeError))
+    throw new Error("Expected failed reconstruction wake");
+  await expect(session.readSavedReconstructionWake(wakeError, input)).resolves.toEqual(
+    wakeError.captureResult,
+  );
+
+  const alteredRecord = {
+    ...wakeError.captureResult.record,
+    eventKind: RECONSTRUCTION_MAPPING_KIND,
+    normalizedPayload: {
+      ...(wakeError.captureResult.record.normalizedPayload as Record<string, JsonValue>),
+      sourceRefs: ["snapshot:altered-reconstruction-wake"],
+    },
+    turnEvidence: {
+      ...(wakeError.captureResult.record.turnEvidence as Record<string, JsonValue>),
+      childRunIds: ["altered-run"],
+    },
+  };
+  const recordPath = eventPath(
+    join(area.root, RECONSTRUCTION_DIRECTORY),
+    wakeError.captureResult.record,
+  );
+  writeFileSync(recordPath, JSON.stringify(alteredRecord));
+  const alteredWakeError = new CaptureWakeError(
+    { ...wakeError.captureResult, record: alteredRecord },
+    failure,
+  );
+  await expect(
+    session.readSavedReconstructionWake(alteredWakeError, input),
+  ).resolves.toBeUndefined();
+  writeFileSync(recordPath, JSON.stringify(wakeError.captureResult.record));
+  await expect(
+    session.readSavedReconstructionWake(wakeError, {
+      ...input,
+      sourceRefs: ["snapshot:changed-reconstruction-wake"],
+    }),
+  ).resolves.toBeUndefined();
 });
 
 it("forwards session snapshots through the shared revision capture", async () => {

@@ -74,6 +74,9 @@ export function createTracingEngine(options) {
                     await wakeCapturedWork(result, () => backgroundWorker?.wake());
                 return result;
             },
+            async readSavedReconstructionWake(error, input) {
+                return reconstructionWorker.readSavedWake(error, input);
+            },
             async wake() {
                 return backgroundWorker.wake();
             },
