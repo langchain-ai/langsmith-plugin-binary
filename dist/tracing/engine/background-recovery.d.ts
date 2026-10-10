@@ -1,3 +1,3 @@
-import type { TracingEngineBackgroundRecoveryOptions, TracingEngineBackgroundRecoveryResult, TracingEngineRecoveryRuntime } from "./models.js";
-export declare function runBackgroundRecovery(runtime: TracingEngineRecoveryRuntime, options: TracingEngineBackgroundRecoveryOptions): Promise<TracingEngineBackgroundRecoveryResult>;
+import type { TracingEngineBackgroundRecoveryOptions, TracingEngineBackgroundRecoveryResult, TracingEngineRecoveryRuntime, TracingEngineRecoveryScopeGuard } from "./models.js";
+export declare function runBackgroundRecovery(runtime: TracingEngineRecoveryRuntime, options: TracingEngineBackgroundRecoveryOptions, scopeGuard?: TracingEngineRecoveryScopeGuard): Promise<TracingEngineBackgroundRecoveryResult>;
 //# sourceMappingURL=background-recovery.d.ts.map

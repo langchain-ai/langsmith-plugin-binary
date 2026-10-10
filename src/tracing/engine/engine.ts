@@ -105,9 +105,10 @@ export function createTracingEngine(options: TracingEngineOptions): TracingEngin
         const backgroundRecovery = session.backgroundRecovery;
         if (backgroundRecovery && (result === "completed" || result === "idle")) {
           let recoveryResult: TracingEngineBackgroundRecoveryResult;
+          const checkScope = () => matchesScope(() => session.resolveScope(scope), scope);
           try {
-            recoveryResult = (await matchesScope(() => session.resolveScope(scope), scope))
-              ? await runBackgroundRecovery(recoveryRuntime(), backgroundRecovery)
+            recoveryResult = (await checkScope())
+              ? await runBackgroundRecovery(recoveryRuntime(), backgroundRecovery, checkScope)
               : { status: "scope-mismatch" };
           } catch (error) {
             recoveryResult = {

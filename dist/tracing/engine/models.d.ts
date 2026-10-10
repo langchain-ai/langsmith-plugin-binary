@@ -27,6 +27,7 @@ export interface TracingEngineRecoveryOptions {
     now?: number;
     excludeCurrentSession?: boolean;
 }
+export type TracingEngineRecoveryScopeGuard = () => Promise<boolean>;
 export interface TracingEngineBackgroundRecoveryOptions {
     optionsForSession: TracingEngineRecoveryOptions["optionsForSession"];
     onReport: (result: TracingEngineBackgroundRecoveryResult) => void | Promise<void>;

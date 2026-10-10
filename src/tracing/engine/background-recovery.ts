@@ -21,17 +21,35 @@ import type {
   TracingEngineBackgroundRecoveryOptions,
   TracingEngineBackgroundRecoveryResult,
   TracingEngineRecoveryRuntime,
+  TracingEngineRecoveryScopeGuard,
 } from "./models.js";
 
 export async function runBackgroundRecovery(
   runtime: TracingEngineRecoveryRuntime,
   options: TracingEngineBackgroundRecoveryOptions,
+  scopeGuard?: TracingEngineRecoveryScopeGuard,
 ): Promise<TracingEngineBackgroundRecoveryResult> {
   const cooldownMs = options.cooldownMs ?? TRACING_ENGINE_BACKGROUND_RECOVERY_COOLDOWN_MS;
   const minimumForeignAgeMs =
     options.minimumForeignAgeMs ?? TRACING_ENGINE_FOREIGN_SESSION_MIN_AGE_MS;
   const paths = backgroundRecoveryPaths(runtime.storageRoot, runtime);
   let retryAtMs: number | undefined;
+  let scopeMismatch = false;
+  let scopeCheckFailed = false;
+  let scopeCheckError: unknown;
+  const checkScope = scopeGuard
+    ? async () => {
+        try {
+          const matches = await scopeGuard();
+          scopeMismatch ||= !matches;
+          return matches;
+        } catch (error) {
+          scopeCheckFailed = true;
+          scopeCheckError = error;
+          return false;
+        }
+      }
+    : undefined;
 
   try {
     await ensurePrivateDirectory(runtime.storageRoot, backgroundRecoveryPathSegments(runtime));
@@ -39,6 +57,10 @@ export async function runBackgroundRecovery(
     if (observedMarker && observedMarker.retryAtMs > Date.now())
       return { status: "cooldown", retryAtMs: observedMarker.retryAtMs };
     return await withFileLock(paths.lock, async () => {
+      if (checkScope && !(await checkScope()))
+        return scopeCheckFailed
+          ? { status: "failed", message: describe(scopeCheckError), retryable: true }
+          : { status: "scope-mismatch" };
       const now = Date.now();
       const existing = await readMarker(runtime.storageRoot, paths.marker);
       if (existing && existing.retryAtMs > now)
@@ -51,17 +73,30 @@ export async function runBackgroundRecovery(
         retryAtMs,
       });
       try {
-        const report = await recoverTracingSessions(runtime, {
-          optionsForSession: options.optionsForSession,
-          minimumForeignAgeMs,
-          now,
-          excludeCurrentSession: true,
-        });
+        const report = await recoverTracingSessions(
+          runtime,
+          {
+            optionsForSession: options.optionsForSession,
+            minimumForeignAgeMs,
+            now,
+            excludeCurrentSession: true,
+          },
+          checkScope,
+        );
+        if (checkScope && !scopeMismatch && !scopeCheckFailed) await checkScope();
         retryAtMs = nextRetryAt(cooldownMs);
         await writeMarker(paths.marker, {
           version: TRACING_ENGINE_BACKGROUND_RECOVERY_MARKER_VERSION,
           retryAtMs,
         });
+        if (scopeCheckFailed)
+          return {
+            status: "failed",
+            message: describe(scopeCheckError),
+            retryable: true,
+            retryAtMs,
+          };
+        if (scopeMismatch) return { status: "scope-mismatch" };
         return report.failed.length === 0
           ? { status: "completed", report, retryAtMs }
           : { status: "partial", report, retryAtMs, retryable: true };

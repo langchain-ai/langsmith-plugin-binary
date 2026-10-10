@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,6 +8,7 @@ import { afterEach, expect, it } from "vitest";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import type { LangSmithUploadWriterOptions, PreparedRunPostSubmission } from "../upload/models.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
+import { FILE_LOCK_DIRECTORY_SUFFIX } from "../../storage/constants.js";
 import { CaptureWakeError } from "../capture-wake.js";
 import { withFileLock } from "../../storage/file-lock.js";
 import { createTracingEngine } from "./engine.js";
@@ -303,6 +304,181 @@ it("waits for the account scan lock before entering recovery", async () => {
   if (!child) throw new Error("Background recovery worker was not started");
   await expect(waitForExit(child)).resolves.toBe(0);
   expect(readFileSync(scanPath, "utf8")).toBe("foreign-session\n");
+});
+
+it("rechecks the active scope after waiting for the account scan lock", async () => {
+  const storageRoot = createRoot();
+  const { writer } = await createLocalWriter();
+  await capturePendingSession(storageRoot, "foreign-session", writer);
+  const accountFingerprint = createLangSmithUploadWriter(writer).accountFingerprint;
+  let currentScope = { integration, sessionId: "scope-waiting", accountFingerprint };
+  const reports: unknown[] = [];
+  const scans: string[] = [];
+  const session = createTracingEngine({ storageRoot, integration, writer }).forSession({
+    sessionId: currentScope.sessionId,
+    resolveScope: () => currentScope,
+    scheduleWake: () => {
+      throw new Error("Unexpected worker launch");
+    },
+    reconstruct: async () => ({ status: "deferred", reason: "missing-thread-identity" }),
+    backgroundRecovery: {
+      minimumForeignAgeMs: 0,
+      onReport: (report) => {
+        reports.push(report);
+      },
+      optionsForSession: (sessionId) => {
+        scans.push(sessionId);
+        return {
+          resolveScope: () => currentScope,
+          scheduleWake: () => {
+            throw new Error("Unexpected recovered-session launch");
+          },
+          reconstruct: async () => ({ status: "deferred", reason: "missing-thread-identity" }),
+        };
+      },
+    },
+  });
+  const paths = backgroundRecoveryPaths(storageRoot, currentScope);
+  let signalLockReady!: () => void;
+  let releaseLock!: () => void;
+  const lockReady = new Promise<void>((resolvePromise) => {
+    signalLockReady = resolvePromise;
+  });
+  const lockGate = new Promise<void>((resolvePromise) => {
+    releaseLock = resolvePromise;
+  });
+  const heldLock = withFileLock(paths.lock, async () => {
+    signalLockReady();
+    await lockGate;
+  });
+  await lockReady;
+  const drain = session.drain();
+  const claimsDirectory = `${paths.lock}${FILE_LOCK_DIRECTORY_SUFFIX}`;
+  let waiterObserved = false;
+  try {
+    await waitFor(
+      () => readdirSync(claimsDirectory).filter((name) => name.endsWith(".json")).length >= 2,
+    );
+    waiterObserved = true;
+    currentScope = { ...currentScope, accountFingerprint: "changed-account" };
+  } finally {
+    releaseLock();
+    await heldLock;
+    if (!waiterObserved) await drain;
+  }
+
+  expect(waiterObserved).toBe(true);
+  await expect(drain).resolves.toBe("idle");
+  expect(reports).toEqual([{ status: "scope-mismatch" }]);
+  expect(scans).toEqual([]);
+});
+
+it("rechecks the active scope after adapter options resolve", async () => {
+  const storageRoot = createRoot();
+  const { writer } = await createLocalWriter();
+  await capturePendingSession(storageRoot, "foreign-session", writer);
+  const accountFingerprint = createLangSmithUploadWriter(writer).accountFingerprint;
+  let currentScope = { integration, sessionId: "scope-lookup", accountFingerprint };
+  const reports: unknown[] = [];
+  const recoveryOptionsCalls: string[] = [];
+  const recoveryWakeCalls: string[] = [];
+  let optionsStarted = false;
+  let releaseOptions!: () => void;
+  const optionsGate = new Promise<void>((resolvePromise) => {
+    releaseOptions = resolvePromise;
+  });
+  const session = createTracingEngine({ storageRoot, integration, writer }).forSession({
+    sessionId: currentScope.sessionId,
+    resolveScope: () => currentScope,
+    scheduleWake: () => {
+      throw new Error("Unexpected current-session launch");
+    },
+    reconstruct: async () => ({ status: "deferred", reason: "missing-thread-identity" }),
+    backgroundRecovery: {
+      minimumForeignAgeMs: 0,
+      onReport: (report) => {
+        reports.push(report);
+      },
+      optionsForSession: async (sessionId) => {
+        recoveryOptionsCalls.push(sessionId);
+        optionsStarted = true;
+        await optionsGate;
+        return {
+          resolveScope: () => currentScope,
+          scheduleWake: () => {
+            recoveryWakeCalls.push(sessionId);
+            throw new Error("Stale account launch");
+          },
+          reconstruct: async () => ({ status: "deferred", reason: "missing-thread-identity" }),
+        };
+      },
+    },
+  });
+  const drain = session.drain();
+  try {
+    await waitFor(() => optionsStarted);
+    currentScope = { ...currentScope, accountFingerprint: "changed-account" };
+  } finally {
+    releaseOptions();
+    if (!optionsStarted) await drain;
+  }
+
+  expect(optionsStarted).toBe(true);
+  await expect(drain).resolves.toBe("idle");
+  expect(recoveryOptionsCalls).toEqual(["foreign-session"]);
+  expect(recoveryWakeCalls).toEqual([]);
+  expect(reports).toEqual([{ status: "scope-mismatch" }]);
+});
+
+it("stops recovery when the active scope cannot be resolved", async () => {
+  const storageRoot = createRoot();
+  const { writer } = await createLocalWriter();
+  await capturePendingSession(storageRoot, "foreign-a", writer);
+  await capturePendingSession(storageRoot, "foreign-b", writer);
+  const accountFingerprint = createLangSmithUploadWriter(writer).accountFingerprint;
+  const currentScope = { integration, sessionId: "scope-error", accountFingerprint };
+  let failScopeLookup = false;
+  const reports: unknown[] = [];
+  const optionsCalls: string[] = [];
+  const wakeCalls: string[] = [];
+  const session = createTracingEngine({ storageRoot, integration, writer }).forSession({
+    sessionId: currentScope.sessionId,
+    resolveScope: () => {
+      if (failScopeLookup) throw new Error("Synthetic scope resolver failure");
+      return currentScope;
+    },
+    scheduleWake: () => {
+      throw new Error("Unexpected current-session launch");
+    },
+    reconstruct: async () => ({ status: "deferred", reason: "missing-thread-identity" }),
+    backgroundRecovery: {
+      minimumForeignAgeMs: 0,
+      onReport: (report) => {
+        reports.push(report);
+      },
+      optionsForSession: (sessionId) => {
+        optionsCalls.push(sessionId);
+        failScopeLookup = true;
+        return {
+          resolveScope: () => currentScope,
+          scheduleWake: () => {
+            wakeCalls.push(sessionId);
+            throw new Error("Unexpected recovered-session launch");
+          },
+          reconstruct: async () => ({ status: "deferred", reason: "missing-thread-identity" }),
+        };
+      },
+    },
+  });
+
+  await expect(session.drain()).resolves.toBe("idle");
+  expect(optionsCalls).toEqual(["foreign-a"]);
+  expect(wakeCalls).toEqual([]);
+  expect(reports[0]).toMatchObject({
+    status: "failed",
+    message: "Synthetic scope resolver failure",
+    retryable: true,
+  });
 });
 
 it("keeps recovery cooldowns separate by account and retries after an expired marker", async () => {

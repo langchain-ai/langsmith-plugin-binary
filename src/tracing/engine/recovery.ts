@@ -13,12 +13,14 @@ import type {
   TracingEngineRecoveryOptions,
   TracingEngineRecoveryReport,
   TracingEngineRecoveryRuntime,
+  TracingEngineRecoveryScopeGuard,
   TracingEngineSessionOptions,
 } from "./models.js";
 
 export async function recoverTracingSessions(
   runtime: TracingEngineRecoveryRuntime,
   request: TracingEngineRecoveryOptions,
+  scopeGuard?: TracingEngineRecoveryScopeGuard,
 ): Promise<TracingEngineRecoveryReport> {
   const now = request.now ?? Date.now();
   if (!Number.isSafeInteger(now) || !Number.isFinite(new Date(now).getTime()))
@@ -161,6 +163,7 @@ export async function recoverTracingSessions(
         throw new TypeError("Session recovery options must be an object");
       const sessionOptions: TracingEngineSessionOptions = { ...callbacks, sessionId };
       const target = runtime.createSession(sessionOptions);
+      if (scopeGuard && !(await scopeGuard())) return { scheduled, failed };
       scheduled.push({ sessionId, status: await target.wake() });
     } catch (error) {
       failed.push({

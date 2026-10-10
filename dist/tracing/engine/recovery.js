@@ -5,7 +5,7 @@ import { LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLE
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import { TRACING_ENGINE_FOREIGN_SESSION_MIN_AGE_MS } from "./constants.js";
 import { hasUnsettledRecoverySettlement } from "./recovery-settlement.js";
-export async function recoverTracingSessions(runtime, request) {
+export async function recoverTracingSessions(runtime, request, scopeGuard) {
     const now = request.now ?? Date.now();
     if (!Number.isSafeInteger(now) || !Number.isFinite(new Date(now).getTime()))
         throw new RangeError("Recovery time must be a valid timestamp");
@@ -130,6 +130,8 @@ export async function recoverTracingSessions(runtime, request) {
                 throw new TypeError("Session recovery options must be an object");
             const sessionOptions = { ...callbacks, sessionId };
             const target = runtime.createSession(sessionOptions);
+            if (scopeGuard && !(await scopeGuard()))
+                return { scheduled, failed };
             scheduled.push({ sessionId, status: await target.wake() });
         }
         catch (error) {

@@ -1,3 +1,3 @@
-import type { TracingEngineRecoveryOptions, TracingEngineRecoveryReport, TracingEngineRecoveryRuntime } from "./models.js";
-export declare function recoverTracingSessions(runtime: TracingEngineRecoveryRuntime, request: TracingEngineRecoveryOptions): Promise<TracingEngineRecoveryReport>;
+import type { TracingEngineRecoveryOptions, TracingEngineRecoveryReport, TracingEngineRecoveryRuntime, TracingEngineRecoveryScopeGuard } from "./models.js";
+export declare function recoverTracingSessions(runtime: TracingEngineRecoveryRuntime, request: TracingEngineRecoveryOptions, scopeGuard?: TracingEngineRecoveryScopeGuard): Promise<TracingEngineRecoveryReport>;
 //# sourceMappingURL=recovery.d.ts.map
