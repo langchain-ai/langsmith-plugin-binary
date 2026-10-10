@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -89,7 +89,7 @@ describe("repository probes", () => {
 
     expect(nearestExistingDirectory(nested)).toBe(repo);
     expect(rootFromGitMarker(nested)).toBe(repo);
-    expect(getRepoRoot(existing)).toBe(repo);
+    expect(getRepoRoot(existing)).toBe(realpathSync(repo));
     expect(getRepoName(repo)).toEqual({ provider: "github", name: "acme/probe" });
     expect(getRepoUrl("github", "acme/probe")).toBe("https://github.com/acme/probe");
     expect(getRepoUrl("unknown", "acme/probe")).toBeUndefined();
@@ -109,7 +109,7 @@ describe("repository probes", () => {
     vi.stubEnv("GIT_INDEX_FILE", join(otherRepo, ".git", "index"));
     vi.stubEnv("GIT_CEILING_DIRECTORIES", otherRepo);
 
-    expect(getRepoRoot(repo)).toBe(repo);
+    expect(getRepoRoot(repo)).toBe(realpathSync(repo));
     expect(getGitInfo(repo).branch).toBe("trunk");
   });
 
@@ -127,7 +127,7 @@ describe("repository probes", () => {
     git(repo, "worktree", "add", "--quiet", "--detach", worktree);
 
     expect(rootFromGitMarker(worktree)).toBeUndefined();
-    expect(getRepoRoot(worktree)).toBe(worktree);
+    expect(getRepoRoot(worktree)).toBe(realpathSync(worktree));
     expect(getGitInfo(worktree)).toEqual({ commit: git(repo, "rev-parse", "HEAD") });
   });
 
