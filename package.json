@@ -32,6 +32,10 @@
       "types": "./dist/settings/index.d.ts",
       "default": "./dist/settings/index.js"
     },
+    "./tracing": {
+      "types": "./dist/tracing/index.d.ts",
+      "default": "./dist/tracing/index.js"
+    },
     "./storage": {
       "types": "./dist/storage/index.d.ts",
       "default": "./dist/storage/index.js"

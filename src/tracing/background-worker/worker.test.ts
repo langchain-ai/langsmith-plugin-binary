@@ -31,8 +31,8 @@ const childProgram = `
 const fs = await import("node:fs");
 const { setTimeout: delay } = await import("node:timers/promises");
 const api = await import(process.argv[1]);
-const { mode, storageRoot, integration, accountFingerprint, statePath, gatePath, maxAttempts, retryDelayMs } = JSON.parse(process.argv[2]);
-const scope = { integration, accountFingerprint };
+const { mode, storageRoot, integration, sessionId, accountFingerprint, statePath, gatePath, maxAttempts, retryDelayMs } = JSON.parse(process.argv[2]);
+const scope = { integration, sessionId, accountFingerprint };
 function increment() {
   const count = Number(fs.existsSync(statePath) ? fs.readFileSync(statePath, "utf8") : 0) + 1;
   fs.writeFileSync(statePath, String(count));
@@ -80,7 +80,7 @@ function createArea(): TestArea {
 }
 
 function makeScope(accountFingerprint = "worker-test-account"): BackgroundWorkerScope {
-  return { integration: "claude", accountFingerprint };
+  return { integration: "claude", sessionId: "worker-test-session", accountFingerprint };
 }
 
 function spawnRunner(
@@ -109,7 +109,17 @@ function spawnRunner(
         retryDelayMs,
       }),
     ],
-    { env: { HOME: area.root, TMPDIR: area.root, CI: "1" }, stdio: "ignore" },
+    {
+      env: {
+        HOME: area.root,
+        USERPROFILE: area.root,
+        TEMP: area.root,
+        TMP: area.root,
+        TMPDIR: area.root,
+        CI: "1",
+      },
+      stdio: "ignore",
+    },
   );
   area.children.add(child);
   return child;
@@ -575,4 +585,52 @@ it("rechecks account scope between reconstruction and delivery and before acknow
   currentScope = scope;
   await expect(worker.run()).resolves.toBe("completed");
   expect(activeMarkerExists()).toBe(false);
+});
+
+it("isolates wakes and scope checks for sessions under one account", async () => {
+  const area = createArea();
+  const scopeA = { ...makeScope("worker-test-account-a"), sessionId: "session-a" };
+  const scopeB = { ...scopeA, sessionId: "session-b" };
+  let currentScopeA = scopeA;
+  let callsA = 0;
+  let callsB = 0;
+  const workerA = createBackgroundWorker({
+    storageRoot: area.root,
+    scope: scopeA,
+    resolveScope: () => currentScopeA,
+    launchWorker: () => {
+      throw new Error("seed pending wake");
+    },
+    drainPending: () => {
+      callsA += 1;
+      return "idle";
+    },
+  });
+  const workerB = createBackgroundWorker({
+    storageRoot: area.root,
+    scope: scopeB,
+    resolveScope: () => scopeB,
+    launchWorker: () => {
+      throw new Error("unexpected worker launch");
+    },
+    drainPending: () => {
+      callsB += 1;
+      return "idle";
+    },
+  });
+
+  await seedPending(workerA, area.root, scopeA);
+  await expect(workerB.run()).resolves.toBe("idle");
+  expect(callsB).toBe(0);
+  expect(existsSync(workerPendingPath(area.root, scopeA))).toBe(true);
+
+  currentScopeA = scopeB;
+  await expect(workerA.run()).resolves.toBe("scope-mismatch");
+  expect(callsA).toBe(0);
+  expect(existsSync(workerPendingPath(area.root, scopeA))).toBe(true);
+
+  currentScopeA = scopeA;
+  await expect(workerA.run()).resolves.toBe("completed");
+  expect(callsA).toBe(1);
+  expect(existsSync(workerPendingPath(area.root, scopeA))).toBe(false);
 });

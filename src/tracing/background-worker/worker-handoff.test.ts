@@ -70,6 +70,7 @@ it("rechecks pending wakes after releasing the worker lock", async () => {
   testRoot = storageRoot;
   const scope: BackgroundWorkerScope = {
     integration: "claude",
+    sessionId: "worker-handoff-test-session",
     accountFingerprint: "worker-handoff-test-account",
   };
   const statePath = join(storageRoot, "passes");

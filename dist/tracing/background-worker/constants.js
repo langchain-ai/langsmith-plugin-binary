@@ -1,5 +1,6 @@
 export const BACKGROUND_WORKER_DIRECTORY = "background-worker";
 export const BACKGROUND_WORKER_INTEGRATIONS_DIRECTORY = "integrations";
+export const BACKGROUND_WORKER_SESSIONS_DIRECTORY = "sessions";
 export const BACKGROUND_WORKER_ACCOUNTS_DIRECTORY = "accounts";
 export const BACKGROUND_WORKER_LOCK_FILE = "worker";
 export const BACKGROUND_WORKER_PENDING_FILE = "wake.pending";

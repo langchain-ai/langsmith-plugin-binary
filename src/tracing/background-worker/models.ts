@@ -1,5 +1,6 @@
 export interface BackgroundWorkerScope {
   integration: string;
+  sessionId: string;
   accountFingerprint: string;
 }
 

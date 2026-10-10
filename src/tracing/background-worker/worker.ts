@@ -27,6 +27,7 @@ import {
   BACKGROUND_WORKER_MARKER_VERSION,
   BACKGROUND_WORKER_OWNER_WAIT_MS,
   BACKGROUND_WORKER_PENDING_FILE,
+  BACKGROUND_WORKER_SESSIONS_DIRECTORY,
   BACKGROUND_WORKER_STARTUP_WAIT_MS,
   BACKGROUND_WORKER_STAGING_FILE,
   BACKGROUND_WORKER_LOCK_FILE,
@@ -70,6 +71,8 @@ export function createBackgroundWorker(options: BackgroundWorkerOptions): Backgr
     BACKGROUND_WORKER_DIRECTORY,
     BACKGROUND_WORKER_INTEGRATIONS_DIRECTORY,
     scope.integration,
+    BACKGROUND_WORKER_SESSIONS_DIRECTORY,
+    identifierHash(scope.sessionId),
     BACKGROUND_WORKER_ACCOUNTS_DIRECTORY,
     identifierHash(scope.accountFingerprint),
   ];
@@ -194,6 +197,7 @@ async function matchesScope(
   const actual = await resolveScope();
   return (
     actual.integration === expected.integration &&
+    actual.sessionId === expected.sessionId &&
     actual.accountFingerprint === expected.accountFingerprint
   );
 }
