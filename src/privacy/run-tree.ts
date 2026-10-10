@@ -25,7 +25,7 @@ function statusOfRun(run: RunTree): CodingAgentPrivacyStatus {
   return "running";
 }
 
-function projectReplica(replica: unknown): unknown {
+export function projectReplica(replica: unknown): unknown {
   if (!replica || typeof replica !== "object") return replica;
   if (Array.isArray(replica)) return { projectName: replica[0] };
   const { updates: _updates, ...safe } = replica as Record<string, unknown>;

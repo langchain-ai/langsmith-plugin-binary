@@ -1,5 +1,6 @@
 import {
   CODING_AGENT_INTEGRATION_POLICIES,
+  CODING_AGENT_PURPOSE,
   CODING_AGENT_SCHEMA_VERSION,
   TRUSTED_METADATA,
 } from "./constants.js";
@@ -15,7 +16,7 @@ export function buildCodingAgentMetadata(
 ): Record<string, unknown> {
   const policy = CODING_AGENT_INTEGRATION_POLICIES[options.integration];
   const identity: Record<string, unknown> = {
-    ls_agent_purpose: "coding",
+    ls_agent_purpose: CODING_AGENT_PURPOSE,
     ls_integration: options.integration,
     ls_agent_runtime: CODING_AGENT_V1_CONTRACT.runtimeNames[options.integration],
     ls_trace_schema_version: CODING_AGENT_SCHEMA_VERSION,

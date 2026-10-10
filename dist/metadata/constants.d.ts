@@ -1,4 +1,5 @@
 export declare const CODING_AGENT_SCHEMA_VERSION = "coding-agent-v1";
+export declare const CODING_AGENT_PURPOSE = "coding";
 export declare const CODING_AGENT_RUN_TYPES: readonly ["root", "llm", "tool", "subagent", "interrupted"];
 export declare const CODING_AGENT_RUN_SCOPES: {
     readonly all: readonly ["root", "llm", "tool", "subagent", "interrupted"];

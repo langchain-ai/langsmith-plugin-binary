@@ -6,6 +6,7 @@ import {
   CODING_AGENT_FIELD_DEFAULTS,
   CODING_AGENT_INTEGRATION_POLICIES,
   CODING_AGENT_PROVIDER_FIELD_DEFAULTS,
+  CODING_AGENT_PURPOSE,
   CODING_AGENT_RUN_SCOPES,
   CODING_AGENT_SCHEMA_INTEGRATIONS,
   CODING_AGENT_SCHEMA_VERSION,
@@ -43,7 +44,7 @@ export const CODING_AGENT_V1_CONTRACT: CodingAgentV1Contract = {
   keys: [
     structural("ls_agent_purpose", {
       ...CODING_AGENT_ALWAYS_FIELD_OPTIONS,
-      allowedValues: ["coding"],
+      allowedValues: [CODING_AGENT_PURPOSE],
     }),
     structural("ls_integration", {
       ...CODING_AGENT_ALWAYS_FIELD_OPTIONS,

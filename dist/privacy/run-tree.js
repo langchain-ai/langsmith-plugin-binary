@@ -12,7 +12,7 @@ function statusOfRun(run) {
         return "completed";
     return "running";
 }
-function projectReplica(replica) {
+export function projectReplica(replica) {
     if (!replica || typeof replica !== "object")
         return replica;
     if (Array.isArray(replica))

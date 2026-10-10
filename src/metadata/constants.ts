@@ -8,6 +8,7 @@ import type {
 } from "./models.js";
 
 export const CODING_AGENT_SCHEMA_VERSION = "coding-agent-v1";
+export const CODING_AGENT_PURPOSE = "coding";
 export const CODING_AGENT_RUN_TYPES = [
   "root",
   "llm",
