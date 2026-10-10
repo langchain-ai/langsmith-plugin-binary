@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +27,7 @@ const SIBLING_DOTTED_ORDER = `${PARENT_DOTTED_ORDER}.20261010T120000002000Z${SIB
 let server: ReturnType<typeof createServer>;
 let endpoint: string;
 let requests: LocalRequest[];
+let failChildPatches = false;
 
 function requestBody(request: IncomingMessage, response: ServerResponse): void {
   let body = "";
@@ -39,7 +41,12 @@ function requestBody(request: IncomingMessage, response: ServerResponse): void {
       path: request.url ?? "",
       payload: body === "" ? {} : (JSON.parse(body) as Record<string, unknown>),
     });
-    response.writeHead(200, { "content-type": "application/json" });
+    response.writeHead(
+      failChildPatches && request.method === "PATCH" && request.url === `/api/v1/runs/${CHILD_ID}`
+        ? 400
+        : 200,
+      { "content-type": "application/json" },
+    );
     response.end("{}");
   });
 }
@@ -80,6 +87,13 @@ function metadata(
   return { integration, threadId: "thread-1", agentType: "root", runType };
 }
 
+function repositoryMetadata(branch: string): PreparedRunPostSubmission["metadata"] {
+  return {
+    ...metadata("claude-code", "root"),
+    base: { repository_name: "acme/project", git_branch: branch },
+  };
+}
+
 function scope(turnId: string, eventId: string, sessionId = "session-1"): CaptureScope {
   return { integration: "claude-code", sessionId, turnId, eventId };
 }
@@ -96,6 +110,7 @@ async function scan(directory: string): Promise<string[]> {
 
 beforeEach(async () => {
   requests = [];
+  failChildPatches = false;
   server = createServer(requestBody);
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", () => {
@@ -483,6 +498,186 @@ describe("durable run lifecycle bridge", () => {
         git_commit_sha: "abc123",
       },
     });
+  });
+
+  it("delivers generated patches in dependency order when their timestamps match", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-settlement-order-"));
+    const sessionId = "session-settlement-order";
+    const turnId = "turn-settlement-order";
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-10T12:00:00.000Z"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId,
+      writer: { destinations: [destination()], redact: false },
+      policy: { maxAttempts: 100 },
+    });
+    const rootScope = scope(turnId, "event-root-order", sessionId);
+    const childSourceEventId = "event-child-order";
+    const evidenceForTurn = evidence({
+      rootRunId: PARENT_ID,
+      childRunIds: [CHILD_ID],
+      closureState: "authoritative",
+    });
+    const rootRevision = (branch: string): PreparedRunPatchSubmission => ({
+      operation: "patch",
+      integration: "claude-code",
+      privacyMode: "full",
+      metadata: repositoryMetadata(branch),
+      run: {
+        id: PARENT_ID,
+        name: "root run",
+        run_type: "chain",
+        start_time: "2026-10-10T12:00:00.000Z",
+        trace_id: PARENT_ID,
+        dotted_order: PARENT_DOTTED_ORDER,
+      },
+      privacyContext: { status: "completed" },
+      patch: { fields: [], values: {} },
+    });
+    const generatedEventId = (sourceEventIds: string[], branch: string) => {
+      const dependencies = sourceEventIds
+        .map((eventId) => scope(turnId, eventId, sessionId))
+        .toSorted((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+      const revision = JSON.stringify({
+        turnId,
+        runId: CHILD_ID,
+        rootRunId: PARENT_ID,
+        childRunIds: [CHILD_ID],
+        dependencies,
+        attribution: { repository_name: "acme/project", git_branch: branch },
+      });
+      return `turn-settlement-${createHash("sha256").update(revision).digest("hex")}`;
+    };
+    const generatedRecords = async () =>
+      (await createCaptureStore(root).enumerate("claude-code", sessionId)).filter(
+        ({ record }) => record.eventKind === "run-settlement-patch" && record.runId === CHILD_ID,
+      );
+    const findEarlierSourceId = (
+      sourceEventIds: string[],
+      branch: string,
+      previousGeneratedId: string,
+    ) =>
+      Array.from({ length: 10_000 }, (_, index) => `root-revision-${branch}-${index}`).find(
+        (eventId) => generatedEventId([...sourceEventIds, eventId], branch) < previousGeneratedId,
+      );
+
+    try {
+      failChildPatches = true;
+      await bridge.capture({
+        turnId,
+        eventId: rootScope.eventId,
+        submission: post(PARENT_ID, repositoryMetadata("main"), {
+          start_time: "2026-10-10T12:00:00.000Z",
+          end_time: "2026-10-10T12:00:01.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+        }),
+        turnEvidence: evidenceForTurn,
+      });
+      await bridge.capture({
+        turnId,
+        eventId: childSourceEventId,
+        submission: post(
+          CHILD_ID,
+          { ...metadata("claude-code", "tool"), agentType: "subagent" },
+          {
+            run_type: "tool",
+            start_time: "2026-10-10T12:00:00.001Z",
+            end_time: "2026-10-10T12:00:01.000Z",
+            parent_run_id: PARENT_ID,
+            trace_id: PARENT_ID,
+            dotted_order: CHILD_DOTTED_ORDER,
+          },
+        ),
+        turnEvidence: evidenceForTurn,
+        dependencies: [rootScope],
+      });
+
+      await expect(bridge.drain()).resolves.toMatchObject({
+        status: "drained",
+        delivered: 2,
+        failed: 1,
+        pending: 1,
+      });
+      const firstGenerated = (await generatedRecords())[0]?.record;
+      expect(firstGenerated).toBeDefined();
+      if (firstGenerated === undefined) throw new Error("First settlement patch was not captured");
+      expect(firstGenerated.eventId).toBe(
+        generatedEventId([rootScope.eventId, childSourceEventId], "main"),
+      );
+
+      const secondSourceId = findEarlierSourceId(
+        [rootScope.eventId, childSourceEventId],
+        "branch-b",
+        firstGenerated.eventId,
+      );
+      expect(secondSourceId).toBeDefined();
+      if (secondSourceId === undefined) throw new Error("Could not select branch-b source ID");
+      await bridge.capture({
+        turnId,
+        eventId: secondSourceId,
+        submission: rootRevision("branch-b"),
+        turnEvidence: evidenceForTurn,
+        dependencies: [rootScope],
+      });
+      await expect(bridge.drain()).resolves.toMatchObject({ status: "drained", pending: 2 });
+      const secondGenerated = (await generatedRecords()).find(
+        ({ record }) => record.eventId !== firstGenerated.eventId,
+      )?.record;
+      expect(secondGenerated).toBeDefined();
+      if (secondGenerated === undefined)
+        throw new Error("Second settlement patch was not captured");
+      expect(secondGenerated.eventId).toBe(
+        generatedEventId([rootScope.eventId, childSourceEventId, secondSourceId], "branch-b"),
+      );
+
+      const thirdSourceId = findEarlierSourceId(
+        [rootScope.eventId, childSourceEventId, secondSourceId],
+        "branch-c",
+        secondGenerated.eventId,
+      );
+      expect(thirdSourceId).toBeDefined();
+      if (thirdSourceId === undefined) throw new Error("Could not select branch-c source ID");
+      await bridge.capture({
+        turnId,
+        eventId: thirdSourceId,
+        submission: rootRevision("branch-c"),
+        turnEvidence: evidenceForTurn,
+        dependencies: [scope(turnId, secondSourceId, sessionId)],
+      });
+      await expect(bridge.drain()).resolves.toMatchObject({ status: "drained", pending: 3 });
+      const thirdGenerated = (await generatedRecords()).find(
+        ({ record }) =>
+          record.eventId !== firstGenerated.eventId && record.eventId !== secondGenerated.eventId,
+      )?.record;
+      expect(thirdGenerated).toBeDefined();
+      if (thirdGenerated === undefined) throw new Error("Third settlement patch was not captured");
+      expect(thirdGenerated.eventId).toBe(
+        generatedEventId(
+          [rootScope.eventId, childSourceEventId, secondSourceId, thirdSourceId],
+          "branch-c",
+        ),
+      );
+
+      const finalDrainStart = requests.length;
+      failChildPatches = false;
+      await expect(bridge.drain()).resolves.toMatchObject({
+        status: "drained",
+        delivered: 3,
+        pending: 0,
+      });
+      const deliveredBranches = requests
+        .slice(finalDrainStart)
+        .filter(({ method, path }) => method === "PATCH" && path === `/api/v1/runs/${CHILD_ID}`)
+        .map(
+          ({ payload }) =>
+            (payload["extra"] as { metadata: { git_branch: string } }).metadata.git_branch,
+        );
+      expect(deliveredBranches).toEqual(["main", "branch-b", "branch-c"]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("keeps root repository details out of a metadata-mode settlement record", async () => {

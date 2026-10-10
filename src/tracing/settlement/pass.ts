@@ -278,10 +278,9 @@ async function settleOneTurn(
       turnId,
       eventId,
     };
-    const previous = generated
-      .filter((item) => item.runId === runId && item.eventId !== eventId)
-      .toSorted(compareCaptures)
-      .at(-1);
+    const previous = orderSourceCaptures(
+      generated.filter((item) => item.runId === runId && item.eventId !== eventId),
+    ).at(-1);
     const previousDependency = previous === undefined ? [] : [captureScope(previous)];
     if (previous !== undefined) {
       const previousReadiness = await captureReadiness(
