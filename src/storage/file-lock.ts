@@ -5,6 +5,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rmdir,
   rename,
   unlink,
   writeFile,
@@ -14,6 +15,9 @@ import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import {
   FILE_LOCK_ACQUIRE_MESSAGE,
+  FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE,
+  FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE,
+  FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE,
   FILE_LOCK_CLAIM_VERSION,
   FILE_LOCK_CLAIM_EXTENSION,
   FILE_LOCK_DIRECTORY_MODE,
@@ -38,6 +42,8 @@ import {
   FILE_LOCK_TIMEOUT_MESSAGE,
   FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE,
   FILE_LOCK_UNSELECTED_TICKET,
+  FILE_LOCK_LEGACY_DIRECTORY_SUFFIX,
+  FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES,
 } from "./constants.js";
 import type {
   FileLockCallback,
@@ -46,6 +52,7 @@ import type {
   FileLockOptions,
   FileLockScanResult,
   BegunFileLock,
+  LegacyDirectoryFileLockGate,
 } from "./models.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -284,6 +291,116 @@ export async function tryAcquireFileLock(filePath: string): Promise<FileLockHand
   const acquired = await acquireClaim(filePath, false, 0);
   if (!acquired) return undefined;
   return makeHandle(acquired.claimDirectory, acquired.claim);
+}
+
+async function acquireLegacyDirectoryGate(
+  filePath: string,
+  deadline: number,
+): Promise<LegacyDirectoryFileLockGate> {
+  const gatePath = `${filePath}${FILE_LOCK_LEGACY_DIRECTORY_SUFFIX}`;
+  await mkdir(dirname(filePath), { recursive: true, mode: FILE_LOCK_DIRECTORY_MODE });
+  for (;;) {
+    if (performance.now() >= deadline) throw timeoutError(filePath);
+    try {
+      await mkdir(gatePath, { mode: FILE_LOCK_DIRECTORY_MODE });
+      const stat = await lstat(gatePath);
+      if (!stat.isDirectory()) throw new Error(FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE);
+      return { path: gatePath, dev: stat.dev, ino: stat.ino, birthtimeMs: stat.birthtimeMs };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (
+        code !== FILE_LOCK_EXISTS_CODE &&
+        !FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES.some((candidate) => candidate === code)
+      ) {
+        throw error;
+      }
+      let isDirectory = false;
+      try {
+        isDirectory = (await lstat(gatePath)).isDirectory();
+      } catch (statError) {
+        if (
+          code === FILE_LOCK_EXISTS_CODE &&
+          (statError as NodeJS.ErrnoException).code === FILE_LOCK_MISSING_CODE
+        ) {
+          await waitForNextScan(deadline, filePath);
+          continue;
+        }
+        throw error;
+      }
+      if (!isDirectory) throw error;
+      await waitForNextScan(deadline, filePath);
+    }
+  }
+}
+
+async function releaseLegacyDirectoryGate(gate: LegacyDirectoryFileLockGate): Promise<void> {
+  let stat;
+  try {
+    stat = await lstat(gate.path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === FILE_LOCK_MISSING_CODE) return;
+    throw error;
+  }
+  if (
+    !stat.isDirectory() ||
+    stat.dev !== gate.dev ||
+    stat.ino !== gate.ino ||
+    stat.birthtimeMs !== gate.birthtimeMs
+  ) {
+    throw new Error(FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE);
+  }
+  await rmdir(gate.path);
+}
+
+export async function acquireCompatibleDirectoryFileLock(
+  filePath: string,
+  options?: FileLockOptions,
+): Promise<FileLockHandle> {
+  const resolvedPath = resolve(filePath);
+  const deadline = performance.now() + timeoutMs(options);
+  const gate = await acquireLegacyDirectoryGate(resolvedPath, deadline);
+  let acquired: BegunFileLock | undefined;
+  try {
+    acquired = await acquireClaim(resolvedPath, true, deadline);
+    if (!acquired) throw new Error(FILE_LOCK_ACQUIRE_MESSAGE);
+  } catch (error) {
+    try {
+      await releaseLegacyDirectoryGate(gate);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE,
+        {
+          cause: cleanupError,
+        },
+      );
+    }
+    throw error;
+  }
+
+  const sharedHandle = makeHandle(acquired.claimDirectory, acquired.claim);
+  let releasePromise: Promise<void> | undefined;
+  return {
+    release() {
+      releasePromise ??= (async () => {
+        const errors: unknown[] = [];
+        try {
+          await sharedHandle.release();
+        } catch (error) {
+          errors.push(error);
+        }
+        try {
+          await releaseLegacyDirectoryGate(gate);
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length === 1) throw errors[0];
+        if (errors.length > 1)
+          throw new AggregateError(errors, FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE);
+      })();
+      return releasePromise;
+    },
+  };
 }
 
 export async function waitForFileLockClaim(

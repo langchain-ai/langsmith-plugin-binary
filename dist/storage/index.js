@@ -1,2 +1,2 @@
-export { tryAcquireFileLock, waitForFileLockClaim, withFileLock } from "./file-lock.js";
+export { acquireCompatibleDirectoryFileLock, tryAcquireFileLock, waitForFileLockClaim, withFileLock, } from "./file-lock.js";
 //# sourceMappingURL=index.js.map

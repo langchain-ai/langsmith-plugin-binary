@@ -1,8 +1,8 @@
-import { chmod, link, lstat, mkdir, readFile, readdir, rename, unlink, writeFile, } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, readFile, readdir, rmdir, rename, unlink, writeFile, } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
-import { FILE_LOCK_ACQUIRE_MESSAGE, FILE_LOCK_CLAIM_VERSION, FILE_LOCK_CLAIM_EXTENSION, FILE_LOCK_DIRECTORY_MODE, FILE_LOCK_DIRECTORY_SUFFIX, FILE_LOCK_DEFAULT_TIMEOUT_MS, FILE_LOCK_ENCODING, FILE_LOCK_EXISTS_CODE, FILE_LOCK_EXCLUSIVE_FLAG, FILE_LOCK_FILE_MODE, FILE_LOCK_INVALID_TIMEOUT_MESSAGE, FILE_LOCK_MISSING_CODE, FILE_LOCK_NEGATIVE_TICKET_LIMIT, FILE_LOCK_POLL_INTERVAL_MS, FILE_LOCK_PROCESS_MISSING_CODE, FILE_LOCK_PROCESS_CHECK_SIGNAL, FILE_LOCK_RELEASE_MESSAGE, FILE_LOCK_RENAME_RETRY_TIMEOUT_MS, FILE_LOCK_RENAME_BUSY_CODE, FILE_LOCK_TEMP_PREFIX, FILE_LOCK_TEMP_SUFFIX, FILE_LOCK_TICKET_LIMIT_MESSAGE, FILE_LOCK_TIMEOUT_MESSAGE, FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE, FILE_LOCK_UNSELECTED_TICKET, } from "./constants.js";
+import { FILE_LOCK_ACQUIRE_MESSAGE, FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE, FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE, FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE, FILE_LOCK_CLAIM_VERSION, FILE_LOCK_CLAIM_EXTENSION, FILE_LOCK_DIRECTORY_MODE, FILE_LOCK_DIRECTORY_SUFFIX, FILE_LOCK_DEFAULT_TIMEOUT_MS, FILE_LOCK_ENCODING, FILE_LOCK_EXISTS_CODE, FILE_LOCK_EXCLUSIVE_FLAG, FILE_LOCK_FILE_MODE, FILE_LOCK_INVALID_TIMEOUT_MESSAGE, FILE_LOCK_MISSING_CODE, FILE_LOCK_NEGATIVE_TICKET_LIMIT, FILE_LOCK_POLL_INTERVAL_MS, FILE_LOCK_PROCESS_MISSING_CODE, FILE_LOCK_PROCESS_CHECK_SIGNAL, FILE_LOCK_RELEASE_MESSAGE, FILE_LOCK_RENAME_RETRY_TIMEOUT_MS, FILE_LOCK_RENAME_BUSY_CODE, FILE_LOCK_TEMP_PREFIX, FILE_LOCK_TEMP_SUFFIX, FILE_LOCK_TICKET_LIMIT_MESSAGE, FILE_LOCK_TIMEOUT_MESSAGE, FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE, FILE_LOCK_UNSELECTED_TICKET, FILE_LOCK_LEGACY_DIRECTORY_SUFFIX, FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES, } from "./constants.js";
 function isRecord(value) {
     return typeof value === "object" && value !== null;
 }
@@ -228,6 +228,109 @@ export async function tryAcquireFileLock(filePath) {
     if (!acquired)
         return undefined;
     return makeHandle(acquired.claimDirectory, acquired.claim);
+}
+async function acquireLegacyDirectoryGate(filePath, deadline) {
+    const gatePath = `${filePath}${FILE_LOCK_LEGACY_DIRECTORY_SUFFIX}`;
+    await mkdir(dirname(filePath), { recursive: true, mode: FILE_LOCK_DIRECTORY_MODE });
+    for (;;) {
+        if (performance.now() >= deadline)
+            throw timeoutError(filePath);
+        try {
+            await mkdir(gatePath, { mode: FILE_LOCK_DIRECTORY_MODE });
+            const stat = await lstat(gatePath);
+            if (!stat.isDirectory())
+                throw new Error(FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE);
+            return { path: gatePath, dev: stat.dev, ino: stat.ino, birthtimeMs: stat.birthtimeMs };
+        }
+        catch (error) {
+            const code = error.code;
+            if (code !== FILE_LOCK_EXISTS_CODE &&
+                !FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES.some((candidate) => candidate === code)) {
+                throw error;
+            }
+            let isDirectory = false;
+            try {
+                isDirectory = (await lstat(gatePath)).isDirectory();
+            }
+            catch (statError) {
+                if (code === FILE_LOCK_EXISTS_CODE &&
+                    statError.code === FILE_LOCK_MISSING_CODE) {
+                    await waitForNextScan(deadline, filePath);
+                    continue;
+                }
+                throw error;
+            }
+            if (!isDirectory)
+                throw error;
+            await waitForNextScan(deadline, filePath);
+        }
+    }
+}
+async function releaseLegacyDirectoryGate(gate) {
+    let stat;
+    try {
+        stat = await lstat(gate.path);
+    }
+    catch (error) {
+        if (error.code === FILE_LOCK_MISSING_CODE)
+            return;
+        throw error;
+    }
+    if (!stat.isDirectory() ||
+        stat.dev !== gate.dev ||
+        stat.ino !== gate.ino ||
+        stat.birthtimeMs !== gate.birthtimeMs) {
+        throw new Error(FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE);
+    }
+    await rmdir(gate.path);
+}
+export async function acquireCompatibleDirectoryFileLock(filePath, options) {
+    const resolvedPath = resolve(filePath);
+    const deadline = performance.now() + timeoutMs(options);
+    const gate = await acquireLegacyDirectoryGate(resolvedPath, deadline);
+    let acquired;
+    try {
+        acquired = await acquireClaim(resolvedPath, true, deadline);
+        if (!acquired)
+            throw new Error(FILE_LOCK_ACQUIRE_MESSAGE);
+    }
+    catch (error) {
+        try {
+            await releaseLegacyDirectoryGate(gate);
+        }
+        catch (cleanupError) {
+            throw new AggregateError([error, cleanupError], FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE, {
+                cause: cleanupError,
+            });
+        }
+        throw error;
+    }
+    const sharedHandle = makeHandle(acquired.claimDirectory, acquired.claim);
+    let releasePromise;
+    return {
+        release() {
+            releasePromise ??= (async () => {
+                const errors = [];
+                try {
+                    await sharedHandle.release();
+                }
+                catch (error) {
+                    errors.push(error);
+                }
+                try {
+                    await releaseLegacyDirectoryGate(gate);
+                }
+                catch (error) {
+                    errors.push(error);
+                }
+                if (errors.length === 1)
+                    throw errors[0];
+                if (errors.length > 1)
+                    throw new AggregateError(errors, FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE);
+            })();
+            return releasePromise;
+        },
+    };
 }
 export async function waitForFileLockClaim(filePath, pid, options) {
     if (!Number.isSafeInteger(pid) || pid <= 0)
