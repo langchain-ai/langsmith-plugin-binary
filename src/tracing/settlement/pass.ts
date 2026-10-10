@@ -74,14 +74,17 @@ export async function settleCapturedTurns(
         record.eventKind === LIFECYCLE_SETTLEMENT_EVENT_KIND,
     );
   const projected = new Map<string, ProjectedCapture[]>();
+  const allByRunId = new Map<string, ProjectedCapture[]>();
   for (const record of sourceRecords) {
     const capture = projectCapture(record, options.integration);
     if (capture === undefined) continue;
     const turn = projected.get(record.turnId) ?? [];
     turn.push(capture);
     projected.set(record.turnId, turn);
+    const runEvents = allByRunId.get(record.runId) ?? [];
+    runEvents.push(capture);
+    allByRunId.set(record.runId, runEvents);
   }
-  const allEvents = [...projected.values()].flat();
   const generatedByTurn = groupByTurn(generatedRecords);
   const turns = [...new Set([...projected.keys(), ...generatedByTurn.keys()])].toSorted();
   const reports: TurnSettlementReport[] = [];
@@ -90,7 +93,7 @@ export async function settleCapturedTurns(
   for (const turnId of turns) {
     const events = projected.get(turnId) ?? [];
     const generated = generatedByTurn.get(turnId) ?? [];
-    const result = await settleOneTurn(turnId, events, generated, allEvents, options);
+    const result = await settleOneTurn(turnId, events, generated, allByRunId, options);
     reports.push(result.report);
     patches.push(...result.patches);
     captured += result.captured;
@@ -155,7 +158,7 @@ async function settleOneTurn(
   turnId: string,
   events: ProjectedCapture[],
   generated: StoredCapture[],
-  allEvents: readonly ProjectedCapture[],
+  allByRunId: ReadonlyMap<string, ProjectedCapture[]>,
   options: SettleCapturedTurnsOptions,
 ): Promise<TurnSettlementResult> {
   const rootRunIds = new Set<string>();
@@ -191,12 +194,6 @@ async function settleOneTurn(
     const runEvents = currentByRunId.get(event.record.runId) ?? [];
     runEvents.push(event);
     currentByRunId.set(event.record.runId, runEvents);
-  }
-  const allByRunId = new Map<string, ProjectedCapture[]>();
-  for (const event of allEvents) {
-    const runEvents = allByRunId.get(event.record.runId) ?? [];
-    runEvents.push(event);
-    allByRunId.set(event.record.runId, runEvents);
   }
   const byRunId = new Map<string, ProjectedCapture[]>();
   for (const runId of requiredRunIds) {

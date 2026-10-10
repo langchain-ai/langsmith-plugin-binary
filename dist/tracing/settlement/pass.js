@@ -23,6 +23,7 @@ export async function settleCapturedTurns(options) {
         record.destinationFingerprint === options.destinationFingerprint &&
         record.eventKind === LIFECYCLE_SETTLEMENT_EVENT_KIND);
     const projected = new Map();
+    const allByRunId = new Map();
     for (const record of sourceRecords) {
         const capture = projectCapture(record, options.integration);
         if (capture === undefined)
@@ -30,8 +31,10 @@ export async function settleCapturedTurns(options) {
         const turn = projected.get(record.turnId) ?? [];
         turn.push(capture);
         projected.set(record.turnId, turn);
+        const runEvents = allByRunId.get(record.runId) ?? [];
+        runEvents.push(capture);
+        allByRunId.set(record.runId, runEvents);
     }
-    const allEvents = [...projected.values()].flat();
     const generatedByTurn = groupByTurn(generatedRecords);
     const turns = [...new Set([...projected.keys(), ...generatedByTurn.keys()])].toSorted();
     const reports = [];
@@ -40,7 +43,7 @@ export async function settleCapturedTurns(options) {
     for (const turnId of turns) {
         const events = projected.get(turnId) ?? [];
         const generated = generatedByTurn.get(turnId) ?? [];
-        const result = await settleOneTurn(turnId, events, generated, allEvents, options);
+        const result = await settleOneTurn(turnId, events, generated, allByRunId, options);
         reports.push(result.report);
         patches.push(...result.patches);
         captured += result.captured;
@@ -88,7 +91,7 @@ export async function refreshSettlementProgress(work, destinations, readOutcome)
     }
     return { captured: work.progress.captured, turns };
 }
-async function settleOneTurn(turnId, events, generated, allEvents, options) {
+async function settleOneTurn(turnId, events, generated, allByRunId, options) {
     const rootRunIds = new Set();
     const childRunIds = new Set();
     let closureState = "open";
@@ -124,12 +127,6 @@ async function settleOneTurn(turnId, events, generated, allEvents, options) {
         const runEvents = currentByRunId.get(event.record.runId) ?? [];
         runEvents.push(event);
         currentByRunId.set(event.record.runId, runEvents);
-    }
-    const allByRunId = new Map();
-    for (const event of allEvents) {
-        const runEvents = allByRunId.get(event.record.runId) ?? [];
-        runEvents.push(event);
-        allByRunId.set(event.record.runId, runEvents);
     }
     const byRunId = new Map();
     for (const runId of requiredRunIds) {
