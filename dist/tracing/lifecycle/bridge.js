@@ -1,11 +1,14 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { tryAcquireFileLock } from "../../storage/index.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
+import { identifierHash } from "../../storage/capture/paths.js";
+import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import { createDeliveryCoordinator } from "../delivery/index.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
-import { refreshSettlementProgress, settleCapturedTurns } from "../settlement/index.js";
+import { refreshSettlementProgress, settleCapturedTurns } from "../settlement/pass.js";
 import { canonicalJsonObject, canonicalJsonValue, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireStringArray, requireTimestamp, } from "../../utils/validation/objects.js";
 import { snapshotData } from "../../utils/validation/snapshot.js";
-import { LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_TURN_CLOSURE_STATES, } from "./constants.js";
+import { LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_FILE, LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY, LIFECYCLE_TURN_CLOSURE_STATES, } from "./constants.js";
 import { projectSubmission } from "./projection.js";
 export function createLifecycleBridge(options) {
     const integration = options.integration;
@@ -74,51 +77,70 @@ export function createLifecycleBridge(options) {
             return result;
         },
         async drain(input = {}) {
-            const drainRequest = {
-                writer: {
-                    accountFingerprint: writer.accountFingerprint,
-                    destinations: writer.destinations,
-                    async send(record, destination, fingerprint) {
-                        if (fingerprint !== writer.accountFingerprint)
-                            throw new Error("Upload account changed");
-                        const submission = restoreSubmission(record, integration);
-                        await writer.send(submission, destination.id);
-                    },
-                },
-                ...(input.now === undefined ? {} : { now: input.now }),
-            };
-            const first = await coordinator.drain(drainRequest);
-            if (first.status === "busy")
-                return { status: "busy", settlement: { captured: 0, turns: [] } };
-            const readOutcome = (scope, destination) => captureStore.readOutcome(scope, destination);
-            const work = await settleCapturedTurns({
-                captures: await captureStore.enumerate(integration, sessionId),
+            const settlementLockDirectory = await ensurePrivateDirectory(storageRoot, [
+                LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY,
+                LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY,
                 integration,
-                sessionId,
-                destinationFingerprint: writer.accountFingerprint,
-                destinations: writer.destinations,
-                capture: (capture) => coordinator.capture(capture),
-                readOutcome,
-            });
-            let result = first;
-            if (work.progress.captured > 0) {
-                const second = await coordinator.drain(drainRequest);
-                if (second.status === "drained") {
-                    result = {
-                        status: "drained",
-                        delivered: first.delivered + second.delivered,
-                        dropped: first.dropped + second.dropped,
-                        failed: first.failed + second.failed,
-                        pending: second.pending,
-                        accountMismatch: second.accountMismatch,
-                    };
+                LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY,
+                identifierHash(sessionId),
+                LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY,
+                identifierHash(writer.accountFingerprint),
+            ]);
+            const settlementLock = await tryAcquireFileLock(join(settlementLockDirectory, LIFECYCLE_SETTLEMENT_LOCK_FILE));
+            if (settlementLock === undefined)
+                return { status: "busy", settlement: { captured: 0, turns: [] } };
+            let drainResult;
+            try {
+                const drainRequest = {
+                    writer: {
+                        accountFingerprint: writer.accountFingerprint,
+                        destinations: writer.destinations,
+                        async send(record, destination, fingerprint) {
+                            if (fingerprint !== writer.accountFingerprint)
+                                throw new Error("Upload account changed");
+                            const submission = restoreSubmission(record, integration);
+                            await writer.send(submission, destination.id);
+                        },
+                    },
+                    ...(input.now === undefined ? {} : { now: input.now }),
+                };
+                const first = await coordinator.drain(drainRequest);
+                if (first.status === "busy")
+                    return { status: "busy", settlement: { captured: 0, turns: [] } };
+                const readOutcome = (scope, destination) => captureStore.readOutcome(scope, destination);
+                const work = await settleCapturedTurns({
+                    captures: await captureStore.enumerate(integration, sessionId),
+                    integration,
+                    sessionId,
+                    destinationFingerprint: writer.accountFingerprint,
+                    destinations: writer.destinations,
+                    capture: (capture) => coordinator.capture(capture),
+                    readOutcome,
+                });
+                let result = first;
+                if (work.progress.captured > 0) {
+                    const second = await coordinator.drain(drainRequest);
+                    if (second.status === "drained") {
+                        result = {
+                            status: "drained",
+                            delivered: first.delivered + second.delivered,
+                            dropped: first.dropped + second.dropped,
+                            failed: first.failed + second.failed,
+                            pending: second.pending,
+                            accountMismatch: second.accountMismatch,
+                        };
+                    }
                 }
+                const settlement = await refreshSettlementProgress(work, writer.destinations, readOutcome);
+                drainResult = { ...result, settlement };
             }
-            const settlement = await refreshSettlementProgress(work, writer.destinations, readOutcome);
-            if (result.status === "drained" && result.delivered + result.dropped > 0) {
+            finally {
+                await settlementLock.release();
+            }
+            if (drainResult.status === "drained" && drainResult.delivered + drainResult.dropped > 0) {
                 await wake?.();
             }
-            return { ...result, settlement };
+            return drainResult;
         },
     });
 }
