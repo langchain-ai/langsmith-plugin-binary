@@ -71,6 +71,10 @@
     "./tracing/background-worker": {
       "types": "./dist/tracing/background-worker/index.d.ts",
       "default": "./dist/tracing/background-worker/index.js"
+    },
+    "./tracing/reconstruction": {
+      "types": "./dist/tracing/reconstruction/index.d.ts",
+      "default": "./dist/tracing/reconstruction/index.js"
     }
   },
   "publishConfig": {
