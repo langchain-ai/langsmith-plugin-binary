@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,6 +10,7 @@ import type { DeliveryCaptureInput, DeliveryWriter, DrainOptions } from "./model
 import * as captureStoreModule from "../../storage/capture/index.js";
 import { createCaptureStore } from "../../storage/capture/capture-store.js";
 import type { CaptureScope } from "../../storage/capture/models.js";
+import { receiptPath } from "../../storage/capture/paths.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -309,7 +310,7 @@ describe("durable delivery coordinator", () => {
     }
   });
 
-  it("skips compacted captures instead of sending incomplete run payloads", async () => {
+  it("fails loudly when a compacted capture loses a destination receipt", async () => {
     const root = temporaryRoot();
     const coordinator = createDeliveryCoordinator({
       storageRoot: root,
@@ -330,6 +331,12 @@ describe("durable delivery coordinator", () => {
     if (captured.status !== "published") throw new Error("Run capture was not published");
     const store = createCaptureStore(root);
     const recordScope = scope({ integration: "claude-code", sessionId: "session-1", ...input });
+    const destinations = [{ id: "primary" }, { id: "replica" }];
+    for (const destination of destinations) {
+      await expect(
+        store.recordOutcome({ ...recordScope, destination: destination.id, outcome: "delivered" }),
+      ).resolves.toMatchObject({ status: "recorded" });
+    }
     await expect(store.compact(recordScope, captured.record)).resolves.toMatchObject({
       status: "compacted",
     });
@@ -337,9 +344,19 @@ describe("durable delivery coordinator", () => {
 
     await expect(
       coordinator.drain({
-        writer: { accountFingerprint: "account-a", destinations: [{ id: "primary" }], send },
+        writer: { accountFingerprint: "account-a", destinations, send },
       }),
     ).resolves.toMatchObject({ status: "drained", delivered: 0, pending: 0 });
+    expect(send).not.toHaveBeenCalled();
+
+    unlinkSync(receiptPath(root, recordScope, "replica"));
+    await expect(
+      coordinator.drain({
+        writer: { accountFingerprint: "account-a", destinations, send },
+      }),
+    ).rejects.toThrow(
+      "Compacted capture compacted-run has no delivered receipt for destination replica",
+    );
     expect(send).not.toHaveBeenCalled();
   });
 

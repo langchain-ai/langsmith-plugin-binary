@@ -74,3 +74,40 @@ it("accepts only matching durable captures after a worker wake fails", async () 
     }),
   ).resolves.toEqual(verified);
 });
+
+it("returns the trusted stored payload for a marker-bearing wake error", async () => {
+  const store = createCaptureStore(mkdtempSync(join(tmpdir(), "saved-compacted-wake-")));
+  const input = {
+    integration: "cursor",
+    sessionId: "session",
+    turnId: "turn",
+    eventId: "event",
+    runId: "run",
+    destinationFingerprint: "account",
+    eventKind: "run-post",
+    normalizedPayload: {
+      operation: "post",
+      integration: "cursor",
+      privacyMode: "full",
+      run: { id: "run", name: "test", run_type: "chain", inputs: { prompt: "secret" } },
+    },
+    turnEvidence: {},
+    metadataProvenance: {},
+  };
+  const published = await store.capture(input);
+  if (published.status !== "published") throw new Error("Fixture capture failed");
+  const compaction = await store.compact(input, published.record);
+  if (compaction.status !== "compacted") throw new Error("Fixture compaction failed");
+  const mutatedRecord = {
+    ...compaction.record,
+    normalizedPayload: { operation: "post", run: { id: "run", name: "changed" } },
+  };
+  const error = new CaptureWakeError(
+    { ...published, record: mutatedRecord },
+    new Error("Worker unavailable"),
+  );
+
+  await expect(readSavedCaptureWake(error, { ...input, store })).resolves.toMatchObject({
+    record: compaction.record,
+  });
+});

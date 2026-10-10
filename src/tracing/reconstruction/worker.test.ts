@@ -1,11 +1,13 @@
 import { createServer } from "node:http";
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import type { StoredCapture } from "../../storage/capture/models.js";
+import { receiptPath } from "../../storage/capture/paths.js";
 import { DELIVERY_RETRY_EXHAUSTED_REASON } from "../delivery/constants.js";
+import { CaptureWakeError } from "../capture-wake.js";
 import type { LifecycleCaptureInput, LifecycleCaptureResult } from "../lifecycle/models.js";
 import { createLifecycleBridge } from "../lifecycle/index.js";
 import type { DeliveryPolicy } from "../delivery/models.js";
@@ -191,15 +193,19 @@ describe("durable reconstruction jobs", () => {
     }
   });
 
-  it("replays partial captures without counting duplicate outputs as progress", async () => {
+  it("keeps snapshots until every output is captured and then preserves job identity", async () => {
     const storageRoot = await root();
     const lifecycleBridge = bridge(storageRoot);
     const captureCalls: LifecycleCaptureInput[] = [];
     const reconstruct = vi.fn(async () => ({
       status: "ready" as const,
       outputs: [
-        { eventId: "event-root", submission: post("run-root") },
-        { eventId: "event-child", submission: post("run-child", "metadata") },
+        { eventId: "event-root", sourceRef: "source-ref", submission: post("run-root") },
+        {
+          eventId: "event-child",
+          sourceRef: "source-ref",
+          submission: post("run-child", "metadata"),
+        },
       ],
     }));
     const firstCapture = vi.fn(async (input: LifecycleCaptureInput) => {
@@ -214,7 +220,14 @@ describe("durable reconstruction jobs", () => {
       reconstruct,
       firstCapture,
     );
-    expect((await firstWorker.enqueue(job("job-1"))).status).toBe("published");
+    const sourceAge = Date.now();
+    const source = post("source-run");
+    source.run.start_time = sourceAge;
+    const jobInput = snapshotJob("job-1", "full", "source-ref", sourceAge, source);
+    const enqueue = await firstWorker.enqueue(jobInput);
+    expect(enqueue.status).toBe("published");
+    if (enqueue.status !== "published") throw new Error("Reconstruction job was not saved");
+    const wakeError = new CaptureWakeError(enqueue, new Error("Worker launch failed"));
     const first = await firstWorker.drain();
     expect(first).toMatchObject({
       status: "drained",
@@ -223,6 +236,27 @@ describe("durable reconstruction jobs", () => {
       failed: 0,
       pending: 1,
     });
+    const reconstructionStore = jobStore(storageRoot);
+    const reconstructionScope = {
+      integration: "claude-code",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      eventId: "job-1",
+    };
+    const pendingJob = await reconstructionStore.read(reconstructionScope);
+    expect(pendingJob?.normalizedPayload).toHaveProperty(
+      "sourceSnapshots.0.sourceRef",
+      "source-ref",
+    );
+    expect(pendingJob?.sourceSnapshotCleanup).toBeUndefined();
+    if (pendingJob === undefined) throw new Error("Pending reconstruction job disappeared");
+    await expect(
+      reconstructionStore.compactReconstructionJob(
+        reconstructionScope,
+        pendingJob,
+        lifecycleBridge.accountFingerprint,
+      ),
+    ).resolves.toEqual({ status: "not-delivered" });
     expect(
       (await createCaptureStore(storageRoot).enumerate("claude-code", "session-1")).map(
         ({ record }) => record.eventId,
@@ -250,6 +284,16 @@ describe("durable reconstruction jobs", () => {
     );
     const second = await restarted.drain();
     expect(second).toMatchObject({ status: "drained", captured: 1, failed: 0, pending: 0 });
+    const compactedJob = await reconstructionStore.read(reconstructionScope);
+    expect(compactedJob?.normalizedPayload).not.toHaveProperty("sourceSnapshots");
+    expect(compactedJob?.sourceSnapshotCleanup).toMatchObject({
+      version: 1,
+      originalContentDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    });
+    expect(await restarted.enqueue(jobInput)).toMatchObject({ status: "duplicate" });
+    await expect(restarted.readSavedWake(wakeError, jobInput)).resolves.toMatchObject({
+      status: "published",
+    });
     expect(captureCalls.map(({ eventId }) => eventId)).toEqual([
       "event-root",
       "event-child",
@@ -269,6 +313,99 @@ describe("durable reconstruction jobs", () => {
     ).toEqual(["event-root", "event-child"]);
     expect(await restarted.drain()).toMatchObject({ status: "drained", pending: 0 });
     expect(reconstruct).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses to reconstruct a cleaned snapshot job when its receipt is missing", async () => {
+    const storageRoot = await root();
+    const lifecycleBridge = bridge(storageRoot);
+    const now = Date.now();
+    const source = post("source-run");
+    source.run.start_time = now;
+    const input = snapshotJob("job-cleaned-missing-receipt", "full", "source-ref", now, source);
+    const reconstruct = vi.fn(async () => ({
+      status: "ready" as const,
+      outputs: [{ eventId: "output-run", sourceRef: "source-ref", submission: post("output-run") }],
+    }));
+    const reconstructionWorker = worker(
+      storageRoot,
+      lifecycleBridge.accountFingerprint,
+      reconstruct,
+      lifecycleBridge.capture,
+      { maxAgeMs: 100 },
+    );
+    await reconstructionWorker.enqueue(input);
+    expect(await reconstructionWorker.drain({ now })).toMatchObject({ captured: 1, pending: 0 });
+    const reconstructionRoot = join(storageRoot, RECONSTRUCTION_DIRECTORY);
+    const reconstructionScope = {
+      integration: "claude-code",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      eventId: input.eventId,
+    };
+    const compactedJob = await jobStore(storageRoot).read(reconstructionScope);
+    expect(compactedJob?.sourceSnapshotCleanup).toBeDefined();
+    await unlink(
+      receiptPath(reconstructionRoot, reconstructionScope, lifecycleBridge.accountFingerprint),
+    );
+
+    await expect(reconstructionWorker.drain({ now: now + 100 })).rejects.toThrow(
+      "Compacted reconstruction job has no delivered receipt",
+    );
+    expect(reconstruct).toHaveBeenCalledTimes(1);
+  });
+
+  it("finishes cleanup after a delivered receipt without rerunning reconstruction", async () => {
+    const storageRoot = await root();
+    const lifecycleBridge = bridge(storageRoot);
+    const now = Date.now();
+    const source = post("source-run");
+    source.run.start_time = now;
+    const input = snapshotJob("job-receipt-before-cleanup", "full", "source-ref", now, source);
+    const reconstruct = vi.fn(async () => ({
+      status: "ready" as const,
+      outputs: [
+        { eventId: "unused-output", sourceRef: "source-ref", submission: post("unused-output") },
+      ],
+    }));
+    const reconstructionWorker = worker(
+      storageRoot,
+      lifecycleBridge.accountFingerprint,
+      reconstruct,
+      lifecycleBridge.capture,
+    );
+    await reconstructionWorker.enqueue(input);
+    const output = await lifecycleBridge.capture({
+      turnId: input.turnId,
+      eventId: "durable-output",
+      submission: post("durable-output"),
+      turnEvidence: input.turnEvidence,
+    });
+    expect(output.status).toBe("published");
+    const reconstructionScope = {
+      integration: "claude-code",
+      sessionId: "session-1",
+      turnId: input.turnId,
+      eventId: input.eventId,
+    };
+    await expect(
+      jobStore(storageRoot).recordOutcome({
+        ...reconstructionScope,
+        destination: lifecycleBridge.accountFingerprint,
+        outcome: "delivered",
+      }),
+    ).resolves.toMatchObject({ status: "recorded" });
+
+    expect(await reconstructionWorker.drain()).toMatchObject({ status: "drained", pending: 0 });
+    expect(reconstruct).not.toHaveBeenCalled();
+    expect(await jobStore(storageRoot).read(reconstructionScope)).toMatchObject({
+      sourceSnapshotCleanup: { version: 1 },
+    });
+    expect(
+      await createCaptureStore(storageRoot).read({
+        ...reconstructionScope,
+        eventId: "durable-output",
+      }),
+    ).toMatchObject({ eventId: "durable-output" });
   });
 
   it("keeps duplicate jobs immutable, defers missing identity without an attempt, and isolates accounts", async () => {

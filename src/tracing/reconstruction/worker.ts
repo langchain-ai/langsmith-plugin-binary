@@ -15,6 +15,7 @@ import {
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import { createDeliveryAttemptStore } from "../delivery/attempt-store.js";
 import { readSavedCaptureWake } from "../capture-wake.js";
+import { captureContentDigest } from "../../storage/capture/compaction.js";
 import {
   DELIVERY_CAPACITY_REASON,
   DELIVERY_DEFAULT_MAX_AGE_MS,
@@ -128,12 +129,7 @@ export function createReconstructionWorker(
         runId: expected.runId,
       });
       if (saved === undefined) return undefined;
-      return canonicalJson(saved.record) ===
-        canonicalJson({
-          ...expected,
-          version: saved.record.version,
-          capturedAtMs: saved.record.capturedAtMs,
-        })
+      return captureContentDigest(saved.record) === captureContentDigest(expected)
         ? saved
         : undefined;
     },
@@ -165,8 +161,31 @@ export function createReconstructionWorker(
           if (outcome.status === "failed") throw new Error(outcome.message);
           if (outcome.status === "missing-capture")
             throw new Error("Reconstruction job disappeared");
-          if (outcome.status === "settled") continue;
+          if (outcome.status === "settled") {
+            if (job.accountFingerprint === accountFingerprint) {
+              if (
+                entry.record.sourceSnapshotCleanup !== undefined &&
+                outcome.receipt.outcome !== "delivered"
+              ) {
+                throw new Error("Compacted reconstruction job has no delivered receipt");
+              }
+              if (job.sourceSnapshots !== undefined && outcome.receipt.outcome === "delivered") {
+                const cleanup = await captureStore.compactReconstructionJob(
+                  scope,
+                  entry.record,
+                  job.accountFingerprint,
+                );
+                if (cleanup.status !== "compacted" && cleanup.status !== "already-compacted")
+                  throw new Error(
+                    `Could not compact delivered reconstruction job: ${cleanup.status}`,
+                  );
+              }
+            }
+            continue;
+          }
           if (job.accountFingerprint !== accountFingerprint) continue;
+          if (entry.record.sourceSnapshotCleanup !== undefined)
+            throw new Error("Compacted reconstruction job has no delivered receipt");
           if (now - jobAgeStartedAtMs(job, entry.capturedAtMs) >= policy.maxAgeMs) {
             counts.dropped += Number(
               await recordTerminal(
@@ -196,6 +215,7 @@ export function createReconstructionWorker(
         for (const candidate of candidates.slice(overCapacity)) {
           const result = await processJob(
             candidate.job,
+            candidate.entry.record,
             candidate.entry.capturedAtMs,
             candidate.scope,
             reconstruct,
@@ -233,6 +253,7 @@ export function createReconstructionWorker(
 
 async function processJob(
   job: ReconstructionJob,
+  storedJob: StoredCapture,
   jobCapturedAtMs: number,
   scope: CaptureScope,
   reconstruct: ReconstructionCallback,
@@ -327,6 +348,11 @@ async function processJob(
     if (captureStatus === "published") counts.captured += 1;
   }
   await recordTerminal(store, scope, job.accountFingerprint, "delivered");
+  if (job.sourceSnapshots !== undefined) {
+    const cleanup = await store.compactReconstructionJob(scope, storedJob, job.accountFingerprint);
+    if (cleanup.status !== "compacted" && cleanup.status !== "already-compacted")
+      throw new Error(`Could not compact delivered reconstruction job: ${cleanup.status}`);
+  }
   return "complete";
 }
 

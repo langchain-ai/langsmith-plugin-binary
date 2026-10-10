@@ -62,7 +62,6 @@ export async function replacePrivateFile(
   root: string,
   path: string,
   contents: string,
-  beforeCommit?: () => void,
 ): Promise<void> {
   if (!(await hasRealParentDirectories(root, path)))
     throw new Error("Capture record parent directory is missing");
@@ -94,7 +93,6 @@ export async function replacePrivateFile(
     ) {
       throw new Error("Capture record changed during replacement");
     }
-    beforeCommit?.();
     await rename(stagingPath, path);
     await syncDirectory(directory);
   } catch (error) {

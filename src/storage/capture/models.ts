@@ -35,6 +35,12 @@ export interface StoredCapture extends CaptureInput {
   version: number;
   capturedAtMs: number;
   compaction?: CompactedCapturePayload;
+  sourceSnapshotCleanup?: SourceSnapshotCleanup;
+}
+
+export interface SourceSnapshotCleanup {
+  version: 1;
+  originalContentDigest: string;
 }
 
 export type CompactedFieldDigest =
@@ -86,6 +92,15 @@ export type CaptureCompactionResult =
   | { status: "missing-capture" }
   | StorageFailure;
 
+export type ReconstructionJobCleanupResult =
+  | { status: "compacted"; record: StoredCapture }
+  | { status: "already-compacted"; record: StoredCapture }
+  | { status: "unchanged" }
+  | { status: "not-delivered" }
+  | { status: "changed" }
+  | { status: "missing-capture" }
+  | StorageFailure;
+
 export interface OutcomeInput extends CaptureScope {
   destination: string;
   outcome: "delivered" | "dropped";
@@ -116,6 +131,11 @@ export type OutcomeReadResult =
 export interface CaptureStore {
   capture(input: CaptureInput): Promise<CaptureWriteResult>;
   compact(scope: CaptureScope, expected: StoredCapture): Promise<CaptureCompactionResult>;
+  compactReconstructionJob(
+    scope: CaptureScope,
+    expected: StoredCapture,
+    destination: string,
+  ): Promise<ReconstructionJobCleanupResult>;
   read(scope: CaptureScope): Promise<StoredCapture | undefined>;
   enumerate(integration: string, sessionId: string): Promise<EnumeratedCapture[]>;
   enumerateTurn(

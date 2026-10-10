@@ -49,6 +49,7 @@ export function createDeliveryCoordinator(options) {
             }
             const captures = await captureStore.enumerate(integration, sessionId);
             const accountEligible = captures.filter(({ record }) => record.destinationFingerprint === writer.accountFingerprint);
+            await requireDeliveredCompactionReceipts(captureStore, accountEligible, writer.destinations);
             const eligible = accountEligible.filter(({ record }) => record.compaction === undefined);
             return {
                 status: "drained",
@@ -58,6 +59,21 @@ export function createDeliveryCoordinator(options) {
             };
         },
     };
+}
+async function requireDeliveredCompactionReceipts(captureStore, captures, destinations) {
+    for (const { record } of captures) {
+        if (record.compaction === undefined)
+            continue;
+        const scope = scopeOf(record);
+        for (const destination of destinations) {
+            const outcome = await captureStore.readOutcome(scope, destination.id);
+            if (outcome.status === "failed")
+                throw new Error(`Could not verify compacted capture receipt: ${outcome.code}`);
+            if (outcome.status !== "settled" || outcome.receipt.outcome !== "delivered") {
+                throw new Error(`Compacted capture ${record.eventId} has no delivered receipt for destination ${destination.id}`);
+            }
+        }
+    }
 }
 async function drainLocked(captureStore, attemptStore, integration, sessionId, policy, request, drainCache) {
     const captures = await captureStore.enumerate(integration, sessionId);

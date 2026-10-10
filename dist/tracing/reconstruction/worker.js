@@ -5,6 +5,7 @@ import { identifierHash, validateIdentifier, validateIntegration, } from "../../
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import { createDeliveryAttemptStore } from "../delivery/attempt-store.js";
 import { readSavedCaptureWake } from "../capture-wake.js";
+import { captureContentDigest } from "../../storage/capture/compaction.js";
 import { DELIVERY_CAPACITY_REASON, DELIVERY_DEFAULT_MAX_AGE_MS, DELIVERY_DEFAULT_MAX_ATTEMPTS, DELIVERY_DEFAULT_MAX_ENTRIES, DELIVERY_EXPIRED_REASON, DELIVERY_RETRY_EXHAUSTED_REASON, } from "../delivery/constants.js";
 import { canonicalJson, canonicalValue } from "../../storage/capture/utils/serialization.js";
 import { canonicalJsonObject, ownDataField, requireBoolean, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireSafeEpochMilliseconds, requireStringArray, } from "../../utils/validation/objects.js";
@@ -45,12 +46,7 @@ export function createReconstructionWorker(options) {
             });
             if (saved === undefined)
                 return undefined;
-            return canonicalJson(saved.record) ===
-                canonicalJson({
-                    ...expected,
-                    version: saved.record.version,
-                    capturedAtMs: saved.record.capturedAtMs,
-                })
+            return captureContentDigest(saved.record) === captureContentDigest(expected)
                 ? saved
                 : undefined;
         },
@@ -85,10 +81,24 @@ export function createReconstructionWorker(options) {
                         throw new Error(outcome.message);
                     if (outcome.status === "missing-capture")
                         throw new Error("Reconstruction job disappeared");
-                    if (outcome.status === "settled")
+                    if (outcome.status === "settled") {
+                        if (job.accountFingerprint === accountFingerprint) {
+                            if (entry.record.sourceSnapshotCleanup !== undefined &&
+                                outcome.receipt.outcome !== "delivered") {
+                                throw new Error("Compacted reconstruction job has no delivered receipt");
+                            }
+                            if (job.sourceSnapshots !== undefined && outcome.receipt.outcome === "delivered") {
+                                const cleanup = await captureStore.compactReconstructionJob(scope, entry.record, job.accountFingerprint);
+                                if (cleanup.status !== "compacted" && cleanup.status !== "already-compacted")
+                                    throw new Error(`Could not compact delivered reconstruction job: ${cleanup.status}`);
+                            }
+                        }
                         continue;
+                    }
                     if (job.accountFingerprint !== accountFingerprint)
                         continue;
+                    if (entry.record.sourceSnapshotCleanup !== undefined)
+                        throw new Error("Compacted reconstruction job has no delivered receipt");
                     if (now - jobAgeStartedAtMs(job, entry.capturedAtMs) >= policy.maxAgeMs) {
                         counts.dropped += Number(await recordTerminal(captureStore, scope, job.accountFingerprint, "dropped", DELIVERY_EXPIRED_REASON));
                         continue;
@@ -100,7 +110,7 @@ export function createReconstructionWorker(options) {
                     counts.dropped += Number(await recordTerminal(captureStore, candidate.scope, candidate.job.accountFingerprint, "dropped", DELIVERY_CAPACITY_REASON));
                 }
                 for (const candidate of candidates.slice(overCapacity)) {
-                    const result = await processJob(candidate.job, candidate.entry.capturedAtMs, candidate.scope, reconstruct, bridge, captureStore, attemptStore, policy.maxAttempts, counts);
+                    const result = await processJob(candidate.job, candidate.entry.record, candidate.entry.capturedAtMs, candidate.scope, reconstruct, bridge, captureStore, attemptStore, policy.maxAttempts, counts);
                     if (result === "deferred")
                         counts.deferred += 1;
                 }
@@ -128,7 +138,7 @@ export function createReconstructionWorker(options) {
         },
     };
 }
-async function processJob(job, jobCapturedAtMs, scope, reconstruct, bridge, store, attempts, maxAttempts, counts) {
+async function processJob(job, storedJob, jobCapturedAtMs, scope, reconstruct, bridge, store, attempts, maxAttempts, counts) {
     const attemptCount = await attempts.count(scope, job.accountFingerprint);
     if (attemptCount >= maxAttempts) {
         counts.dropped += Number(await recordTerminal(store, scope, job.accountFingerprint, "dropped", DELIVERY_RETRY_EXHAUSTED_REASON));
@@ -210,6 +220,11 @@ async function processJob(job, jobCapturedAtMs, scope, reconstruct, bridge, stor
             counts.captured += 1;
     }
     await recordTerminal(store, scope, job.accountFingerprint, "delivered");
+    if (job.sourceSnapshots !== undefined) {
+        const cleanup = await store.compactReconstructionJob(scope, storedJob, job.accountFingerprint);
+        if (cleanup.status !== "compacted" && cleanup.status !== "already-compacted")
+            throw new Error(`Could not compact delivered reconstruction job: ${cleanup.status}`);
+    }
     return "complete";
 }
 async function recordFailure(store, attempts, scope, accountFingerprint, maxAttempts, counts) {

@@ -1,10 +1,12 @@
+import { CAPTURE_RECONSTRUCTION_JOB_KIND } from "../../storage/capture/constants.js";
+
 export const RECONSTRUCTION_DIRECTORY = "reconstruction-v1";
 export const RECONSTRUCTION_WORKER_DIRECTORY = "workers";
 export const RECONSTRUCTION_SESSIONS_DIRECTORY = "sessions";
 export const RECONSTRUCTION_DRAIN_LOCK = "drain";
 export const RECONSTRUCTION_RUN_ID_PREFIX = "reconstruction:";
 export const RECONSTRUCTION_MAPPING_EVENT_ID_PREFIX = "reconstruction-map:";
-export const RECONSTRUCTION_JOB_KIND = "reconstruction-job-v1";
+export const RECONSTRUCTION_JOB_KIND = CAPTURE_RECONSTRUCTION_JOB_KIND;
 export const RECONSTRUCTION_MAPPING_KIND = "reconstruction-map-v1";
 export const RECONSTRUCTION_RECORD_VERSION = 1;
 export const RECONSTRUCTION_DEFERRED_REASON = "missing-thread-identity";

@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { createCaptureStore } from "./capture-store.js";
+import { CAPTURE_RECONSTRUCTION_JOB_KIND } from "./constants.js";
 import type { CaptureInput } from "./models.js";
 import { eventPath, identifierHash, receiptPath } from "./paths.js";
 import { ensurePrivateDirectory } from "./utils/atomic-file.js";
@@ -261,6 +262,31 @@ describe("immutable capture storage", () => {
     await expect(
       store.capture({ ...input, normalizedPayload: { operation: "post", changed: true } }),
     ).resolves.toEqual({ status: "conflict" });
+  });
+
+  it("keeps reconstruction snapshots when a delivered receipt has the wrong scope", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input: CaptureInput = {
+      ...captureInput("reconstruction-cleanup-scope"),
+      runId: "reconstruction:run",
+      eventKind: CAPTURE_RECONSTRUCTION_JOB_KIND,
+      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source" }] },
+    };
+    await store.capture(input);
+    const original = (await store.read(input))!;
+    await store.recordOutcome({ ...input, destination: "destination-a", outcome: "delivered" });
+    const path = receiptPath(root, input, "destination-a");
+    const receipt = JSON.parse(readFileSync(path, "utf8"));
+    receipt.sessionId = "another-session";
+    writeFileSync(path, JSON.stringify(receipt));
+
+    await expect(store.compactReconstructionJob(input, original, "destination-a")).resolves.toEqual(
+      { status: "not-delivered" },
+    );
+    await expect(store.read(input)).resolves.toMatchObject({
+      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source" }] },
+    });
   });
 
   it("compacts only present patch values and preserves non-payload patch fields", async () => {

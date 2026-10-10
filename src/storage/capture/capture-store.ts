@@ -9,6 +9,7 @@ import {
   CAPTURE_RECORD_VERSION,
   CAPTURE_RECORD_LOCK_DIRECTORY,
   CAPTURE_RECEIPT_VERSION,
+  CAPTURE_RECONSTRUCTION_JOB_KIND,
   CAPTURE_STAGING_FILE,
 } from "./constants.js";
 import type {
@@ -21,6 +22,7 @@ import type {
   OutcomeInput,
   OutcomeReadResult,
   OutcomeReceipt,
+  ReconstructionJobCleanupResult,
   StorageFailure,
   StoredCapture,
 } from "./models.js";
@@ -40,8 +42,10 @@ import {
 } from "./utils/atomic-file.js";
 import {
   captureContentDigest,
+  compactReconstructionJobRecord,
   compactCaptureRecord,
   validateCompactionMarker,
+  validateSourceSnapshotCleanup,
 } from "./compaction.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
@@ -146,6 +150,57 @@ export function createCaptureStore(root: string): CaptureStore {
           if (record === undefined) return { status: "changed" };
           await replacePrivateFile(storageRoot, path, canonicalJson(record));
           return { status: "compacted", record };
+        });
+      } catch (error) {
+        return failure("STORAGE_FAILED", error);
+      }
+    },
+    async compactReconstructionJob(
+      scope,
+      expected,
+      destination,
+    ): Promise<ReconstructionJobCleanupResult> {
+      try {
+        validateScope(scope);
+        validateIdentifier(destination, "destination");
+        if (!sameScope(expected, scope) || expected.eventKind !== CAPTURE_RECONSTRUCTION_JOB_KIND)
+          throw new TypeError("Capture is not the expected reconstruction job");
+        if (destination !== expected.destinationFingerprint)
+          throw new TypeError("Reconstruction job destination does not match");
+        const expectedOriginalContentDigest = captureContentDigest(expected);
+        if (!CAPTURE_HASH.test(expectedOriginalContentDigest))
+          throw new TypeError("Invalid original reconstruction job digest");
+        return await withRecordLock(storageRoot, scope, async () => {
+          const path = eventPath(storageRoot, scope);
+          const previous = await readRecord(storageRoot, path);
+          if (previous === undefined) return { status: "missing-capture" };
+          if (captureContentDigest(previous) !== expectedOriginalContentDigest)
+            return { status: "changed" };
+          if (previous.sourceSnapshotCleanup !== undefined)
+            return { status: "already-compacted", record: previous };
+          const payload = previous.normalizedPayload;
+          if (
+            payload === null ||
+            typeof payload !== "object" ||
+            Array.isArray(payload) ||
+            !Object.hasOwn(payload, "sourceSnapshots")
+          ) {
+            return { status: "unchanged" };
+          }
+          const receipt = await readReceipt(
+            storageRoot,
+            receiptPath(storageRoot, scope, destination),
+          );
+          if (
+            receipt?.outcome !== "delivered" ||
+            receipt.destination !== destination ||
+            !sameScope(receipt, scope)
+          )
+            return { status: "not-delivered" };
+          const compacted = compactReconstructionJobRecord(previous, expectedOriginalContentDigest);
+          if (compacted === undefined) return { status: "changed" };
+          await replacePrivateFile(storageRoot, path, canonicalJson(compacted));
+          return { status: "compacted", record: compacted };
         });
       } catch (error) {
         return failure("STORAGE_FAILED", error);
@@ -526,11 +581,22 @@ async function readRecord(root: string, path: string): Promise<StoredCapture | u
       : undefined;
   if (value.version === CAPTURE_RECORD_VERSION && "compaction" in value)
     throw new Error("Invalid compacted capture marker");
+  if (value.version === CAPTURE_COMPACTED_RECORD_VERSION && "sourceSnapshotCleanup" in value)
+    throw new Error("Invalid reconstruction source snapshot cleanup marker");
+  const sourceSnapshotCleanup =
+    "sourceSnapshotCleanup" in value
+      ? validateSourceSnapshotCleanup(
+          value.sourceSnapshotCleanup,
+          value.eventKind,
+          normalizedPayload,
+        )
+      : undefined;
   return {
     ...(value as unknown as StoredCapture),
     normalizedPayload,
     ...(dependencies === undefined ? {} : { dependencies }),
     ...(compaction === undefined ? {} : { compaction }),
+    ...(sourceSnapshotCleanup === undefined ? {} : { sourceSnapshotCleanup }),
   };
 }
 

@@ -1,5 +1,5 @@
 import { CAPTURE_WAKE_ERROR_NAME, CAPTURE_WAKE_FAILURE_MESSAGE } from "./capture-wake-constants.js";
-import { canonicalJson } from "../storage/capture/utils/serialization.js";
+import { captureContentDigest } from "../storage/capture/compaction.js";
 export class CaptureWakeError extends Error {
     captureResult;
     constructor(captureResult, cause) {
@@ -34,6 +34,8 @@ export async function readSavedCaptureWake(error, options) {
         turnId: record.turnId,
         eventId: record.eventId,
     });
-    return saved !== undefined && canonicalJson(saved) === canonicalJson(record) ? result : undefined;
+    return saved !== undefined && captureContentDigest(saved) === captureContentDigest(record)
+        ? { ...result, record: saved }
+        : undefined;
 }
 //# sourceMappingURL=capture-wake.js.map

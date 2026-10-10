@@ -58,7 +58,7 @@ export async function publishExclusive(path, contents, beforeCommit) {
         });
     }
 }
-export async function replacePrivateFile(root, path, contents, beforeCommit) {
+export async function replacePrivateFile(root, path, contents) {
     if (!(await hasRealParentDirectories(root, path)))
         throw new Error("Capture record parent directory is missing");
     const original = await lstat(path);
@@ -87,7 +87,6 @@ export async function replacePrivateFile(root, path, contents, beforeCommit) {
             !hasPrivateFileMode(current.mode)) {
             throw new Error("Capture record changed during replacement");
         }
-        beforeCommit?.();
         await rename(stagingPath, path);
         await syncDirectory(directory);
     }
