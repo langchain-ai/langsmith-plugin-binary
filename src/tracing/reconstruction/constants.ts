@@ -16,6 +16,31 @@ export const RECONSTRUCTION_JOB_INPUT_KEYS = [
   "turnEvidence",
   "turnId",
 ] as const;
+export const RECONSTRUCTION_JOB_OPTIONAL_INPUT_KEYS = [
+  "sourceAgeStartedAtMs",
+  "sourceSnapshots",
+] as const;
+export const RECONSTRUCTION_SOURCE_SNAPSHOT_KEYS = [
+  "sourceAgeStartedAtMs",
+  "sourceRef",
+  "submission",
+] as const;
+export const RECONSTRUCTION_SOURCE_SNAPSHOT_OPTIONAL_KEYS = ["attributionContext"] as const;
+export const RECONSTRUCTION_STORED_JOB_KEYS = [
+  "privacyMode",
+  "recordVersion",
+  "sourceRefs",
+] as const;
+export const RECONSTRUCTION_STORED_JOB_OPTIONAL_KEYS = [
+  "sourceAgeStartedAtMs",
+  "sourceSnapshots",
+] as const;
+export const RECONSTRUCTION_ATTRIBUTION_CONTEXT_KEYS = ["toolOrigin"] as const;
+export const RECONSTRUCTION_ATTRIBUTION_CONTEXT_OPTIONAL_KEYS = ["pinnedRepositoryKeys"] as const;
+export const RECONSTRUCTION_TOOL_ORIGIN_KEYS = ["namedAPath"] as const;
+export const RECONSTRUCTION_TOOL_ORIGIN_OPTIONAL_KEYS = ["cwd", "path"] as const;
+export const RECONSTRUCTION_OUTPUT_KEYS = ["eventId", "submission"] as const;
+export const RECONSTRUCTION_OUTPUT_OPTIONAL_KEYS = ["dependencies", "sourceRef"] as const;
 export const RECONSTRUCTION_TURN_EVIDENCE_KEYS = ["childRunIds", "closureState"] as const;
 export const RECONSTRUCTION_TURN_EVIDENCE_KEYS_WITH_ROOT = [
   "childRunIds",

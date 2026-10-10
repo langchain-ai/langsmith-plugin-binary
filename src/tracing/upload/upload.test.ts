@@ -1,3 +1,4 @@
+import type { LocalRequest } from "../../test-support/models/upload.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CodingAgentMetadataOptions } from "../../metadata/index.js";
@@ -14,14 +15,6 @@ const REPLICA_KEY = "synthetic-replica-key";
 const FAILING_KEY = "synthetic-failing-key";
 const PRIVATE_MARKER = "synthetic-private-upload-marker";
 const RUN_ID = "12345678-1234-4123-8123-123456789012";
-
-interface LocalRequest {
-  method: string;
-  path: string;
-  apiKey: string | undefined;
-  workspaceId: string | undefined;
-  payload: Record<string, unknown>;
-}
 
 let server: ReturnType<typeof createServer>;
 let endpoint: string;

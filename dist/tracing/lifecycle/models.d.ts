@@ -58,6 +58,7 @@ export interface LifecycleCaptureInput {
     submission: PreparedRunSubmission;
     turnEvidence: LifecycleTurnEvidence;
     dependencies?: CaptureDependency[];
+    sourceAgeStartedAtMs?: number;
 }
 export interface LifecycleEndTimeWithholdingInput {
     record: StoredCapture;

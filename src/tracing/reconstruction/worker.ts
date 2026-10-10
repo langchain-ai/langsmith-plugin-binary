@@ -29,30 +29,46 @@ import { canonicalJson, canonicalValue } from "../../storage/capture/utils/seria
 import {
   canonicalJsonObject,
   ownDataField,
+  requireBoolean,
   requireNonBlankString,
   requireOwnDataField,
   requirePlainRecord,
+  requireSafeEpochMilliseconds,
   requireStringArray,
 } from "../../utils/validation/objects.js";
+import { snapshotData } from "../../utils/validation/snapshot.js";
+import { projectSubmission } from "../lifecycle/projection.js";
 import {
+  RECONSTRUCTION_ATTRIBUTION_CONTEXT_KEYS,
+  RECONSTRUCTION_ATTRIBUTION_CONTEXT_OPTIONAL_KEYS,
   RECONSTRUCTION_CLOSURE_STATES,
   RECONSTRUCTION_DEFERRED_REASON,
   RECONSTRUCTION_DEPENDENCY_KEYS,
   RECONSTRUCTION_DRAIN_LOCK,
   RECONSTRUCTION_DIRECTORY,
   RECONSTRUCTION_JOB_INPUT_KEYS,
+  RECONSTRUCTION_JOB_OPTIONAL_INPUT_KEYS,
   RECONSTRUCTION_JOB_KIND,
   RECONSTRUCTION_MAPPING_KIND,
   RECONSTRUCTION_RECORD_VERSION,
   RECONSTRUCTION_MAPPING_EVENT_ID_PREFIX,
   RECONSTRUCTION_RUN_ID_PREFIX,
+  RECONSTRUCTION_OUTPUT_KEYS,
+  RECONSTRUCTION_OUTPUT_OPTIONAL_KEYS,
+  RECONSTRUCTION_SOURCE_SNAPSHOT_KEYS,
+  RECONSTRUCTION_SOURCE_SNAPSHOT_OPTIONAL_KEYS,
   RECONSTRUCTION_SESSIONS_DIRECTORY,
+  RECONSTRUCTION_STORED_JOB_KEYS,
+  RECONSTRUCTION_STORED_JOB_OPTIONAL_KEYS,
+  RECONSTRUCTION_TOOL_ORIGIN_KEYS,
+  RECONSTRUCTION_TOOL_ORIGIN_OPTIONAL_KEYS,
   RECONSTRUCTION_TURN_EVIDENCE_KEYS,
   RECONSTRUCTION_TURN_EVIDENCE_KEYS_WITH_ROOT,
   RECONSTRUCTION_WORKER_DIRECTORY,
 } from "./constants.js";
 import type {
   ReconstructionCandidate,
+  ReconstructionAttributionContext,
   ReconstructionDrainCounts,
   ReconstructionDrainOptions,
   ReconstructionDrainResult,
@@ -62,7 +78,9 @@ import type {
   ReconstructionCallback,
   ReconstructionOutput,
   ReconstructionResult,
+  ReconstructionSourceSnapshot,
   ReconstructionTerminalOutcome,
+  ReconstructionToolOrigin,
   ReconstructionTurnEvidence,
   ReconstructionValidatedOutput,
   ReconstructionWorker,
@@ -126,7 +144,7 @@ export function createReconstructionWorker(
             throw new Error("Reconstruction job disappeared");
           if (outcome.status === "settled") continue;
           if (job.accountFingerprint !== accountFingerprint) continue;
-          if (now - entry.capturedAtMs >= policy.maxAgeMs) {
+          if (now - jobAgeStartedAtMs(job, entry.capturedAtMs) >= policy.maxAgeMs) {
             counts.dropped += Number(
               await recordTerminal(
                 captureStore,
@@ -155,6 +173,7 @@ export function createReconstructionWorker(
         for (const candidate of candidates.slice(overCapacity)) {
           const result = await processJob(
             candidate.job,
+            candidate.entry.capturedAtMs,
             candidate.scope,
             reconstruct,
             bridge,
@@ -191,6 +210,7 @@ export function createReconstructionWorker(
 
 async function processJob(
   job: ReconstructionJob,
+  jobCapturedAtMs: number,
   scope: CaptureScope,
   reconstruct: ReconstructionCallback,
   bridge: ReconstructionWorkerOptions["bridge"],
@@ -232,7 +252,7 @@ async function processJob(
   }
   let outputs: ReconstructionValidatedOutput[];
   try {
-    outputs = validateOutputs(interpretation.outputs, job);
+    outputs = validateOutputs(interpretation.outputs, job, jobCapturedAtMs);
     if (outputs.length === 0) throw new TypeError("Reconstruction produced no captures");
   } catch {
     await recordFailure(store, attempts, scope, job.accountFingerprint, maxAttempts, counts);
@@ -263,6 +283,9 @@ async function processJob(
       submission: output.submission,
       turnEvidence,
       ...(output.dependencies === undefined ? {} : { dependencies: output.dependencies }),
+      ...(output.sourceAgeStartedAtMs === undefined
+        ? {}
+        : { sourceAgeStartedAtMs: output.sourceAgeStartedAtMs }),
     };
     let captureStatus: unknown;
     try {
@@ -331,6 +354,32 @@ function snapshotJob(job: ReconstructionJob): ReconstructionJob {
   return Object.freeze({
     ...job,
     sourceRefs: Object.freeze([...job.sourceRefs]),
+    ...(job.sourceSnapshots === undefined
+      ? {}
+      : {
+          sourceSnapshots: Object.freeze(
+            job.sourceSnapshots.map((snapshot) =>
+              Object.freeze({
+                ...snapshot,
+                submission: snapshotData(snapshot.submission),
+                ...(snapshot.attributionContext === undefined
+                  ? {}
+                  : {
+                      attributionContext: Object.freeze({
+                        toolOrigin: Object.freeze({ ...snapshot.attributionContext.toolOrigin }),
+                        ...(snapshot.attributionContext.pinnedRepositoryKeys === undefined
+                          ? {}
+                          : {
+                              pinnedRepositoryKeys: Object.freeze([
+                                ...snapshot.attributionContext.pinnedRepositoryKeys,
+                              ]),
+                            }),
+                      }),
+                    }),
+              }),
+            ),
+          ),
+        }),
     turnEvidence: Object.freeze({
       ...(job.turnEvidence.rootRunId === undefined
         ? {}
@@ -339,6 +388,13 @@ function snapshotJob(job: ReconstructionJob): ReconstructionJob {
       closureState: job.turnEvidence.closureState,
     }),
   });
+}
+
+function jobAgeStartedAtMs(job: ReconstructionJob, capturedAtMs: number): number {
+  if (job.sourceSnapshots !== undefined) {
+    return Math.min(...job.sourceSnapshots.map(({ sourceAgeStartedAtMs }) => sourceAgeStartedAtMs));
+  }
+  return job.sourceAgeStartedAtMs ?? capturedAtMs;
 }
 
 function resolvePolicy(policy: Partial<DeliveryPolicy> | undefined): DeliveryPolicy {
@@ -360,11 +416,30 @@ function resolvePolicy(policy: Partial<DeliveryPolicy> | undefined): DeliveryPol
   return resolved;
 }
 
-function validateOutputs(value: unknown, job: ReconstructionJob): ReconstructionValidatedOutput[] {
+function validateOutputs(
+  value: unknown,
+  job: ReconstructionJob,
+  jobCapturedAtMs: number,
+): ReconstructionValidatedOutput[] {
   if (!Array.isArray(value)) throw new TypeError("Reconstruction outputs must be an array");
   const seen = new Set<string>();
   return value.map((item) => {
     const output = requirePlainRecord(item, "Reconstruction output");
+    const outputKeys = Object.keys(output).toSorted();
+    if (
+      RECONSTRUCTION_OUTPUT_KEYS.some((key) => !outputKeys.includes(key)) ||
+      outputKeys.some(
+        (key) =>
+          !RECONSTRUCTION_OUTPUT_KEYS.includes(
+            key as (typeof RECONSTRUCTION_OUTPUT_KEYS)[number],
+          ) &&
+          !RECONSTRUCTION_OUTPUT_OPTIONAL_KEYS.includes(
+            key as (typeof RECONSTRUCTION_OUTPUT_OPTIONAL_KEYS)[number],
+          ),
+      )
+    ) {
+      throw new TypeError("Reconstruction output has unsupported fields");
+    }
     const eventId = requireNonBlankString(requireOwnDataField(output, "eventId"), "Event ID");
     validateIdentifier(eventId, "event ID");
     if (seen.has(eventId)) throw new TypeError("Reconstruction event IDs must be unique");
@@ -393,10 +468,31 @@ function validateOutputs(value: unknown, job: ReconstructionJob): Reconstruction
         throw new TypeError("Reconstruction dependencies must be an array");
       dependencies = validateDependencies(dependenciesValue.value, job, eventId);
     }
+    const sourceRefField = ownDataField(output, "sourceRef");
+    let sourceRef: string | undefined;
+    let sourceAgeStartedAtMs: number | undefined;
+    if (sourceRefField.present) {
+      sourceRef = requireNonBlankString(sourceRefField.value, "Source ref");
+      validateIdentifier(sourceRef, "source ref");
+    }
+    if (job.sourceSnapshots !== undefined) {
+      if (sourceRef === undefined) throw new TypeError("Snapshot outputs require a source ref");
+      const snapshot = job.sourceSnapshots.find((candidate) => candidate.sourceRef === sourceRef);
+      if (snapshot === undefined) throw new TypeError("Output source ref has no snapshot");
+      sourceAgeStartedAtMs = snapshot.sourceAgeStartedAtMs;
+    } else if (sourceRef !== undefined) {
+      if (!job.sourceRefs.includes(sourceRef))
+        throw new TypeError("Output source ref is not in the reconstruction job");
+      sourceAgeStartedAtMs = job.sourceAgeStartedAtMs ?? jobCapturedAtMs;
+    } else {
+      sourceAgeStartedAtMs = job.sourceAgeStartedAtMs ?? jobCapturedAtMs;
+    }
     return {
       eventId,
       runId,
       submission: submissionValue as unknown as PreparedRunSubmission,
+      ...(sourceRef === undefined ? {} : { sourceRef }),
+      ...(sourceAgeStartedAtMs === undefined ? {} : { sourceAgeStartedAtMs }),
       ...(dependencies === undefined ? {} : { dependencies }),
     };
   });
@@ -453,10 +549,24 @@ function validateJobInput(
   sessionId: string,
   accountFingerprint: string,
 ): ReconstructionJob {
-  const input = requirePlainRecord(value, "Reconstruction job");
+  const input = requirePlainRecord(
+    snapshotData(requirePlainRecord(value, "Reconstruction job")),
+    "Reconstruction job",
+  );
   const keys = Object.keys(input).toSorted();
-  if (canonicalJson(keys) !== canonicalJson(RECONSTRUCTION_JOB_INPUT_KEYS)) {
-    throw new TypeError("Reconstruction jobs accept only source refs and structural evidence");
+  if (
+    RECONSTRUCTION_JOB_INPUT_KEYS.some((key) => !keys.includes(key)) ||
+    keys.some(
+      (key) =>
+        !RECONSTRUCTION_JOB_INPUT_KEYS.includes(
+          key as (typeof RECONSTRUCTION_JOB_INPUT_KEYS)[number],
+        ) &&
+        !RECONSTRUCTION_JOB_OPTIONAL_INPUT_KEYS.includes(
+          key as (typeof RECONSTRUCTION_JOB_OPTIONAL_INPUT_KEYS)[number],
+        ),
+    )
+  ) {
+    throw new TypeError("Reconstruction job has unsupported fields");
   }
   const turnId = requireNonBlankString(requireOwnDataField(input, "turnId"), "Turn ID");
   const eventId = requireNonBlankString(requireOwnDataField(input, "eventId"), "Event ID");
@@ -467,11 +577,23 @@ function validateJobInput(
     throw new TypeError("Reconstruction privacy mode is invalid");
   const sourceRefs = requireStringArray(requireOwnDataField(input, "sourceRefs"), "Source refs");
   if (sourceRefs.length === 0) throw new TypeError("Reconstruction source refs are required");
+  if (new Set(sourceRefs).size !== sourceRefs.length)
+    throw new TypeError("Reconstruction source refs must be unique");
   for (const ref of sourceRefs) {
     requireNonBlankString(ref, "Source ref");
     validateIdentifier(ref, "source ref");
   }
   const turnEvidence = validateTurnEvidence(requireOwnDataField(input, "turnEvidence"));
+  const sourceSnapshotsField = ownDataField(input, "sourceSnapshots");
+  const sourceAgeField = ownDataField(input, "sourceAgeStartedAtMs");
+  if (sourceSnapshotsField.present && sourceAgeField.present)
+    throw new TypeError("Reconstruction jobs cannot combine snapshots with a job-level source age");
+  const sourceAgeStartedAtMs = sourceAgeField.present
+    ? requireSafeEpochMilliseconds(sourceAgeField.value, "Source age")
+    : undefined;
+  const sourceSnapshots = sourceSnapshotsField.present
+    ? validateSourceSnapshots(sourceSnapshotsField.value, integration, privacyMode, sourceRefs)
+    : undefined;
   return {
     integration,
     sessionId,
@@ -481,6 +603,149 @@ function validateJobInput(
     sourceRefs,
     privacyMode,
     turnEvidence,
+    ...(sourceSnapshots === undefined ? {} : { sourceSnapshots }),
+    ...(sourceAgeStartedAtMs === undefined ? {} : { sourceAgeStartedAtMs }),
+  };
+}
+
+function validateSourceSnapshots(
+  value: unknown,
+  integration: ReconstructionJob["integration"],
+  privacyMode: ReconstructionJob["privacyMode"],
+  sourceRefs: readonly string[],
+): ReconstructionSourceSnapshot[] {
+  if (!Array.isArray(value) || value.length === 0)
+    throw new TypeError("Reconstruction source snapshots must be a nonempty array");
+  for (const ref of sourceRefs) validatePathlessSourceRef(ref);
+  const seen = new Set<string>();
+  const snapshots = value.map((item) => {
+    const source = requirePlainRecord(item, "Reconstruction source snapshot");
+    const keys = Object.keys(source).toSorted();
+    if (
+      RECONSTRUCTION_SOURCE_SNAPSHOT_KEYS.some((key) => !keys.includes(key)) ||
+      keys.some(
+        (key) =>
+          !RECONSTRUCTION_SOURCE_SNAPSHOT_KEYS.includes(
+            key as (typeof RECONSTRUCTION_SOURCE_SNAPSHOT_KEYS)[number],
+          ) &&
+          !RECONSTRUCTION_SOURCE_SNAPSHOT_OPTIONAL_KEYS.includes(
+            key as (typeof RECONSTRUCTION_SOURCE_SNAPSHOT_OPTIONAL_KEYS)[number],
+          ),
+      )
+    ) {
+      throw new TypeError("Reconstruction source snapshot has unsupported fields");
+    }
+    const sourceRef = requireNonBlankString(requireOwnDataField(source, "sourceRef"), "Source ref");
+    validatePathlessSourceRef(sourceRef);
+    if (!sourceRefs.includes(sourceRef))
+      throw new TypeError("Reconstruction snapshot ref must belong to the job");
+    if (seen.has(sourceRef)) throw new TypeError("Reconstruction snapshot refs must be unique");
+    seen.add(sourceRef);
+    const sourceAgeStartedAtMs = requireSafeEpochMilliseconds(
+      requireOwnDataField(source, "sourceAgeStartedAtMs"),
+      "Source age",
+    );
+    const submission = canonicalJsonObject(
+      requirePlainRecord(requireOwnDataField(source, "submission"), "Prepared submission"),
+      "Prepared submission",
+    );
+    if (requireOwnDataField(submission, "privacyMode") !== privacyMode)
+      throw new TypeError("Snapshot privacy mode must match the reconstruction job");
+    if (submission["operation"] === "post") {
+      const run = requirePlainRecord(requireOwnDataField(submission, "run"), "Prepared run");
+      if (!ownDataField(run, "start_time").present)
+        throw new TypeError("Source snapshot posts must preserve their start time");
+    }
+    const projected = projectSubmission(submission, integration);
+    if (projected.status !== "ready")
+      throw new TypeError("Reconstruction snapshots must be ready for shared projection");
+    const projectedSubmission = canonicalJsonObject(
+      { ...projected.value.payload, metadata: projected.value.metadata },
+      "Projected submission",
+    ) as unknown as PreparedRunSubmission;
+    const attributionField = ownDataField(source, "attributionContext");
+    const attributionContext = attributionField.present
+      ? validateAttributionContext(attributionField.value, privacyMode)
+      : undefined;
+    return {
+      sourceRef,
+      submission: projectedSubmission,
+      sourceAgeStartedAtMs,
+      ...(attributionContext === undefined ? {} : { attributionContext }),
+    };
+  });
+  if (snapshots.length !== sourceRefs.length)
+    throw new TypeError("Source snapshots must cover every reconstruction source ref");
+  return snapshots;
+}
+
+function validatePathlessSourceRef(sourceRef: string): void {
+  validateIdentifier(sourceRef, "source ref");
+  if (sourceRef.includes("/") || sourceRef.includes("\\"))
+    throw new TypeError("Snapshot source refs must be pathless identifiers");
+}
+
+function validateAttributionContext(
+  value: unknown,
+  privacyMode: ReconstructionJob["privacyMode"],
+): ReconstructionAttributionContext {
+  const context = requirePlainRecord(value, "Attribution context");
+  const keys = Object.keys(context).toSorted();
+  if (
+    RECONSTRUCTION_ATTRIBUTION_CONTEXT_KEYS.some((key) => !keys.includes(key)) ||
+    keys.some(
+      (key) =>
+        !RECONSTRUCTION_ATTRIBUTION_CONTEXT_KEYS.includes(
+          key as (typeof RECONSTRUCTION_ATTRIBUTION_CONTEXT_KEYS)[number],
+        ) &&
+        !RECONSTRUCTION_ATTRIBUTION_CONTEXT_OPTIONAL_KEYS.includes(
+          key as (typeof RECONSTRUCTION_ATTRIBUTION_CONTEXT_OPTIONAL_KEYS)[number],
+        ),
+    )
+  ) {
+    throw new TypeError("Attribution context has unsupported fields");
+  }
+  const origin = requirePlainRecord(requireOwnDataField(context, "toolOrigin"), "Tool origin");
+  const originKeys = Object.keys(origin).toSorted();
+  if (
+    RECONSTRUCTION_TOOL_ORIGIN_KEYS.some((key) => !originKeys.includes(key)) ||
+    originKeys.some(
+      (key) =>
+        !RECONSTRUCTION_TOOL_ORIGIN_KEYS.includes(
+          key as (typeof RECONSTRUCTION_TOOL_ORIGIN_KEYS)[number],
+        ) &&
+        !RECONSTRUCTION_TOOL_ORIGIN_OPTIONAL_KEYS.includes(
+          key as (typeof RECONSTRUCTION_TOOL_ORIGIN_OPTIONAL_KEYS)[number],
+        ),
+    )
+  ) {
+    throw new TypeError("Tool origin has unsupported fields");
+  }
+  const namedAPath = requireBoolean(requireOwnDataField(origin, "namedAPath"), "namedAPath");
+  const pathField = ownDataField(origin, "path");
+  const cwdField = ownDataField(origin, "cwd");
+  const pinnedField = ownDataField(context, "pinnedRepositoryKeys");
+  const toolOrigin: ReconstructionToolOrigin =
+    privacyMode === "metadata"
+      ? { namedAPath }
+      : {
+          ...(pathField.present
+            ? { path: requireNonBlankString(pathField.value, "Tool path") }
+            : {}),
+          ...(cwdField.present ? { cwd: requireNonBlankString(cwdField.value, "Tool cwd") } : {}),
+          namedAPath,
+        };
+  let pinnedRepositoryKeys: string[] | undefined;
+  if (privacyMode === "full" && pinnedField.present) {
+    pinnedRepositoryKeys = requireStringArray(pinnedField.value, "Pinned repository keys");
+    if (pinnedRepositoryKeys.some((key) => key.trim().length === 0))
+      throw new TypeError("Pinned repository keys must be nonblank");
+    if (new Set(pinnedRepositoryKeys).size !== pinnedRepositoryKeys.length)
+      throw new TypeError("Pinned repository keys must be unique");
+  }
+  return {
+    toolOrigin,
+    ...(pinnedRepositoryKeys === undefined ? {} : { pinnedRepositoryKeys }),
   };
 }
 
@@ -534,11 +799,29 @@ function jobRecord(job: ReconstructionJob): CaptureInput {
     runId: `${RECONSTRUCTION_RUN_ID_PREFIX}${identifierHash(canonicalJson(scope))}`,
     destinationFingerprint: job.accountFingerprint,
     eventKind: RECONSTRUCTION_JOB_KIND,
-    normalizedPayload: {
-      recordVersion: RECONSTRUCTION_RECORD_VERSION,
-      privacyMode: job.privacyMode,
-      sourceRefs: [...job.sourceRefs],
-    },
+    normalizedPayload: canonicalValue(
+      {
+        recordVersion: RECONSTRUCTION_RECORD_VERSION,
+        privacyMode: job.privacyMode,
+        sourceRefs: [...job.sourceRefs],
+        ...(job.sourceAgeStartedAtMs === undefined
+          ? {}
+          : { sourceAgeStartedAtMs: job.sourceAgeStartedAtMs }),
+        ...(job.sourceSnapshots === undefined
+          ? {}
+          : {
+              sourceSnapshots: job.sourceSnapshots.map((snapshot) => ({
+                sourceRef: snapshot.sourceRef,
+                submission: snapshot.submission,
+                sourceAgeStartedAtMs: snapshot.sourceAgeStartedAtMs,
+                ...(snapshot.attributionContext === undefined
+                  ? {}
+                  : { attributionContext: snapshot.attributionContext }),
+              })),
+            }),
+      },
+      new Set<object>(),
+    ),
     turnEvidence: canonicalValue(job.turnEvidence, new Set<object>()),
     metadataProvenance: {},
   };
@@ -557,9 +840,10 @@ function mappingRecord(
     normalizedPayload: {
       recordVersion: RECONSTRUCTION_RECORD_VERSION,
       jobEventId: job.eventId,
-      outputs: outputs.map(({ eventId, runId, dependencies }) => ({
+      outputs: outputs.map(({ eventId, runId, dependencies, sourceRef }) => ({
         eventId,
         runId,
+        ...(sourceRef === undefined ? {} : { sourceRef }),
         ...(dependencies === undefined
           ? {}
           : {
@@ -586,15 +870,41 @@ function readJob(
   const payload = requirePlainRecord(record.normalizedPayload, "Stored reconstruction job");
   if (payload["recordVersion"] !== RECONSTRUCTION_RECORD_VERSION)
     throw new Error("Unsupported reconstruction job");
+  const payloadKeys = Object.keys(payload).toSorted();
+  if (
+    RECONSTRUCTION_STORED_JOB_KEYS.some((key) => !payloadKeys.includes(key)) ||
+    payloadKeys.some(
+      (key) =>
+        !RECONSTRUCTION_STORED_JOB_KEYS.includes(
+          key as (typeof RECONSTRUCTION_STORED_JOB_KEYS)[number],
+        ) &&
+        !RECONSTRUCTION_STORED_JOB_OPTIONAL_KEYS.includes(
+          key as (typeof RECONSTRUCTION_STORED_JOB_OPTIONAL_KEYS)[number],
+        ),
+    )
+  )
+    throw new Error("Stored reconstruction job has unsupported fields");
   const privacyMode = payload["privacyMode"];
   if (privacyMode !== "full" && privacyMode !== "metadata")
     throw new Error("Invalid stored reconstruction privacy mode");
   const sourceRefs = requireStringArray(payload["sourceRefs"], "Stored source refs");
   if (sourceRefs.length === 0) throw new Error("Stored reconstruction source refs are empty");
+  if (new Set(sourceRefs).size !== sourceRefs.length)
+    throw new Error("Stored reconstruction source refs are not unique");
   for (const ref of sourceRefs) {
     requireNonBlankString(ref, "Stored source ref");
     validateIdentifier(ref, "source ref");
   }
+  const sourceSnapshotsField = ownDataField(payload, "sourceSnapshots");
+  const sourceAgeField = ownDataField(payload, "sourceAgeStartedAtMs");
+  if (sourceSnapshotsField.present && sourceAgeField.present)
+    throw new Error("Stored reconstruction job combines snapshots with a job-level source age");
+  const sourceAgeStartedAtMs = sourceAgeField.present
+    ? requireSafeEpochMilliseconds(sourceAgeField.value, "Stored source age")
+    : undefined;
+  const sourceSnapshots = sourceSnapshotsField.present
+    ? validateSourceSnapshots(sourceSnapshotsField.value, integration, privacyMode, sourceRefs)
+    : undefined;
   const turnEvidence = validateTurnEvidence(record.turnEvidence);
   if (
     Object.keys(requirePlainRecord(record.metadataProvenance, "Stored metadata provenance"))
@@ -612,6 +922,8 @@ function readJob(
     sourceRefs,
     privacyMode,
     turnEvidence,
+    ...(sourceSnapshots === undefined ? {} : { sourceSnapshots }),
+    ...(sourceAgeStartedAtMs === undefined ? {} : { sourceAgeStartedAtMs }),
   };
 }
 
@@ -635,13 +947,24 @@ function readMapping(record: StoredCapture): StoredReconstructionMapping {
     if (seen.has(eventId)) throw new Error("Stored reconstruction event IDs are not unique");
     seen.add(eventId);
     const dependenciesField = ownDataField(output, "dependencies");
+    const sourceRefField = ownDataField(output, "sourceRef");
+    let sourceRef: string | undefined;
+    if (sourceRefField.present) {
+      sourceRef = requireNonBlankString(sourceRefField.value, "Output source ref");
+      validateIdentifier(sourceRef, "output source ref");
+    }
     let dependencies: ReconstructionOutput["dependencies"];
     if (dependenciesField.present) {
       if (!Array.isArray(dependenciesField.value))
         throw new Error("Stored reconstruction dependencies are invalid");
       dependencies = dependenciesField.value as ReconstructionOutput["dependencies"];
     }
-    return { eventId, runId, ...(dependencies === undefined ? {} : { dependencies }) };
+    return {
+      eventId,
+      runId,
+      ...(sourceRef === undefined ? {} : { sourceRef }),
+      ...(dependencies === undefined ? {} : { dependencies }),
+    };
   });
   return { recordVersion: RECONSTRUCTION_RECORD_VERSION, jobEventId, outputs: normalizedOutputs };
 }
@@ -653,9 +976,10 @@ function sameOutputMapping(
   return (
     canonicalJson(mapping.outputs) ===
     canonicalJson(
-      outputs.map(({ eventId, runId, dependencies }) => ({
+      outputs.map(({ eventId, runId, dependencies, sourceRef }) => ({
         eventId,
         runId,
+        ...(sourceRef === undefined ? {} : { sourceRef }),
         ...(dependencies === undefined ? {} : { dependencies }),
       })),
     )

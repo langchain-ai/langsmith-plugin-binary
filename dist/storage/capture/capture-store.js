@@ -5,6 +5,7 @@ import { captureDirectory, eventPath, identifierHash, receiptPath, validateIdent
 import { ensurePrivateDirectory, publishExclusive, readPrivateFile } from "./utils/atomic-file.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
+import { requireSafeEpochMilliseconds } from "../../utils/validation/objects.js";
 export function createCaptureStore(root) {
     const storageRoot = resolve(root);
     return {
@@ -30,6 +31,11 @@ export function createCaptureStore(root) {
                     normalizedPayload: canonicalValue(input.normalizedPayload, new Set()),
                     turnEvidence: canonicalValue(input.turnEvidence, new Set()),
                     metadataProvenance: canonicalValue(input.metadataProvenance, new Set()),
+                    ...(input.sourceAgeStartedAtMs === undefined
+                        ? {}
+                        : {
+                            sourceAgeStartedAtMs: requireSafeEpochMilliseconds(input.sourceAgeStartedAtMs, "Source age"),
+                        }),
                     ...(dependencies === undefined ? {} : { dependencies }),
                 };
                 contents = canonicalJson(record);
@@ -285,6 +291,9 @@ async function readRecord(root, path) {
         !("turnEvidence" in value) ||
         !("metadataProvenance" in value)) {
         throw new Error("Unsupported capture record");
+    }
+    if ("sourceAgeStartedAtMs" in value) {
+        requireSafeEpochMilliseconds(value["sourceAgeStartedAtMs"], "Stored source age");
     }
     for (const [identifier, name] of [
         [value.runId, "run ID"],

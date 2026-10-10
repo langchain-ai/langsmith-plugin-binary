@@ -142,11 +142,17 @@ async function drainLocked(
     candidate.pending = pending;
   }
   const active = candidates.filter((candidate) => candidate.pending.length > 0);
-  const expired = active.filter(({ entry }) => now - entry.capturedAtMs >= policy.maxAgeMs);
+  const expired = active.filter(
+    ({ entry }) =>
+      now - (entry.record.sourceAgeStartedAtMs ?? entry.capturedAtMs) >= policy.maxAgeMs,
+  );
   for (const candidate of expired) {
     dropped += await dropPending(drainCache, candidate, DELIVERY_EXPIRED_REASON);
   }
-  const fresh = active.filter(({ entry }) => now - entry.capturedAtMs < policy.maxAgeMs);
+  const fresh = active.filter(
+    ({ entry }) =>
+      now - (entry.record.sourceAgeStartedAtMs ?? entry.capturedAtMs) < policy.maxAgeMs,
+  );
   const overCapacity = Math.max(0, fresh.length - policy.maxEntries);
   for (const candidate of fresh.slice(0, overCapacity)) {
     dropped += await dropPending(drainCache, candidate, DELIVERY_CAPACITY_REASON);

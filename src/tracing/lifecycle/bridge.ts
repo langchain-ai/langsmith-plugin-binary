@@ -17,6 +17,7 @@ import {
   requireNonBlankString,
   requireOwnDataField,
   requirePlainRecord,
+  requireSafeEpochMilliseconds,
   requireStringArray,
   requireTimestamp,
 } from "../../utils/validation/objects.js";
@@ -70,6 +71,10 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
       );
       const turnId = requireNonBlankString(capture["turnId"], "Turn ID");
       const eventId = requireNonBlankString(capture["eventId"], "Event ID");
+      const sourceAge = ownDataField(capture, "sourceAgeStartedAtMs");
+      const sourceAgeStartedAtMs = sourceAge.present
+        ? requireSafeEpochMilliseconds(sourceAge.value, "Source age")
+        : undefined;
       const scope: CaptureScope = { integration, sessionId, turnId, eventId };
       const previous = await captureStore.read(scope);
       const projected = projectSubmission(
@@ -103,6 +108,7 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
           normalizedPayload: canonicalJsonValue(value.payload),
           turnEvidence,
           metadataProvenance: canonicalJsonValue(value.metadata),
+          ...(sourceAgeStartedAtMs === undefined ? {} : { sourceAgeStartedAtMs }),
           ...(dependencies === undefined ? {} : { dependencies }),
         });
       let result = await captureProjected(projected.value);

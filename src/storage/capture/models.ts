@@ -26,6 +26,7 @@ export interface CaptureInput {
   normalizedPayload: JsonValue;
   turnEvidence: JsonValue;
   metadataProvenance: JsonValue;
+  sourceAgeStartedAtMs?: number;
   dependencies?: CaptureDependency[];
 }
 

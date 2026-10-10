@@ -1,5 +1,6 @@
 export { createReconstructionWorker } from "./worker.js";
 export type {
+  ReconstructionAttributionContext,
   ReconstructionCallback,
   ReconstructionCandidate,
   ReconstructionDrainCounts,
@@ -10,6 +11,8 @@ export type {
   ReconstructionJobInput,
   ReconstructionOutput,
   ReconstructionResult,
+  ReconstructionSourceSnapshot,
+  ReconstructionToolOrigin,
   ReconstructionTerminalOutcome,
   ReconstructionTurnEvidence,
   ReconstructionValidatedOutput,

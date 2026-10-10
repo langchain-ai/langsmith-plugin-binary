@@ -16,6 +16,8 @@ export interface ReconstructionJobInput {
   readonly sourceRefs: readonly string[];
   readonly privacyMode: CodingAgentMetadataMode;
   readonly turnEvidence: ReconstructionTurnEvidence;
+  readonly sourceSnapshots?: readonly ReconstructionSourceSnapshot[];
+  readonly sourceAgeStartedAtMs?: number;
 }
 
 export interface ReconstructionJob extends ReconstructionJobInput {
@@ -30,10 +32,29 @@ export interface ReconstructionTurnEvidence {
   readonly closureState: LifecycleTurnEvidence["closureState"];
 }
 
+export interface ReconstructionToolOrigin {
+  readonly path?: string;
+  readonly cwd?: string;
+  readonly namedAPath: boolean;
+}
+
+export interface ReconstructionAttributionContext {
+  readonly toolOrigin: ReconstructionToolOrigin;
+  readonly pinnedRepositoryKeys?: readonly string[];
+}
+
+export interface ReconstructionSourceSnapshot {
+  readonly sourceRef: string;
+  readonly submission: PreparedRunSubmission;
+  readonly sourceAgeStartedAtMs: number;
+  readonly attributionContext?: ReconstructionAttributionContext;
+}
+
 export interface ReconstructionOutput {
   eventId: string;
   submission: PreparedRunSubmission;
   dependencies?: CaptureDependency[];
+  sourceRef?: string;
 }
 
 export type ReconstructionResult =
@@ -77,6 +98,7 @@ export type ReconstructionDrainResult =
 
 export interface ReconstructionValidatedOutput extends ReconstructionOutput {
   runId: string;
+  sourceAgeStartedAtMs?: number;
 }
 
 export type ReconstructionJobProcessResult = "complete" | "deferred";
@@ -91,5 +113,10 @@ export interface ReconstructionCandidate {
 export interface StoredReconstructionMapping {
   recordVersion: 1;
   jobEventId: string;
-  outputs: Array<{ eventId: string; runId: string; dependencies?: CaptureDependency[] }>;
+  outputs: Array<{
+    eventId: string;
+    runId: string;
+    dependencies?: CaptureDependency[];
+    sourceRef?: string;
+  }>;
 }

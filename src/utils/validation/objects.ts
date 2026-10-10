@@ -83,3 +83,15 @@ export function requireTimestamp(value: unknown): number | string {
   }
   throw new TypeError("Run timestamp must be a valid date or millisecond time");
 }
+
+export function requireSafeEpochMilliseconds(value: unknown, name: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    !Number.isFinite(new Date(value).getTime())
+  ) {
+    throw new TypeError(`${name} must be a valid millisecond timestamp`);
+  }
+  return value;
+}

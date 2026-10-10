@@ -7,7 +7,7 @@ import { createDeliveryCoordinator } from "../delivery/index.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import { wakeCapturedWork } from "../capture-wake.js";
 import { refreshSettlementProgress, settleCapturedTurns } from "../settlement/pass.js";
-import { canonicalJsonObject, canonicalJsonValue, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireStringArray, requireTimestamp, } from "../../utils/validation/objects.js";
+import { canonicalJsonObject, canonicalJsonValue, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireSafeEpochMilliseconds, requireStringArray, requireTimestamp, } from "../../utils/validation/objects.js";
 import { snapshotData } from "../../utils/validation/snapshot.js";
 import { LIFECYCLE_ATTRIBUTION_READY_FIELD, LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_FILE, LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY, LIFECYCLE_TURN_CLOSURE_STATES, } from "./constants.js";
 import { projectSubmission } from "./projection.js";
@@ -31,6 +31,10 @@ export function createLifecycleBridge(options) {
             const capture = requirePlainRecord(snapshotData(requirePlainRecord(input, "Lifecycle capture")), "Lifecycle capture");
             const turnId = requireNonBlankString(capture["turnId"], "Turn ID");
             const eventId = requireNonBlankString(capture["eventId"], "Event ID");
+            const sourceAge = ownDataField(capture, "sourceAgeStartedAtMs");
+            const sourceAgeStartedAtMs = sourceAge.present
+                ? requireSafeEpochMilliseconds(sourceAge.value, "Source age")
+                : undefined;
             const scope = { integration, sessionId, turnId, eventId };
             const previous = await captureStore.read(scope);
             const projected = projectSubmission(capture["submission"], integration, previous === undefined ? undefined : previousRunContext(previous));
@@ -53,6 +57,7 @@ export function createLifecycleBridge(options) {
                 normalizedPayload: canonicalJsonValue(value.payload),
                 turnEvidence,
                 metadataProvenance: canonicalJsonValue(value.metadata),
+                ...(sourceAgeStartedAtMs === undefined ? {} : { sourceAgeStartedAtMs }),
                 ...(dependencies === undefined ? {} : { dependencies }),
             });
             let result = await captureProjected(projected.value);

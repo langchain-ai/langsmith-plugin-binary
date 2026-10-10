@@ -66,4 +66,13 @@ export function requireTimestamp(value) {
     }
     throw new TypeError("Run timestamp must be a valid date or millisecond time");
 }
+export function requireSafeEpochMilliseconds(value, name) {
+    if (typeof value !== "number" ||
+        !Number.isSafeInteger(value) ||
+        value < 0 ||
+        !Number.isFinite(new Date(value).getTime())) {
+        throw new TypeError(`${name} must be a valid millisecond timestamp`);
+    }
+    return value;
+}
 //# sourceMappingURL=objects.js.map

@@ -12,4 +12,5 @@ export declare function requireString(value: unknown, name: string): string;
 export declare function requireBoolean(value: unknown, name: string): boolean;
 export declare function requireStringArray(value: unknown, name: string): string[];
 export declare function requireTimestamp(value: unknown): number | string;
+export declare function requireSafeEpochMilliseconds(value: unknown, name: string): number;
 //# sourceMappingURL=objects.d.ts.map

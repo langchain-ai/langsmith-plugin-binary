@@ -15,6 +15,7 @@ import type {
 import { RECONSTRUCTION_DIRECTORY, RECONSTRUCTION_JOB_KIND } from "./constants.js";
 import { createReconstructionWorker } from "./index.js";
 import type {
+  ReconstructionAttributionContext,
   ReconstructionJob,
   ReconstructionResult,
   ReconstructionWorkerOptions,
@@ -30,18 +31,44 @@ function job(eventId: string, privacyMode: "full" | "metadata" = "full") {
   };
 }
 
-function post(id: string, privacyMode: "full" | "metadata" = "full"): PreparedRunPostSubmission {
+function post(
+  id: string,
+  privacyMode: "full" | "metadata" = "full",
+  integration: PreparedRunPostSubmission["integration"] = "claude-code",
+): PreparedRunPostSubmission {
   return {
     operation: "post",
-    integration: "claude-code",
+    integration,
     privacyMode,
     metadata: {
-      integration: "claude-code",
+      integration,
       threadId: "thread-1",
       agentType: "root",
       runType: "root",
     },
     run: { id, name: "test run", run_type: "chain", inputs: { prompt: "safe" } },
+  };
+}
+
+function snapshotJob(
+  eventId: string,
+  privacyMode: "full" | "metadata",
+  sourceRef: string,
+  sourceAgeStartedAtMs: number,
+  submission: PreparedRunPostSubmission,
+  attributionContext?: ReconstructionAttributionContext,
+) {
+  return {
+    ...job(eventId, privacyMode),
+    sourceRefs: [sourceRef],
+    sourceSnapshots: [
+      {
+        sourceRef,
+        submission,
+        sourceAgeStartedAtMs,
+        ...(attributionContext === undefined ? {} : { attributionContext }),
+      },
+    ],
   };
 }
 
@@ -69,10 +96,11 @@ function worker(
   reconstruct: (value: ReconstructionJob) => Promise<ReconstructionResult>,
   capture: (input: LifecycleCaptureInput) => Promise<LifecycleCaptureResult>,
   policy: Partial<DeliveryPolicy> = {},
+  integration: ReconstructionWorkerOptions["integration"] = "claude-code",
 ) {
   return createReconstructionWorker({
     storageRoot,
-    integration: "claude-code",
+    integration,
     sessionId: "session-1",
     bridge: { accountFingerprint, capture },
     reconstruct,
@@ -471,6 +499,188 @@ describe("durable reconstruction jobs", () => {
       status: "settled",
       receipt: { outcome: "dropped", reason: "expired" },
     });
+  });
+
+  it("projects metadata snapshots and carries their original age to output captures", async () => {
+    const storageRoot = await root();
+    const sourceRef = "source-metadata";
+    const privateMarker = "private-snapshot-marker";
+    const sourceAgeStartedAtMs = Date.now() - 1_000;
+    const submission = post("source-run", "metadata");
+    submission.run.start_time = Date.now();
+    submission.run.inputs = { prompt: privateMarker };
+    const attributionContext = {
+      toolOrigin: {
+        path: `/${privateMarker}/path`,
+        cwd: `/${privateMarker}/cwd`,
+        namedAPath: true,
+      },
+      pinnedRepositoryKeys: [privateMarker],
+    };
+    const reconstruct = vi.fn(async (value: ReconstructionJob) => {
+      const snapshot = value.sourceSnapshots?.[0];
+      expect(Object.isFrozen(value.sourceSnapshots)).toBe(true);
+      expect(snapshot?.submission.run.id).toBe("source-run");
+      expect(JSON.stringify(snapshot)).not.toContain(privateMarker);
+      expect(snapshot?.attributionContext).toEqual({ toolOrigin: { namedAPath: true } });
+      return {
+        status: "ready" as const,
+        outputs: [
+          { eventId: "output-source", sourceRef, submission: post("output-run", "metadata") },
+        ],
+      };
+    });
+    const capture = vi.fn<ReconstructionWorkerOptions["bridge"]["capture"]>(async () =>
+      published(),
+    );
+    const reconstructionWorker = worker(storageRoot, "account-a", reconstruct, capture);
+    await reconstructionWorker.enqueue(
+      snapshotJob(
+        "job-source",
+        "metadata",
+        sourceRef,
+        sourceAgeStartedAtMs,
+        submission,
+        attributionContext,
+      ),
+    );
+    submission.run.id = "mutated-source";
+    expect(await reconstructionWorker.drain()).toMatchObject({ status: "drained", captured: 1 });
+    expect(capture.mock.calls[0]?.[0].sourceAgeStartedAtMs).toBe(sourceAgeStartedAtMs);
+    expect(JSON.stringify(await contents(storageRoot))).not.toContain(privateMarker);
+  });
+
+  it.each(["cursor", "openai-codex"] as const)(
+    "keeps full attribution context for %s snapshots",
+    async (integration) => {
+      const storageRoot = await root();
+      const contexts: ReconstructionAttributionContext[] = [
+        { toolOrigin: { path: "/workspace", cwd: "/workspace", namedAPath: false } },
+        {
+          toolOrigin: { path: "/repository", cwd: "/repository", namedAPath: true },
+          pinnedRepositoryKeys: [],
+        },
+      ];
+      const seen: (ReconstructionAttributionContext | undefined)[] = [];
+      const reconstruct = vi.fn(async (value: ReconstructionJob) => {
+        seen.push(value.sourceSnapshots?.[0]?.attributionContext);
+        return { status: "deferred" as const, reason: "missing-thread-identity" as const };
+      });
+      const reconstructionWorker = worker(
+        storageRoot,
+        "account-a",
+        reconstruct,
+        vi.fn(async () => published()),
+        {},
+        integration,
+      );
+      for (const [index, context] of contexts.entries()) {
+        const submission = post(`source-${index}`, "full", integration);
+        submission.run.start_time = Date.now();
+        await reconstructionWorker.enqueue(
+          snapshotJob(`job-${index}`, "full", `source-${index}`, Date.now(), submission, context),
+        );
+      }
+      expect(await reconstructionWorker.drain()).toMatchObject({ status: "drained", deferred: 2 });
+      expect(seen).toEqual(contexts);
+    },
+  );
+
+  it("keeps snapshot age immutable across duplicate enqueues at later times", async () => {
+    const storageRoot = await root();
+    const reconstruct = vi.fn();
+    const reconstructionWorker = worker(
+      storageRoot,
+      "account-a",
+      reconstruct,
+      vi.fn(async () => published()),
+    );
+    const sourceRef = "source-duplicate";
+    const submittedAt = Date.now();
+    const sourceAgeStartedAtMs = submittedAt - 1_000;
+    const submission = post("source-run", "full");
+    submission.run.start_time = submittedAt;
+    const originalNow = vi.spyOn(Date, "now").mockReturnValue(submittedAt);
+    try {
+      const input = snapshotJob(
+        "job-duplicate",
+        "full",
+        sourceRef,
+        sourceAgeStartedAtMs,
+        submission,
+      );
+      expect((await reconstructionWorker.enqueue(input)).status).toBe("published");
+      originalNow.mockReturnValue(submittedAt + 60_000);
+      expect((await reconstructionWorker.enqueue(input)).status).toBe("duplicate");
+      expect(
+        (
+          await reconstructionWorker.enqueue(
+            snapshotJob("job-duplicate", "full", sourceRef, sourceAgeStartedAtMs + 1, submission),
+          )
+        ).status,
+      ).toBe("conflict");
+    } finally {
+      originalNow.mockRestore();
+    }
+  });
+
+  it("rejects unstable, incomplete, or unsafe source snapshot envelopes", async () => {
+    const storageRoot = await root();
+    const reconstructionWorker = worker(
+      storageRoot,
+      "account-a",
+      vi.fn(),
+      vi.fn(async () => published()),
+    );
+    const age = Date.now();
+    const stable = post("stable", "full");
+    stable.run.start_time = age;
+    const missingTime = post("missing-time", "full");
+    const invalidInputs = [
+      [
+        snapshotJob("job-missing-time", "full", "source-missing-time", age, missingTime),
+        "preserve their start time",
+      ],
+      [
+        snapshotJob("job-fractional-age", "full", "source-fractional-age", 1.5, stable),
+        "Source age",
+      ],
+      [
+        {
+          ...snapshotJob("job-partial", "full", "source-known", age, stable),
+          sourceRefs: ["source-known", "source-unmatched"],
+        },
+        "cover every reconstruction source ref",
+      ],
+      [snapshotJob("job-path", "full", "/private/path", age, stable), "pathless identifiers"],
+    ] as const;
+    for (const [input, message] of invalidInputs)
+      await expect(reconstructionWorker.enqueue(input)).rejects.toThrow(message);
+  });
+
+  it("expires snapshot jobs using the original source age", async () => {
+    const storageRoot = await root();
+    const now = Date.now();
+    const sourceAgeStartedAtMs = now - 200;
+    const submission = post("source-old", "full");
+    submission.run.start_time = now;
+    const reconstruct = vi.fn();
+    const reconstructionWorker = worker(
+      storageRoot,
+      "account-a",
+      reconstruct,
+      vi.fn(async () => published()),
+      { maxAgeMs: 100 },
+    );
+    await reconstructionWorker.enqueue(
+      snapshotJob("job-old-source", "full", "source-old", sourceAgeStartedAtMs, submission),
+    );
+    expect(await reconstructionWorker.drain({ now })).toMatchObject({
+      status: "drained",
+      dropped: 1,
+      pending: 0,
+    });
+    expect(reconstruct).not.toHaveBeenCalled();
   });
 
   it("drops the oldest pending job when reconstruction capacity is full", async () => {

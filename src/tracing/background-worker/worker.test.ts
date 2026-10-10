@@ -1,3 +1,4 @@
+import type { TestArea } from "../../test-support/models/background-worker.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
@@ -62,11 +63,6 @@ if (mode === "claim-gated" || mode === "start-gated") {
 const result = await worker.run();
 fs.writeFileSync(statePath + ".result", result);
 `;
-
-interface TestArea {
-  root: string;
-  children: Set<ChildProcess>;
-}
 
 const testAreas: TestArea[] = [];
 
