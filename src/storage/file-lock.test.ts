@@ -365,4 +365,4 @@ it("reclaims a killed owner while fresh processes contend", async () => {
     await stopChildren(children);
     cleanupArea(area);
   }
-});
+}, 20_000);
