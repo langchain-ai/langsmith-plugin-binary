@@ -114,11 +114,11 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test Shared Runtime
         run: pnpm exec vitest run src/settings src/git src/storage src/metadata src/privacy src/tracing
-      - name: Stress Windows Lock Contention
+      - name: Stress Windows Lock Contention and Recovery
         shell: pwsh
         run: |
           for ($iteration = 0; $iteration -lt 10; $iteration++) {
-            pnpm exec vitest run src/storage/file-lock.test.ts --reporter=dot
+            pnpm exec vitest run src/storage/file-lock.test.ts src/tracing/engine/recovery.test.ts --reporter=dot
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 

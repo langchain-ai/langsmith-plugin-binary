@@ -80,7 +80,8 @@ const session = engine.forSession({
 try {
   fs.writeFileSync(resultPath, await session.drain());
 } catch (error) {
-  fs.writeFileSync(resultPath, String(error));
+  fs.writeFileSync(resultPath, String(error.stack ?? error));
+  console.error(error);
   process.exitCode = 1;
 }
 `;
@@ -348,7 +349,7 @@ it("recovers stale current, foreign, and reconstruction work through localhost w
             TMPDIR: root,
             CI: "1",
           },
-          stdio: "ignore",
+          stdio: ["ignore", "ignore", "inherit"],
         },
       );
       children.add(child);
