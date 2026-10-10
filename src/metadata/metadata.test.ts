@@ -9,6 +9,24 @@ import {
 import type { CodingAgentRunType } from "./index.js";
 
 describe("coding-agent-v1 metadata contract", () => {
+  it.each(["subagent", "interrupted"] as const)(
+    "preserves Codex aggregate usage on %s runs",
+    (runType) => {
+      const aggregate = { input_tokens: 7, output_tokens: 3, total_tokens: 10 };
+      const metadata = buildCodingAgentMetadata({
+        integration: "openai-codex",
+        threadId: "session",
+        agentType: runType === "subagent" ? "subagent" : "root",
+        runType,
+        providerMetadata: { ls_raw_aggregated_usage: aggregate },
+      });
+      expect(metadata.ls_raw_aggregated_usage).toEqual(aggregate);
+      expect(metadataForMode(metadata, "openai-codex", "metadata")).toMatchObject({
+        ls_raw_aggregated_usage: aggregate,
+      });
+    },
+  );
+
   it("preserves Cursor's native tool name in muted metadata when it matches the run name", () => {
     const metadata = buildCodingAgentMetadata({
       integration: "cursor",

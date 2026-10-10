@@ -12,7 +12,7 @@ export const CODING_AGENT_RUN_SCOPES = {
     subagent: ["subagent"],
     tool: ["tool"],
     llmTool: ["llm", "tool"],
-    root: ["root"],
+    chain: ["root", "subagent", "interrupted"],
 };
 export const CODING_AGENT_SCHEMA_INTEGRATIONS = [
     "claude-code",

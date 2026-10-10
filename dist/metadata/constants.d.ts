@@ -6,7 +6,7 @@ export declare const CODING_AGENT_RUN_SCOPES: {
     readonly subagent: readonly ["subagent"];
     readonly tool: readonly ["tool"];
     readonly llmTool: readonly ["llm", "tool"];
-    readonly root: readonly ["root"];
+    readonly chain: readonly ["root", "subagent", "interrupted"];
 };
 export declare const CODING_AGENT_SCHEMA_INTEGRATIONS: readonly ["claude-code", "openai-codex", "deepagents-code", "cursor", "pi"];
 export declare const CODING_AGENT_SUPPORTED_INTEGRATIONS: readonly ["claude-code", "cursor", "openai-codex"];

@@ -112,7 +112,7 @@ export const CODING_AGENT_V1_CONTRACT: CodingAgentV1Contract = {
       providerIntegrations: CODING_AGENT_CODEX_INTEGRATION,
     }),
     provider("ls_raw_aggregated_usage", {
-      appliesTo: CODING_AGENT_RUN_SCOPES.root,
+      appliesTo: CODING_AGENT_RUN_SCOPES.chain,
       type: "object",
       metadataModeIntegrations: CODING_AGENT_CODEX_INTEGRATION,
       providerIntegrations: CODING_AGENT_CODEX_INTEGRATION,
