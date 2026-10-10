@@ -18,8 +18,8 @@ jobs:
     name: Lint, Typecheck and Test
     runs-on: ubuntu-latest
     env:
-      HOME: ${{ runner.temp }}/plugins-base-ci-home
-      USERPROFILE: ${{ runner.temp }}/plugins-base-ci-home
+      HOME: ${{ github.workspace }}/../plugins-base-ci-home
+      USERPROFILE: ${{ github.workspace }}/../plugins-base-ci-home
     steps:
       - name: Create an Isolated Home
         run: |
@@ -50,8 +50,8 @@ jobs:
     name: Test on macOS
     runs-on: macos-26
     env:
-      HOME: ${{ runner.temp }}/plugins-base-ci-home
-      USERPROFILE: ${{ runner.temp }}/plugins-base-ci-home
+      HOME: ${{ github.workspace }}/../plugins-base-ci-home
+      USERPROFILE: ${{ github.workspace }}/../plugins-base-ci-home
     steps:
       - name: Create an Isolated Home
         run: |
@@ -74,8 +74,8 @@ jobs:
     name: Test Runtime on Windows
     runs-on: windows-latest
     env:
-      HOME: ${{ runner.temp }}/plugins-base-ci-home
-      USERPROFILE: ${{ runner.temp }}/plugins-base-ci-home
+      HOME: ${{ github.workspace }}/../plugins-base-ci-home
+      USERPROFILE: ${{ github.workspace }}/../plugins-base-ci-home
     steps:
       - name: Create an Isolated Home
         run: |
@@ -98,8 +98,8 @@ jobs:
     name: Wire Tests (${{ matrix.os }}, LangSmith ${{ matrix.langsmith-version }})
     runs-on: ${{ matrix.os }}
     env:
-      HOME: ${{ runner.temp }}/plugins-base-ci-home
-      USERPROFILE: ${{ runner.temp }}/plugins-base-ci-home
+      HOME: ${{ github.workspace }}/../plugins-base-ci-home
+      USERPROFILE: ${{ github.workspace }}/../plugins-base-ci-home
     strategy:
       fail-fast: false
       matrix:
