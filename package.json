@@ -59,6 +59,10 @@
     "./git": {
       "types": "./dist/git/index.d.ts",
       "default": "./dist/git/index.js"
+    },
+    "./tracing/settlement": {
+      "types": "./dist/tracing/settlement/index.d.ts",
+      "default": "./dist/tracing/settlement/index.js"
     }
   },
   "publishConfig": {
