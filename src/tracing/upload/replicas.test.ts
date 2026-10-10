@@ -4,6 +4,7 @@ import { computeRunIdForSecondaryReplica } from "langsmith";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CodingAgentMetadataOptions } from "../../metadata/index.js";
 import { createLangSmithUploadWriter } from "./index.js";
+import { resolveUploadDestinationFingerprint } from "./identity.js";
 import type {
   LangSmithUploadDestinationConfig,
   LangSmithUploadReplicaConfig,
@@ -502,24 +503,43 @@ describe("shared replica routing", () => {
     const updates: Record<string, unknown> = {
       outputs: { answer: "original replica update", detail: "stable" },
     };
-    const first = replicaWriter([{ apiKey: REPLICA_KEY, projectName: "replica-project", updates }]);
+    const firstOptions = {
+      destinations: [destination(PRIMARY_KEY, "primary-project")],
+      replicas: [{ apiKey: REPLICA_KEY, projectName: "replica-project", updates }],
+      redact: false,
+    };
+    const first = createLangSmithUploadWriter(firstOptions);
+    const firstIdentityFingerprint = resolveUploadDestinationFingerprint(firstOptions);
     updates["outputs"] = { answer: "mutated after writer creation" };
-    const same = replicaWriter([
-      {
-        apiKey: REPLICA_KEY,
-        projectName: "replica-project",
-        updates: { outputs: { detail: "stable", answer: "original replica update" } },
-      },
-    ]);
-    const changed = replicaWriter([
-      {
-        apiKey: REPLICA_KEY,
-        projectName: "replica-project",
-        updates: { outputs: { answer: "different replica update" } },
-      },
-    ]);
+    const sameOptions = {
+      destinations: [destination(PRIMARY_KEY, "primary-project")],
+      replicas: [
+        {
+          apiKey: REPLICA_KEY,
+          projectName: "replica-project",
+          updates: { outputs: { detail: "stable", answer: "original replica update" } },
+        },
+      ],
+      redact: false,
+    };
+    const same = createLangSmithUploadWriter(sameOptions);
+    const changedOptions = {
+      destinations: [destination(PRIMARY_KEY, "primary-project")],
+      replicas: [
+        {
+          apiKey: REPLICA_KEY,
+          projectName: "replica-project",
+          updates: { outputs: { answer: "different replica update" } },
+        },
+      ],
+      redact: false,
+    };
+    const changed = createLangSmithUploadWriter(changedOptions);
 
     expect(first.accountFingerprint).toBe(same.accountFingerprint);
+    expect(firstIdentityFingerprint).toBe(first.accountFingerprint);
+    expect(resolveUploadDestinationFingerprint(sameOptions)).toBe(same.accountFingerprint);
+    expect(resolveUploadDestinationFingerprint(changedOptions)).toBe(changed.accountFingerprint);
     expect(first.accountFingerprint).not.toBe(changed.accountFingerprint);
     expect(destinationId(first.destinations)).toBe(destinationId(same.destinations));
     expect(destinationId(first.destinations)).not.toBe(destinationId(changed.destinations));

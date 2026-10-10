@@ -97,15 +97,21 @@ export interface LangSmithUploadWriterOptions {
 export interface UploadDestination {
     readonly id: string;
 }
-export interface ResolvedUploadDestination extends UploadDestination {
+export interface ResolvedUploadDestinationIdentity extends UploadDestination {
     apiKey: string;
     apiUrl: string;
     projectName: string;
     workspaceId?: string;
     sourceProjectName?: string;
     updates?: Record<string, unknown>;
+}
+export interface ResolvedUploadDestination extends ResolvedUploadDestinationIdentity {
     anonymizer?: UploadAnonymizer;
     client: Client;
+}
+export interface ResolvedUploadDestinationIdentities {
+    accountFingerprint: string;
+    destinations: ResolvedUploadDestinationIdentity[];
 }
 export interface ResolvedUploadDestinations {
     accountFingerprint: string;

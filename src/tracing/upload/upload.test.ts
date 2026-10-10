@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CodingAgentMetadataOptions } from "../../metadata/index.js";
 import { createLangSmithUploadWriter } from "./index.js";
+import { resolveUploadDestinationFingerprint } from "./identity.js";
 import type {
   LangSmithUploadDestinationConfig,
   PreparedRunPatchSubmission,
@@ -438,13 +439,35 @@ describe("bound LangSmith upload writer", () => {
       destinations: [primary, replica],
       redact: false,
     });
+    const changedRedactionRules = createLangSmithUploadWriter({
+      destinations: [primary, replica],
+      redact: true,
+      redactExtraRules: [{ pattern: "synthetic-private-upload-marker" }],
+    });
 
     expect(first.accountFingerprint).toBe(reordered.accountFingerprint);
+    expect(
+      resolveUploadDestinationFingerprint({ destinations: [primary, replica], redact: true }),
+    ).toBe(first.accountFingerprint);
+    expect(
+      resolveUploadDestinationFingerprint({ destinations: [replica, primary], redact: true }),
+    ).toBe(reordered.accountFingerprint);
     expect(first.destinations.map(({ id }) => id).toSorted()).toEqual(
       reordered.destinations.map(({ id }) => id).toSorted(),
     );
     expect(first.accountFingerprint).not.toBe(changedKey.accountFingerprint);
     expect(first.accountFingerprint).not.toBe(changedRedaction.accountFingerprint);
+    expect(first.accountFingerprint).not.toBe(changedRedactionRules.accountFingerprint);
+    expect(
+      resolveUploadDestinationFingerprint({ destinations: [primary, replica], redact: false }),
+    ).toBe(changedRedaction.accountFingerprint);
+    expect(
+      resolveUploadDestinationFingerprint({
+        destinations: [primary, replica],
+        redact: true,
+        redactExtraRules: [{ pattern: "synthetic-private-upload-marker" }],
+      }),
+    ).toBe(changedRedactionRules.accountFingerprint);
     expect(first.destinations.map(({ id }) => id).join(" ")).not.toContain(PRIMARY_KEY);
     expect(first.destinations.map(({ id }) => id).join(" ")).not.toContain(REPLICA_KEY);
   });
