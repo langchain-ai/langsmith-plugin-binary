@@ -78,3 +78,44 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test Shared Runtime
         run: pnpm exec vitest run src/settings src/git src/storage src/metadata src/privacy src/tracing
+
+  test-sdk-wire-matrix:
+    name: Wire Tests (${{ matrix.os }}, LangSmith ${{ matrix.langsmith-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, windows-latest]
+        langsmith-version: [0.9.0, 0.10.2, 0.10.5]
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.8.2
+          cache: pnpm
+      - name: Install Primary Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install SDK Under Test
+        shell: bash
+        env:
+          LANGSMITH_VERSION: ${{ matrix.langsmith-version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/sdk-under-test"
+          npm install --prefix "$RUNNER_TEMP/sdk-under-test" --ignore-scripts --no-save --package-lock=false "langsmith@$LANGSMITH_VERSION"
+          node -e "const fs=require('node:fs');const path=require('node:path');const link=path.resolve('src/node_modules/langsmith');const target=path.join(process.env.RUNNER_TEMP,'sdk-under-test','node_modules','langsmith');fs.mkdirSync(path.dirname(link),{recursive:true});fs.symlinkSync(target,link,process.platform==='win32'?'junction':'dir');"
+      - name: Test SDK Wire Behavior
+        shell: bash
+        env:
+          HOME: ${{ runner.temp }}/sdk-wire-home
+          USERPROFILE: ${{ runner.temp }}/sdk-wire-home
+          LANGCHAIN_API_KEY: ""
+          LANGSMITH_API_KEY: ""
+          OPENAI_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+        run: |
+          mkdir -p "$RUNNER_TEMP/sdk-wire-home"
+          pnpm exec vitest run src/privacy/run-tree.test.ts src/tracing/upload/upload.test.ts --reporter=dot

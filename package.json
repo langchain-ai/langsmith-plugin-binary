@@ -51,6 +51,10 @@
     "./privacy": {
       "types": "./dist/privacy/index.d.ts",
       "default": "./dist/privacy/index.js"
+    },
+    "./tracing/upload": {
+      "types": "./dist/tracing/upload/index.d.ts",
+      "default": "./dist/tracing/upload/index.js"
     }
   },
   "publishConfig": {

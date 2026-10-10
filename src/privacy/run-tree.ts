@@ -8,6 +8,7 @@ import {
 import { METADATA_MODE_RUN_CONFIG_FIELDS, MUTED_TRACE_CONTENT } from "./constants.js";
 import type {
   CodingAgentPrivacyContentRole,
+  CodingAgentPrivacyContext,
   CodingAgentPrivacyExtra,
   CodingAgentPrivacyStatus,
   CodingAgentRunExtra,
@@ -18,9 +19,10 @@ function mutedContent(role: CodingAgentPrivacyContentRole): Record<string, unkno
 }
 
 function statusOfRun(run: RunTree): CodingAgentPrivacyStatus {
-  if (run.error != null) return "error";
-  if (run.extra?.metadata?.status === "error") return "error";
-  return run.end_time == null ? "running" : "completed";
+  const metadataStatus = run.extra?.metadata?.status;
+  if (run.error != null || metadataStatus === "error") return "error";
+  if (run.end_time != null || metadataStatus === "completed") return "completed";
+  return "running";
 }
 
 function projectReplica(replica: unknown): unknown {
@@ -53,9 +55,12 @@ function extraForMode(
 function configForMetadataMode(
   config: RunTreeConfig,
   integration: CodingAgentIntegration,
+  privacyContext?: CodingAgentPrivacyContext,
 ): RunTreeConfig {
   const source = config as RunTreeConfig & Record<string, unknown>;
-  const status = source.error != null ? "error" : source.end_time != null ? "completed" : "running";
+  const status =
+    privacyContext?.status ??
+    (source.error != null ? "error" : source.end_time != null ? "completed" : "running");
   const originalExtra = source.extra as CodingAgentRunExtra | undefined;
   const safe: Record<string, unknown> = {};
   for (const key of METADATA_MODE_RUN_CONFIG_FIELDS) {
@@ -141,9 +146,10 @@ export function createCodingAgentRunTree(
   config: RunTreeConfig,
   integration: CodingAgentIntegration,
   mode: CodingAgentMetadataMode = "full",
+  privacyContext?: CodingAgentPrivacyContext,
 ): RunTree {
   const run = new RunTree(
-    mode === "metadata" ? configForMetadataMode(config, integration) : config,
+    mode === "metadata" ? configForMetadataMode(config, integration, privacyContext) : config,
   );
   return mode === "metadata" ? protectRunTree(run, integration) : preserveFullModePatchInputs(run);
 }

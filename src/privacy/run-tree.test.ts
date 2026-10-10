@@ -284,7 +284,7 @@ describe("coding agent metadata privacy at the SDK wire boundary", () => {
       "metadata",
     );
     await trustedRun.postRun();
-    await trustedRun.end({ result: PRIVATE_MARKER }, undefined, Date.now(), {
+    await trustedRun.end({ result: PRIVATE_MARKER }, undefined, undefined, {
       thread_id: PRIVATE_MARKER,
       custom: PRIVATE_MARKER,
     });

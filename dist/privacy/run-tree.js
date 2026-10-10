@@ -5,11 +5,12 @@ function mutedContent(role) {
     return { messages: [{ role, content: MUTED_TRACE_CONTENT }] };
 }
 function statusOfRun(run) {
-    if (run.error != null)
+    const metadataStatus = run.extra?.metadata?.status;
+    if (run.error != null || metadataStatus === "error")
         return "error";
-    if (run.extra?.metadata?.status === "error")
-        return "error";
-    return run.end_time == null ? "running" : "completed";
+    if (run.end_time != null || metadataStatus === "completed")
+        return "completed";
+    return "running";
 }
 function projectReplica(replica) {
     if (!replica || typeof replica !== "object")
@@ -33,9 +34,10 @@ function extraForMode(metadata, integration, status) {
         },
     };
 }
-function configForMetadataMode(config, integration) {
+function configForMetadataMode(config, integration, privacyContext) {
     const source = config;
-    const status = source.error != null ? "error" : source.end_time != null ? "completed" : "running";
+    const status = privacyContext?.status ??
+        (source.error != null ? "error" : source.end_time != null ? "completed" : "running");
     const originalExtra = source.extra;
     const safe = {};
     for (const key of METADATA_MODE_RUN_CONFIG_FIELDS) {
@@ -107,8 +109,8 @@ function preserveFullModePatchInputs(run) {
     run.patchRun = (options) => patchRun({ excludeInputs: false, ...options });
     return run;
 }
-export function createCodingAgentRunTree(config, integration, mode = "full") {
-    const run = new RunTree(mode === "metadata" ? configForMetadataMode(config, integration) : config);
+export function createCodingAgentRunTree(config, integration, mode = "full", privacyContext) {
+    const run = new RunTree(mode === "metadata" ? configForMetadataMode(config, integration, privacyContext) : config);
     return mode === "metadata" ? protectRunTree(run, integration) : preserveFullModePatchInputs(run);
 }
 //# sourceMappingURL=run-tree.js.map
