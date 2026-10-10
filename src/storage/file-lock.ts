@@ -272,6 +272,32 @@ export async function tryAcquireFileLock(filePath: string): Promise<FileLockHand
   return makeHandle(acquired.claimDirectory, acquired.claim);
 }
 
+export async function waitForFileLockClaim(
+  filePath: string,
+  pid: number,
+  options?: FileLockOptions,
+): Promise<boolean> {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new TypeError("Invalid file lock process ID");
+  const waitMs = timeoutMs(options);
+  const deadline = performance.now() + waitMs;
+  const claimDirectory = `${resolve(filePath)}${FILE_LOCK_DIRECTORY_SUFFIX}`;
+  for (;;) {
+    await assertSafeClaimDirectory(claimDirectory);
+    try {
+      const scan = await scanClaims(claimDirectory);
+      if (scan.claims.some((claim) => claim.pid === pid)) return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== FILE_LOCK_MISSING_CODE) throw error;
+    }
+    if ((await processIsAlive(pid)) === false) return false;
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) return false;
+    await new Promise((resolvePromise) =>
+      setTimeout(resolvePromise, Math.min(FILE_LOCK_POLL_INTERVAL_MS, remaining)),
+    );
+  }
+}
+
 function precedes(left: FileLockClaim, right: FileLockClaim): boolean {
   return left.ticket < right.ticket || (left.ticket === right.ticket && left.id < right.id);
 }

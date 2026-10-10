@@ -1,0 +1,1 @@
+{"version":3,"file":"worker.d.ts","sourceRoot":"","sources":["../../../src/tracing/background-worker/worker.ts"],"names":[],"mappings":"AAiCA,OAAO,KAAK,EACV,gBAAgB,EAKhB,uBAAuB,EAQxB,MAAM,aAAa,CAAC;AAUrB,wBAAgB,sBAAsB,CAAC,OAAO,EAAE,uBAAuB,GAAG,gBAAgB,CAwGzF"}

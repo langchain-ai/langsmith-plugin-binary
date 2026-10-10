@@ -1,0 +1,20 @@
+export declare const BACKGROUND_WORKER_DIRECTORY = "background-worker";
+export declare const BACKGROUND_WORKER_INTEGRATIONS_DIRECTORY = "integrations";
+export declare const BACKGROUND_WORKER_ACCOUNTS_DIRECTORY = "accounts";
+export declare const BACKGROUND_WORKER_LOCK_FILE = "worker";
+export declare const BACKGROUND_WORKER_PENDING_FILE = "wake.pending";
+export declare const BACKGROUND_WORKER_ACTIVE_PREFIX = "wake.active.";
+export declare const BACKGROUND_WORKER_LAUNCHING_FILE = "wake.launching";
+export declare const BACKGROUND_WORKER_STAGING_FILE: RegExp;
+export declare const BACKGROUND_WORKER_MARKER_ID_PATTERN: RegExp;
+export declare const BACKGROUND_WORKER_ACTIVE_MARKER_NAME: RegExp;
+export declare const BACKGROUND_WORKER_ATTEMPT_NAME: RegExp;
+export declare const BACKGROUND_WORKER_MARKER_VERSION = 1;
+export declare const BACKGROUND_WORKER_ATTEMPT_VERSION = 1;
+export declare const BACKGROUND_WORKER_LAUNCH_VERSION = 1;
+export declare const BACKGROUND_WORKER_DEFAULT_MAX_ATTEMPTS = 3;
+export declare const BACKGROUND_WORKER_DEFAULT_RETRY_DELAY_MS = 100;
+export declare const BACKGROUND_WORKER_OWNER_WAIT_MS = 30000;
+export declare const BACKGROUND_WORKER_STARTUP_WAIT_MS = 2000;
+export declare const BACKGROUND_WORKER_LAUNCH_LEASE_MS = 30000;
+//# sourceMappingURL=constants.d.ts.map

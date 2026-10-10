@@ -67,6 +67,10 @@
     "./tracing/settlement": {
       "types": "./dist/tracing/settlement/index.d.ts",
       "default": "./dist/tracing/settlement/index.js"
+    },
+    "./tracing/background-worker": {
+      "types": "./dist/tracing/background-worker/index.d.ts",
+      "default": "./dist/tracing/background-worker/index.js"
     }
   },
   "publishConfig": {
