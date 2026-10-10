@@ -55,6 +55,10 @@
     "./tracing/upload": {
       "types": "./dist/tracing/upload/index.d.ts",
       "default": "./dist/tracing/upload/index.js"
+    },
+    "./git": {
+      "types": "./dist/git/index.d.ts",
+      "default": "./dist/git/index.js"
     }
   },
   "publishConfig": {
