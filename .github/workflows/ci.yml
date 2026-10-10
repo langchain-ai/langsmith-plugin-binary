@@ -56,3 +56,25 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test
         run: pnpm test
+
+  test-runtime-on-windows:
+    name: Test Runtime on Windows
+    runs-on: windows-latest
+    env:
+      HOME: ${{ runner.temp }}/plugins-base-home
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.8.2
+          cache: pnpm
+      - name: Create an Isolated Home
+        run: New-Item -ItemType Directory -Force -Path $env:HOME
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test Shared Runtime
+        run: pnpm exec vitest run src/settings src/git src/storage src/metadata src/privacy src/tracing
