@@ -190,7 +190,7 @@ async function settleOneTurn(turnId, events, generated, options) {
         const updatedMetadata = buildCodingAgentMetadata(metadata);
         if (Object.entries(added).some(([key, value]) => updatedMetadata[key] !== value))
             throw new Error("Settlement metadata could not preserve attribution");
-        const payload = patchPayload(latest, metadata, options.integration);
+        const submission = patchPayload(latest, metadata, options.integration);
         const eventId = settlementEventId(turnId, runId, dependencies, rootRunId, childRunIds, added);
         const scope = {
             integration: options.integration,
@@ -219,8 +219,8 @@ async function settleOneTurn(turnId, events, generated, options) {
             runId,
             destinationFingerprint: options.destinationFingerprint,
             eventKind: LIFECYCLE_SETTLEMENT_EVENT_KIND,
-            normalizedPayload: canonicalJsonValue(payload),
-            metadataProvenance: canonicalJsonValue(metadata),
+            normalizedPayload: canonicalJsonValue(submission.payload),
+            metadataProvenance: canonicalJsonValue(submission.metadata),
             turnEvidence: canonicalJsonValue({
                 rootRunId,
                 childRunIds: [...childRunIds].toSorted(),
@@ -333,7 +333,7 @@ function patchPayload(source, metadata, integration) {
     const projected = projectSubmission(submission, integration);
     if (projected.status === "deferred")
         throw new Error("Settlement patch lost thread identity");
-    return projected.value.payload;
+    return projected.value;
 }
 function addAttribution(metadata, attribution) {
     const layer = CODING_AGENT_INTEGRATION_POLICIES[metadata.integration].fullModePrecedence === "custom-wins"

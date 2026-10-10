@@ -26,7 +26,7 @@ import {
   LIFECYCLE_TURN_CLOSURE_STATES,
 } from "../lifecycle/constants.js";
 import { projectSubmission } from "../lifecycle/projection.js";
-import type { ProjectedPayload } from "../lifecycle/models.js";
+import type { ProjectedPayload, ProjectedSubmission } from "../lifecycle/models.js";
 import type { PreparedRunPatchSubmission } from "../upload/models.js";
 import { SETTLEMENT_EVENT_ID_PREFIX } from "./constants.js";
 import { attributionOf, metadataAfterFill, turnAttribution } from "./settlement.js";
@@ -270,7 +270,7 @@ async function settleOneTurn(
     const updatedMetadata = buildCodingAgentMetadata(metadata);
     if (Object.entries(added).some(([key, value]) => updatedMetadata[key] !== value))
       throw new Error("Settlement metadata could not preserve attribution");
-    const payload = patchPayload(latest, metadata, options.integration);
+    const submission = patchPayload(latest, metadata, options.integration);
     const eventId = settlementEventId(turnId, runId, dependencies, rootRunId, childRunIds, added);
     const scope: CaptureScope = {
       integration: options.integration,
@@ -309,8 +309,8 @@ async function settleOneTurn(
       runId,
       destinationFingerprint: options.destinationFingerprint,
       eventKind: LIFECYCLE_SETTLEMENT_EVENT_KIND,
-      normalizedPayload: canonicalJsonValue(payload),
-      metadataProvenance: canonicalJsonValue(metadata),
+      normalizedPayload: canonicalJsonValue(submission.payload),
+      metadataProvenance: canonicalJsonValue(submission.metadata),
       turnEvidence: canonicalJsonValue({
         rootRunId,
         childRunIds: [...childRunIds].toSorted(),
@@ -415,7 +415,7 @@ function patchPayload(
   source: ProjectedCapture,
   metadata: CodingAgentMetadataOptions,
   integration: SettleCapturedTurnsOptions["integration"],
-): ProjectedPayload {
+): ProjectedSubmission {
   const context = source.payload.run;
   const submission: PreparedRunPatchSubmission = {
     operation: "patch",
@@ -447,7 +447,7 @@ function patchPayload(
   };
   const projected = projectSubmission(submission, integration);
   if (projected.status === "deferred") throw new Error("Settlement patch lost thread identity");
-  return projected.value.payload;
+  return projected.value;
 }
 
 function addAttribution(

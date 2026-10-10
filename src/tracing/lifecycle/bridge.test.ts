@@ -485,6 +485,84 @@ describe("durable run lifecycle bridge", () => {
     });
   });
 
+  it("keeps root repository details out of a metadata-mode settlement record", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-settlement-metadata-mode-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-settlement-metadata-mode",
+      writer: { destinations: [destination()], redact: false },
+    });
+    const turnId = "turn-settlement-metadata-mode";
+    const sessionId = "session-settlement-metadata-mode";
+    const marker = "private-root-repo-marker";
+    const rootScope = scope(turnId, "event-root", sessionId);
+    const rootMetadata = {
+      ...metadata("claude-code", "root"),
+      base: {
+        repository_name: "private/project",
+        repository_url: `https://private.invalid/${marker}`,
+        git_branch: "private-branch",
+      },
+    };
+    const childMetadata = { ...metadata("claude-code", "tool"), agentType: "subagent" as const };
+    const childSubmission = post(
+      CHILD_ID,
+      childMetadata,
+      {
+        run_type: "tool",
+        start_time: "2026-10-10T12:00:00.001Z",
+        end_time: "2026-10-10T12:00:00.010Z",
+        parent_run_id: PARENT_ID,
+        trace_id: PARENT_ID,
+        dotted_order: CHILD_DOTTED_ORDER,
+      },
+      "metadata",
+    );
+    const turnEvidence = evidence({
+      rootRunId: PARENT_ID,
+      childRunIds: [CHILD_ID],
+      closureState: "authoritative",
+    });
+
+    await bridge.capture({
+      turnId,
+      eventId: rootScope.eventId,
+      submission: post(PARENT_ID, rootMetadata, {
+        start_time: "2026-10-10T12:00:00.000Z",
+        trace_id: PARENT_ID,
+        dotted_order: PARENT_DOTTED_ORDER,
+        end_time: "2026-10-10T12:00:00.010Z",
+      }),
+      turnEvidence,
+    });
+    await bridge.capture({
+      turnId,
+      eventId: "event-child-metadata-mode",
+      submission: childSubmission,
+      turnEvidence,
+      dependencies: [rootScope],
+    });
+
+    await expect(bridge.drain()).resolves.toMatchObject({
+      status: "drained",
+      delivered: 3,
+      pending: 0,
+      settlement: { turns: [{ status: "settled", patches: 1 }] },
+    });
+    const captures = await createCaptureStore(root).enumerate("claude-code", sessionId);
+    const sourceChild = captures.find(
+      ({ record }) => record.eventId === "event-child-metadata-mode",
+    )?.record;
+    const settlement = captures.find(
+      ({ record }) => record.eventKind === "run-settlement-patch" && record.runId === CHILD_ID,
+    )?.record;
+
+    expect(JSON.stringify(sourceChild)).not.toContain(marker);
+    expect(settlement).toBeDefined();
+    expect(JSON.stringify(settlement)).not.toContain(marker);
+  });
+
   it("preserves stored metadata-mode error status on generated attribution patches", async () => {
     const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-settlement-error-"));
     const bridge = createLifecycleBridge({
