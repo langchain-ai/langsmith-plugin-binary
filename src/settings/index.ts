@@ -5,6 +5,7 @@ export type {
   CommonConfigSources,
   CommonReplica,
   CommonRedactRule,
+  MergeCommonConfigOptions,
   MergedCommonConfig,
   SdkReplica,
 } from "./models.js";

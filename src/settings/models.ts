@@ -44,6 +44,10 @@ export interface CommonConfigSources {
   defaults?: CommonConfig;
 }
 
+export interface MergeCommonConfigOptions {
+  envFirst?: boolean;
+}
+
 export type MergedCommonConfig = CommonConfig & {
   enabled: boolean;
   defaultMuted: boolean;

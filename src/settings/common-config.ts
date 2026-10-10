@@ -6,6 +6,7 @@ import type {
   CommonConfigSources,
   CommonRedactRule,
   CommonReplica,
+  MergeCommonConfigOptions,
   MergedCommonConfig,
   SdkReplica,
 } from "./models.js";
@@ -143,7 +144,7 @@ function resolveField<K extends keyof CommonConfig>(
  */
 export function mergeCommonConfig(
   sources: CommonConfigSources,
-  options: { envFirst?: boolean } = {},
+  options: MergeCommonConfigOptions = {},
 ): MergedCommonConfig {
   const { harness = {}, root = {}, user = {}, userRoot = {}, env = {}, defaults = {} } = sources;
   const files = [harness, root, user, userRoot];
