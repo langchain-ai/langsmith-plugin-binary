@@ -1,5 +1,7 @@
 export { createTracingEngine } from "./engine.js";
 export type {
+  TracingEngineBackgroundRecoveryOptions,
+  TracingEngineBackgroundRecoveryResult,
   TracingEngineRecoveryFailure,
   TracingEngineRecoveryOptions,
   TracingEngineRecoveryReport,

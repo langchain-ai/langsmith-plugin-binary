@@ -9,6 +9,7 @@ import { FILE_LOCK_DIRECTORY_SUFFIX } from "../../storage/constants.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
 import { BACKGROUND_WORKER_ACCOUNTS_DIRECTORY, BACKGROUND_WORKER_ACTIVE_MARKER_NAME, BACKGROUND_WORKER_ATTEMPT_NAME, BACKGROUND_WORKER_ATTEMPT_VERSION, BACKGROUND_WORKER_DEFAULT_MAX_ATTEMPTS, BACKGROUND_WORKER_DEFAULT_RETRY_DELAY_MS, BACKGROUND_WORKER_DIRECTORY, BACKGROUND_WORKER_INTEGRATIONS_DIRECTORY, BACKGROUND_WORKER_LAUNCH_LEASE_MS, BACKGROUND_WORKER_LAUNCHING_FILE, BACKGROUND_WORKER_LAUNCH_VERSION, BACKGROUND_WORKER_MARKER_ID_PATTERN, BACKGROUND_WORKER_MARKER_VERSION, BACKGROUND_WORKER_OWNER_WAIT_MS, BACKGROUND_WORKER_PENDING_FILE, BACKGROUND_WORKER_SESSIONS_DIRECTORY, BACKGROUND_WORKER_STARTUP_WAIT_MS, BACKGROUND_WORKER_STAGING_FILE, BACKGROUND_WORKER_LOCK_FILE, } from "./constants.js";
 import { workerActivePath, workerAttemptPath, workerDirectory, workerLaunchPath, workerLockPath, workerPendingPath, } from "./paths.js";
+import { matchesScope } from "./utils/scope.js";
 export function createBackgroundWorker(options) {
     validateOptions(options);
     const storageRoot = resolve(options.storageRoot);
@@ -133,12 +134,6 @@ function validateOptions(options) {
 }
 function makeMarker(id) {
     return { version: BACKGROUND_WORKER_MARKER_VERSION, id, sourcePid: process.pid };
-}
-async function matchesScope(resolveScope, expected) {
-    const actual = await resolveScope();
-    return (actual.integration === expected.integration &&
-        actual.sessionId === expected.sessionId &&
-        actual.accountFingerprint === expected.accountFingerprint);
 }
 async function processLocked(storageRoot, directory, scope, options, retryPolicy) {
     const state = await readWorkerState(storageRoot, directory);

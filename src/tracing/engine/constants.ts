@@ -1,1 +1,23 @@
 export const TRACING_ENGINE_FOREIGN_SESSION_MIN_AGE_MS = 2 * 60 * 60 * 1000;
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_COOLDOWN_MS = 5 * 60 * 1000;
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_DIRECTORY = "background-recovery";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_INTEGRATIONS_DIRECTORY = "integrations";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_ACCOUNTS_DIRECTORY = "accounts";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_LOCK_FILE = "scan.lock";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_MARKER_FILE = "cooldown.json";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_MARKER_VERSION = 1 as const;
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_MARKER_EXISTS_ERROR =
+  "Background recovery cooldown marker is already published";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_RETRY_RANGE_ERROR =
+  "Background recovery retry time is outside the supported range";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_REPORT_ERROR =
+  "Background recovery report callback failed";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_FILE_NOT_FOUND_CODE = "ENOENT";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_SESSION_CALLBACK_ERROR =
+  "Background recovery session callback is required";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_REPORT_CALLBACK_ERROR =
+  "Background recovery report callback is required";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_MINIMUM_AGE_ERROR =
+  "Minimum foreign session age must be a non-negative integer";
+export const TRACING_ENGINE_BACKGROUND_RECOVERY_COOLDOWN_RANGE_ERROR =
+  "Background recovery cooldown must be a positive integer";

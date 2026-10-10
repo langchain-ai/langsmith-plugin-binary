@@ -35,6 +35,8 @@ export async function recoverTracingSessions(runtime, request) {
     const scheduled = [];
     const failed = [];
     for (const sessionId of [...sessionIds].toSorted()) {
+        if (request.excludeCurrentSession && sessionId === runtime.currentSessionId)
+            continue;
         try {
             const lifecycleEntries = lifecycleBySession.get(sessionId) ?? [];
             const reconstructionEntries = reconstructionBySession.get(sessionId) ?? [];

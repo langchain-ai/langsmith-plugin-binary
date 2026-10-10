@@ -18,12 +18,49 @@ export interface TracingEngineSessionOptions {
     resolveScope: TracingEngineScopeResolver;
     startupWaitMs?: number;
     retryPolicy?: Partial<BackgroundWorkerRetryPolicy>;
+    backgroundRecovery?: TracingEngineBackgroundRecoveryOptions;
 }
-export type TracingEngineSessionCallbacks = Omit<TracingEngineSessionOptions, "sessionId">;
+export type TracingEngineSessionCallbacks = Omit<TracingEngineSessionOptions, "sessionId" | "backgroundRecovery">;
 export interface TracingEngineRecoveryOptions {
     optionsForSession: (sessionId: string) => TracingEngineSessionCallbacks | Promise<TracingEngineSessionCallbacks>;
     minimumForeignAgeMs?: number;
     now?: number;
+    excludeCurrentSession?: boolean;
+}
+export interface TracingEngineBackgroundRecoveryOptions {
+    optionsForSession: TracingEngineRecoveryOptions["optionsForSession"];
+    onReport: (result: TracingEngineBackgroundRecoveryResult) => void | Promise<void>;
+    minimumForeignAgeMs?: number;
+    cooldownMs?: number;
+}
+export type TracingEngineBackgroundRecoveryResult = {
+    status: "completed";
+    report: TracingEngineRecoveryReport;
+    retryAtMs: number;
+} | {
+    status: "partial";
+    report: TracingEngineRecoveryReport;
+    retryAtMs: number;
+    retryable: true;
+} | {
+    status: "cooldown";
+    retryAtMs: number;
+} | {
+    status: "scope-mismatch";
+} | {
+    status: "failed";
+    message: string;
+    retryable: true;
+    retryAtMs?: number;
+};
+export interface TracingEngineBackgroundRecoveryMarker {
+    version: typeof import("./constants.js").TRACING_ENGINE_BACKGROUND_RECOVERY_MARKER_VERSION;
+    retryAtMs: number;
+}
+export interface TracingEngineBackgroundRecoveryPaths {
+    directory: string;
+    lock: string;
+    marker: string;
 }
 export interface TracingEngineRecoverySettlementAssessmentOptions {
     captures: readonly EnumeratedCapture[];

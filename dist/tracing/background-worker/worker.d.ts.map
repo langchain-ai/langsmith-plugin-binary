@@ -1,1 +1,1 @@
-{"version":3,"file":"worker.d.ts","sourceRoot":"","sources":["../../../src/tracing/background-worker/worker.ts"],"names":[],"mappings":"AAkCA,OAAO,KAAK,EACV,gBAAgB,EAKhB,uBAAuB,EAQxB,MAAM,aAAa,CAAC;AAUrB,wBAAgB,sBAAsB,CAAC,OAAO,EAAE,uBAAuB,GAAG,gBAAgB,CA0GzF"}
+{"version":3,"file":"worker.d.ts","sourceRoot":"","sources":["../../../src/tracing/background-worker/worker.ts"],"names":[],"mappings":"AAkCA,OAAO,KAAK,EACV,gBAAgB,EAKhB,uBAAuB,EAQxB,MAAM,aAAa,CAAC;AAWrB,wBAAgB,sBAAsB,CAAC,OAAO,EAAE,uBAAuB,GAAG,gBAAgB,CA0GzF"}

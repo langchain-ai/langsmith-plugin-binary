@@ -55,6 +55,7 @@ import {
   workerLockPath,
   workerPendingPath,
 } from "./paths.js";
+import { matchesScope } from "./utils/scope.js";
 
 export function createBackgroundWorker(options: BackgroundWorkerOptions): BackgroundWorker {
   validateOptions(options);
@@ -188,18 +189,6 @@ function validateOptions(options: BackgroundWorkerOptions): void {
 
 function makeMarker(id: string): BackgroundWorkerMarker {
   return { version: BACKGROUND_WORKER_MARKER_VERSION, id, sourcePid: process.pid };
-}
-
-async function matchesScope(
-  resolveScope: BackgroundWorkerOptions["resolveScope"],
-  expected: BackgroundWorkerScope,
-): Promise<boolean> {
-  const actual = await resolveScope();
-  return (
-    actual.integration === expected.integration &&
-    actual.sessionId === expected.sessionId &&
-    actual.accountFingerprint === expected.accountFingerprint
-  );
 }
 
 async function processLocked(
