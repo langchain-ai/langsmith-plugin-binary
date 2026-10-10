@@ -3,10 +3,12 @@ import { createCaptureStore } from "../../storage/capture/index.js";
 import { createDeliveryCoordinator } from "../delivery/index.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import { canonicalJsonObject, canonicalJsonValue, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireStringArray, requireTimestamp, } from "../../utils/validation/objects.js";
+import { snapshotData } from "../../utils/validation/snapshot.js";
 import { LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_TURN_CLOSURE_STATES, } from "./constants.js";
 import { projectSubmission } from "./projection.js";
 export function createLifecycleBridge(options) {
     const integration = options.integration;
+    const wake = options.wake;
     const sessionId = requireNonBlankString(options.sessionId, "Session ID");
     const storageRoot = resolve(options.storageRoot);
     const captureStore = createCaptureStore(storageRoot);
@@ -20,7 +22,7 @@ export function createLifecycleBridge(options) {
     return Object.freeze({
         accountFingerprint: writer.accountFingerprint,
         async capture(input) {
-            const capture = requirePlainRecord(input, "Lifecycle capture");
+            const capture = requirePlainRecord(snapshotData(requirePlainRecord(input, "Lifecycle capture")), "Lifecycle capture");
             const turnId = requireNonBlankString(capture["turnId"], "Turn ID");
             const eventId = requireNonBlankString(capture["eventId"], "Event ID");
             const scope = { integration, sessionId, turnId, eventId };
@@ -67,7 +69,7 @@ export function createLifecycleBridge(options) {
                 }
             }
             if (result.status === "published" || result.status === "duplicate")
-                await options.wake?.();
+                await wake?.();
             return result;
         },
         async drain(input = {}) {
@@ -85,7 +87,7 @@ export function createLifecycleBridge(options) {
                 ...(input.now === undefined ? {} : { now: input.now }),
             });
             if (result.status === "drained" && result.delivered + result.dropped > 0) {
-                await options.wake?.();
+                await wake?.();
             }
             return result;
         },

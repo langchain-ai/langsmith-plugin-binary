@@ -14,6 +14,7 @@ import {
   requireStringArray,
   requireTimestamp,
 } from "../../utils/validation/objects.js";
+import { snapshotData } from "../../utils/validation/snapshot.js";
 import type {
   LifecycleBridge,
   LifecycleBridgeOptions,
@@ -31,6 +32,7 @@ import { projectSubmission } from "./projection.js";
 
 export function createLifecycleBridge(options: LifecycleBridgeOptions): LifecycleBridge {
   const integration = options.integration;
+  const wake = options.wake;
   const sessionId = requireNonBlankString(options.sessionId, "Session ID");
   const storageRoot = resolve(options.storageRoot);
   const captureStore = createCaptureStore(storageRoot);
@@ -44,7 +46,10 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
   return Object.freeze({
     accountFingerprint: writer.accountFingerprint,
     async capture(input: LifecycleCaptureInput): Promise<LifecycleCaptureResult> {
-      const capture = requirePlainRecord(input, "Lifecycle capture");
+      const capture = requirePlainRecord(
+        snapshotData(requirePlainRecord(input, "Lifecycle capture")),
+        "Lifecycle capture",
+      );
       const turnId = requireNonBlankString(capture["turnId"], "Turn ID");
       const eventId = requireNonBlankString(capture["eventId"], "Event ID");
       const scope: CaptureScope = { integration, sessionId, turnId, eventId };
@@ -102,7 +107,7 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
           if (retry.status === "ready") result = await captureProjected(retry.value);
         }
       }
-      if (result.status === "published" || result.status === "duplicate") await options.wake?.();
+      if (result.status === "published" || result.status === "duplicate") await wake?.();
       return result;
     },
     async drain(input: LifecycleDrainInput = {}) {
@@ -120,7 +125,7 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
         ...(input.now === undefined ? {} : { now: input.now }),
       });
       if (result.status === "drained" && result.delivered + result.dropped > 0) {
-        await options.wake?.();
+        await wake?.();
       }
       return result;
     },

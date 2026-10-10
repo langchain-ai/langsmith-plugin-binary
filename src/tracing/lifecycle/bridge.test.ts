@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCaptureStore } from "../../storage/capture/index.js";
-import type { CaptureScope } from "../../storage/capture/models.js";
+import type { CaptureDependency, CaptureScope } from "../../storage/capture/models.js";
 import { MUTED_TRACE_CONTENT } from "../../privacy/index.js";
 import type {
   LangSmithUploadDestinationConfig,
@@ -13,7 +13,7 @@ import type {
 } from "../upload/models.js";
 import type { LocalRequest } from "../../test-support/models/lifecycle.js";
 import { createLifecycleBridge } from "./index.js";
-import type { LifecycleTurnEvidence } from "./models.js";
+import type { LifecycleCaptureInput, LifecycleTurnEvidence } from "./models.js";
 
 const PRIVATE_MARKER = "lifecycle-private-content-marker";
 const PARENT_ID = "11111111-1111-4111-8111-111111111111";
@@ -559,5 +559,108 @@ describe("durable run lifecycle bridge", () => {
     await expect(
       createCaptureStore(root).enumerate("claude-code", "session-retry"),
     ).resolves.toHaveLength(2);
+  });
+
+  it("snapshots privacy and submission data before asynchronous capture work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-input-snapshot-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-1",
+      writer: { destinations: [destination()], redact: false },
+    });
+    const submission = post(
+      PARENT_ID,
+      metadata("claude-code", "root"),
+      { inputs: { prompt: PRIVATE_MARKER } },
+      "metadata",
+    );
+    Object.defineProperties(submission.run, {
+      start_time: { value: undefined, enumerable: true, configurable: true, writable: true },
+      parent_run_id: { value: undefined, enumerable: true, configurable: true, writable: true },
+      trace_id: { value: undefined, enumerable: true, configurable: true, writable: true },
+      dotted_order: { value: undefined, enumerable: true, configurable: true, writable: true },
+    });
+    const input: LifecycleCaptureInput = {
+      turnId: "turn-snapshot",
+      eventId: "event-snapshot",
+      submission,
+      turnEvidence: evidence(),
+    };
+
+    const pending = bridge.capture(input);
+    submission.privacyMode = "full";
+    submission.metadata.threadId = "mutated-thread";
+    submission.run.name = "mutated run";
+    await expect(pending).resolves.toMatchObject({ status: "published" });
+
+    const record = await createCaptureStore(root).read(scope("turn-snapshot", "event-snapshot"));
+    expect(record?.normalizedPayload).toMatchObject({
+      privacyMode: "metadata",
+      run: { name: "test run" },
+    });
+    expect(record?.metadataProvenance).toMatchObject({ threadId: "thread-1" });
+    expect(JSON.stringify(record)).not.toContain(PRIVATE_MARKER);
+  });
+
+  it("snapshots turn evidence and dependencies before asynchronous capture work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-evidence-snapshot-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-1",
+      writer: { destinations: [destination()], redact: false },
+    });
+    const turnEvidence = evidence({ childRunIds: [CHILD_ID] });
+    const dependency: CaptureDependency = scope("turn-prerequisite", "event-prerequisite");
+    const dependencies = [dependency];
+    const input: LifecycleCaptureInput = {
+      turnId: "turn-evidence-snapshot",
+      eventId: "event-evidence-snapshot",
+      submission: post(PARENT_ID, metadata("claude-code", "root")),
+      turnEvidence,
+      dependencies,
+    };
+
+    const pending = bridge.capture(input);
+    turnEvidence.childRunIds[0] = PARENT_ID;
+    turnEvidence.closureState = "authoritative";
+    dependency.eventId = "mutated-prerequisite";
+    dependencies.push(scope("turn-extra", "event-extra"));
+    await expect(pending).resolves.toMatchObject({ status: "published" });
+
+    const record = await createCaptureStore(root).read(
+      scope("turn-evidence-snapshot", "event-evidence-snapshot"),
+    );
+    expect(record?.turnEvidence).toEqual({ childRunIds: [CHILD_ID], closureState: "open" });
+    expect(record?.dependencies).toEqual([scope("turn-prerequisite", "event-prerequisite")]);
+  });
+
+  it("snapshots the wake callback when the bridge is created", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-wake-snapshot-"));
+    const initialWake = vi.fn();
+    const beforeCaptureWake = vi.fn();
+    const afterCaptureWake = vi.fn();
+    const options = {
+      storageRoot: root,
+      integration: "claude-code" as const,
+      sessionId: "session-1",
+      writer: { destinations: [destination()], redact: false },
+      wake: initialWake,
+    };
+    const bridge = createLifecycleBridge(options);
+    options.wake = beforeCaptureWake;
+    const pending = bridge.capture({
+      turnId: "turn-wake-snapshot",
+      eventId: "event-wake-snapshot",
+      submission: post(PARENT_ID, metadata("claude-code", "root")),
+      turnEvidence: evidence(),
+    });
+    options.wake = afterCaptureWake;
+    await expect(pending).resolves.toMatchObject({ status: "published" });
+
+    expect(initialWake).toHaveBeenCalledTimes(1);
+    expect(beforeCaptureWake).not.toHaveBeenCalled();
+    expect(afterCaptureWake).not.toHaveBeenCalled();
   });
 });
