@@ -107,6 +107,26 @@ export function createCaptureStore(root) {
             }
             return captures.toSorted(compareCaptures);
         },
+        async enumerateSessions(integration) {
+            validateIntegration(integration);
+            const sessionsDirectory = join(captureDirectory(storageRoot), "integrations", integration, "sessions");
+            const directories = await listPrivateDirectory(storageRoot, sessionsDirectory);
+            if (directories === undefined)
+                return [];
+            const sessions = [];
+            for (const directory of directories) {
+                if (!directory.isDirectory() ||
+                    directory.isSymbolicLink() ||
+                    !CAPTURE_HASH.test(directory.name)) {
+                    throw new Error("Invalid capture session directory");
+                }
+                const session = await enumerateSession(storageRoot, integration, directory.name);
+                if (session === undefined || session.captures.length === 0)
+                    continue;
+                sessions.push(session);
+            }
+            return sessions.toSorted((left, right) => left.sessionId === right.sessionId ? 0 : left.sessionId < right.sessionId ? -1 : 1);
+        },
         async recordOutcome(input) {
             try {
                 validateScope(input);
@@ -182,6 +202,48 @@ function compareCaptures(left, right) {
     if (left.record.eventId === right.record.eventId)
         return 0;
     return left.record.eventId < right.record.eventId ? -1 : 1;
+}
+async function enumerateSession(root, integration, sessionHash) {
+    const turnsDirectory = join(captureDirectory(root), "integrations", integration, "sessions", sessionHash, "turns");
+    const turns = await listPrivateDirectory(root, turnsDirectory);
+    if (turns === undefined)
+        return undefined;
+    const captures = [];
+    let sessionId;
+    for (const turn of turns) {
+        if (!turn.isDirectory() || turn.isSymbolicLink() || !CAPTURE_HASH.test(turn.name))
+            throw new Error("Invalid capture turn directory");
+        const eventDirectory = join(turnsDirectory, turn.name, "events");
+        const events = await listPrivateDirectory(root, eventDirectory);
+        if (events === undefined)
+            continue;
+        for (const event of events) {
+            if (event.isSymbolicLink() || !event.isFile())
+                throw new Error("Capture event must be a regular file");
+            if (CAPTURE_STAGING_FILE.test(event.name))
+                continue;
+            if (!CAPTURE_EVENT_FILE.test(event.name))
+                throw new Error("Invalid capture event path");
+            const path = join(eventDirectory, event.name);
+            const record = await readRecord(root, path);
+            if (record === undefined ||
+                record.integration !== integration ||
+                identifierHash(record.sessionId) !== sessionHash ||
+                identifierHash(record.turnId) !== turn.name ||
+                `${identifierHash(record.eventId)}.json` !== event.name ||
+                (sessionId !== undefined && record.sessionId !== sessionId)) {
+                throw new Error("Capture event namespace does not match");
+            }
+            sessionId = record.sessionId;
+            const info = await lstat(path);
+            if (!info.isFile() || info.isSymbolicLink() || !Number.isFinite(info.mtimeMs))
+                throw new Error("Capture event must be a regular file");
+            captures.push({ record, capturedAtMs: record.capturedAtMs });
+        }
+    }
+    if (sessionId === undefined)
+        return undefined;
+    return { sessionId, captures: captures.toSorted(compareCaptures) };
 }
 function sameCapture(left, right) {
     const leftContent = { ...left };

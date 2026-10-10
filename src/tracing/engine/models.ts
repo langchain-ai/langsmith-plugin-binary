@@ -28,11 +28,47 @@ export interface TracingEngineSessionOptions {
   retryPolicy?: Partial<BackgroundWorkerRetryPolicy>;
 }
 
+export type TracingEngineSessionCallbacks = Omit<TracingEngineSessionOptions, "sessionId">;
+
+export interface TracingEngineRecoveryOptions {
+  optionsForSession: (
+    sessionId: string,
+  ) => TracingEngineSessionCallbacks | Promise<TracingEngineSessionCallbacks>;
+  minimumForeignAgeMs?: number;
+  now?: number;
+}
+
+export interface TracingEngineRecoveryRuntime {
+  storageRoot: string;
+  integration: CodingAgentIntegration;
+  accountFingerprint: string;
+  writer: LangSmithUploadWriterOptions;
+  currentSessionId: string;
+  wakeCurrent(): Promise<BackgroundWorkerWakeResult>;
+  createSession(options: TracingEngineSessionOptions): TracingEngineSession;
+}
+
+export interface TracingEngineRecoverySchedule {
+  sessionId: string;
+  status: BackgroundWorkerWakeResult;
+}
+
+export interface TracingEngineRecoveryFailure {
+  sessionId: string;
+  message: string;
+}
+
+export interface TracingEngineRecoveryReport {
+  scheduled: TracingEngineRecoverySchedule[];
+  failed: TracingEngineRecoveryFailure[];
+}
+
 export interface TracingEngineSession {
   capture(input: LifecycleCaptureInput): Promise<LifecycleCaptureResult>;
   queueReconstruction(input: ReconstructionJobInput): Promise<CaptureWriteResult>;
   wake(): Promise<BackgroundWorkerWakeResult>;
   drain(): Promise<BackgroundWorkerRunResult>;
+  recoverSessions(options: TracingEngineRecoveryOptions): Promise<TracingEngineRecoveryReport>;
 }
 
 export interface TracingEngine {

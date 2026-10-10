@@ -195,6 +195,105 @@ describe("immutable capture storage", () => {
     });
   });
 
+  it("discovers session IDs from validated records instead of directory hashes", async () => {
+    const store = createCaptureStore(temporaryRoot());
+    await store.capture({ ...captureInput("event-a"), sessionId: "actual-session-a" });
+    await store.capture({ ...captureInput("event-b"), sessionId: "actual-session-b" });
+
+    const sessions = await store.enumerateSessions("claude-code");
+
+    expect(sessions.map(({ sessionId }) => sessionId)).toEqual([
+      "actual-session-a",
+      "actual-session-b",
+    ]);
+    expect(sessions.map(({ captures }) => captures[0]?.record.sessionId)).toEqual([
+      "actual-session-a",
+      "actual-session-b",
+    ]);
+  });
+
+  it("skips an empty session directory", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    await mkdir(
+      join(
+        root,
+        "capture-v1",
+        "integrations",
+        "claude-code",
+        "sessions",
+        identifierHash("empty-session"),
+      ),
+      { recursive: true },
+    );
+
+    await expect(store.enumerateSessions("claude-code")).resolves.toEqual([]);
+  });
+
+  it("skips a session directory while a capture is still being published", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    await store.capture({ ...captureInput("event-a"), sessionId: "saved-session" });
+    const stagingDirectory = await ensurePrivateDirectory(root, [
+      "capture-v1",
+      "integrations",
+      "claude-code",
+      "sessions",
+      identifierHash("writing-session"),
+      "turns",
+      identifierHash("turn-1"),
+      "events",
+    ]);
+    writeFileSync(join(stagingDirectory, ".11111111-1111-4111-8111-111111111111.tmp"), "partial");
+
+    await expect(store.enumerateSessions("claude-code")).resolves.toMatchObject([
+      { sessionId: "saved-session" },
+    ]);
+  });
+
+  it("rejects a symlinked foreign session directory before following it", async () => {
+    const input = captureInput();
+    const outsideRoot = temporaryRoot();
+    await createCaptureStore(outsideRoot).capture(input);
+    const linkedRoot = temporaryRoot();
+    const sessionsDirectory = join(
+      linkedRoot,
+      "capture-v1",
+      "integrations",
+      input.integration,
+      "sessions",
+    );
+    await mkdir(sessionsDirectory, { recursive: true });
+    createDirectoryLink(
+      join(
+        outsideRoot,
+        "capture-v1",
+        "integrations",
+        input.integration,
+        "sessions",
+        identifierHash(input.sessionId),
+      ),
+      join(sessionsDirectory, identifierHash(input.sessionId)),
+    );
+
+    await expect(
+      createCaptureStore(linkedRoot).enumerateSessions(input.integration),
+    ).rejects.toThrow("Invalid capture session directory");
+  });
+
+  it("rejects a record whose session ID does not match its hashed directory", async () => {
+    const input = captureInput();
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    await store.capture(input);
+    const recordPath = eventPath(root, input);
+    const record = (await store.read(input))!;
+    writeFileSync(recordPath, JSON.stringify({ ...record, sessionId: "invented-session" }));
+    await expect(store.enumerateSessions(input.integration)).rejects.toThrow(
+      "Capture event namespace does not match",
+    );
+  });
+
   it("fails enumeration when a committed event is malformed", async () => {
     const root = temporaryRoot();
     const input = captureInput();

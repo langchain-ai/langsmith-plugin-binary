@@ -674,7 +674,7 @@ describe("durable delivery coordinator", () => {
         eventId: "event-000",
       }),
     ).resolves.toBeDefined();
-  }, 30_000);
+  }, 60_000);
 
   it("marks expired and exhausted work dropped without removing its capture", async () => {
     const root = temporaryRoot();

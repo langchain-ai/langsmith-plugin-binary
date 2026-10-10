@@ -297,7 +297,7 @@ it("recovers a persisted reconstruction job after a later explicit wake", async 
 
 it("finishes settlement after its wake is queued during the worker run", async () => {
   const area = createArea();
-  const requests: Pick<LocalRequest, "method" | "path">[] = [];
+  const requests: LocalRequest[] = [];
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     let body = "";
     request.setEncoding("utf8");
@@ -305,7 +305,11 @@ it("finishes settlement after its wake is queued during the worker run", async (
       body += chunk;
     });
     request.on("end", () => {
-      requests.push({ method: request.method ?? "", path: request.url ?? "" });
+      requests.push({
+        method: request.method ?? "",
+        path: request.url ?? "",
+        payload: body === "" ? {} : JSON.parse(body),
+      });
       response.writeHead(200, { "content-type": "application/json" });
       response.end("{}");
     });
@@ -450,8 +454,19 @@ it("finishes settlement after its wake is queued during the worker run", async (
     expect(childProcess).toBeDefined();
     await expect(waitForExit(childProcess!)).resolves.toBe(0);
     expect(readFileSync(join(area.root, "worker-result"), "utf8")).toBe("completed");
-    expect(requests).toHaveLength(3);
-    expect(requests.map(({ method }) => method)).toEqual(["POST", "POST", "PATCH"]);
+    expect(requests).toHaveLength(4);
+    expect(requests.map(({ method }) => method)).toEqual(["POST", "POST", "PATCH", "PATCH"]);
+    expect(requests.slice(0, 2).every(({ payload }) => payload["end_time"] === undefined)).toBe(
+      true,
+    );
+    expect(
+      requests.slice(2).map(({ path, payload }) => ({ path, endTime: payload["end_time"] })),
+    ).toEqual(
+      expect.arrayContaining([
+        { path: `/api/v1/runs/${rootId}`, endTime: root.run.end_time },
+        { path: `/api/v1/runs/${childId}`, endTime: child.run.end_time },
+      ]),
+    );
     expect(existsSync(workerPendingPath(area.root, scope))).toBe(false);
   } finally {
     await new Promise<void>((resolvePromise, reject) => {

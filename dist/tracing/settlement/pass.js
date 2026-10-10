@@ -193,7 +193,7 @@ async function settleOneTurn(turnId, events, generated, options) {
         const updatedMetadata = buildCodingAgentMetadata(metadata);
         if (Object.entries(added).some(([key, value]) => updatedMetadata[key] !== value))
             throw new Error("Settlement metadata could not preserve attribution");
-        const submission = patchPayload(latest, metadata, options.integration, restoreEndTime ? endTime : undefined);
+        const submission = patchPayload(latest, metadata, options.integration, restoreEndTime ? endTime : undefined, hasCausalRunError(captureEvents));
         const eventId = settlementEventId(turnId, runId, dependencies, rootRunId, childRunIds, added);
         const scope = {
             integration: options.integration,
@@ -305,7 +305,7 @@ function mergeMetadataObject(previous, current) {
         return undefined;
     return { ...previous, ...current };
 }
-function patchPayload(source, metadata, integration, endTime) {
+function patchPayload(source, metadata, integration, endTime, causalRunError = false) {
     const context = source.payload.run;
     const submission = {
         operation: "patch",
@@ -324,12 +324,15 @@ function patchPayload(source, metadata, integration, endTime) {
         privacyContext: source.payload.operation === "patch"
             ? {
                 ...source.payload.privacyContext,
-                ...(endTime !== undefined && source.payload.privacyContext.status !== "error"
-                    ? { status: "completed" }
-                    : {}),
+                ...(causalRunError
+                    ? { status: "error" }
+                    : endTime !== undefined && source.payload.privacyContext.status !== "error"
+                        ? { status: "completed" }
+                        : {}),
             }
             : {
-                status: source.payload.run.error !== undefined ||
+                status: causalRunError ||
+                    source.payload.run.error !== undefined ||
                     source.payload.privacyContext?.status === "error"
                     ? "error"
                     : endTime !== undefined || source.payload.run.end_time !== undefined
@@ -344,6 +347,21 @@ function patchPayload(source, metadata, integration, endTime) {
     if (projected.status === "deferred")
         throw new Error("Settlement patch lost thread identity");
     return projected.value;
+}
+function hasCausalRunError(events) {
+    let hasError = false;
+    for (const { payload } of events) {
+        if (payload.operation === "post") {
+            hasError = payload.run.error !== undefined || payload.privacyContext?.status === "error";
+        }
+        else if (payload.patch.fields.includes("error")) {
+            hasError = payload.patch.values.error !== undefined;
+        }
+        else if (payload.privacyContext.status === "error") {
+            hasError = true;
+        }
+    }
+    return hasError;
 }
 function addAttribution(metadata, attribution) {
     const layer = CODING_AGENT_INTEGRATION_POLICIES[metadata.integration].fullModePrecedence === "custom-wins"

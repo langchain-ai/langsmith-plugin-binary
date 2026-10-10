@@ -6,6 +6,7 @@ export type {
   CaptureStore,
   CaptureWriteResult,
   EnumeratedCapture,
+  EnumeratedCaptureSession,
   JsonValue,
   OutcomeInput,
   OutcomeReadResult,

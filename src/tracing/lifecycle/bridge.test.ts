@@ -1250,6 +1250,133 @@ describe("durable run lifecycle bridge", () => {
     expect(requests[2]?.payload["extra"]).toMatchObject({ metadata: { status: "error" } });
   });
 
+  it("retains a defined empty SDK error patch after a later sparse status update", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-sparse-error-status-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-1",
+      writer: { destinations: [destination()], redact: false },
+    });
+    const turnId = "turn-sparse-error-status";
+    const rootScope = scope(turnId, "event-root-sparse-error-status");
+    const childScope = scope(turnId, "event-child-error-post");
+    const errorScope = scope(turnId, "event-child-empty-error-patch");
+    const turnEvidence = evidence({
+      rootRunId: PARENT_ID,
+      childRunIds: [CHILD_ID],
+      closureState: "authoritative",
+    });
+    await bridge.capture({
+      turnId,
+      eventId: rootScope.eventId,
+      submission: post(
+        PARENT_ID,
+        {
+          ...metadata("claude-code", "root"),
+          base: { repository_name: "acme/project", ls_attribution_identifier: "Owner" },
+        },
+        {
+          start_time: "2026-10-10T12:00:00.000Z",
+          end_time: "2026-10-10T12:00:01.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+        },
+      ),
+      turnEvidence,
+    });
+    await bridge.capture({
+      turnId,
+      eventId: childScope.eventId,
+      submission: post(
+        CHILD_ID,
+        metadata("claude-code", "tool"),
+        {
+          run_type: "tool",
+          start_time: "2026-10-10T12:00:00.001Z",
+          parent_run_id: PARENT_ID,
+          trace_id: PARENT_ID,
+          dotted_order: CHILD_DOTTED_ORDER,
+        },
+        "metadata",
+      ),
+      turnEvidence,
+      dependencies: [rootScope],
+    });
+    await bridge.capture({
+      turnId,
+      eventId: errorScope.eventId,
+      submission: {
+        operation: "patch",
+        integration: "claude-code",
+        privacyMode: "full",
+        metadata: metadata("claude-code", "tool"),
+        run: {
+          id: CHILD_ID,
+          name: "test run",
+          run_type: "tool",
+          start_time: "2026-10-10T12:00:00.001Z",
+          parent_run_id: PARENT_ID,
+          trace_id: PARENT_ID,
+          dotted_order: CHILD_DOTTED_ORDER,
+        },
+        privacyContext: { status: "error" },
+        patch: { fields: ["error"], values: { error: "" } },
+      },
+      turnEvidence,
+      dependencies: [childScope],
+    });
+    await bridge.capture({
+      turnId,
+      eventId: "event-child-sparse-error-status",
+      submission: {
+        operation: "patch",
+        integration: "claude-code",
+        privacyMode: "metadata",
+        metadata: metadata("claude-code", "tool"),
+        run: {
+          id: CHILD_ID,
+          name: "test run",
+          run_type: "tool",
+          start_time: "2026-10-10T12:00:00.001Z",
+          parent_run_id: PARENT_ID,
+          trace_id: PARENT_ID,
+          dotted_order: CHILD_DOTTED_ORDER,
+        },
+        privacyContext: { status: "completed" },
+        patch: { fields: ["outputs"], values: { outputs: { result: "done" } } },
+      },
+      turnEvidence,
+      dependencies: [errorScope],
+    });
+
+    const drainResult = await bridge.drain();
+    expect(drainResult).toMatchObject({
+      status: "drained",
+      delivered: 5,
+      pending: 0,
+      settlement: { turns: [{ status: "settled", patches: 1 }] },
+    });
+
+    const settlement = (await createCaptureStore(root).enumerate("claude-code", "session-1")).find(
+      ({ record }) => record.eventKind === "run-settlement-patch" && record.runId === CHILD_ID,
+    )?.record;
+    expect(settlement).toBeDefined();
+    expect(settlement?.normalizedPayload).toMatchObject({ privacyContext: { status: "error" } });
+
+    const childPatches = requests.filter(
+      ({ method, path }) => method === "PATCH" && path === `/api/v1/runs/${CHILD_ID}`,
+    );
+    expect(childPatches).toHaveLength(3);
+    expect(childPatches[0]?.payload["error"]).toBe("");
+    expect(childPatches[1]?.payload["extra"]).toMatchObject({
+      metadata: { status: "completed" },
+    });
+    expect(childPatches[2]?.payload["extra"]).toMatchObject({
+      metadata: { status: "error" },
+    });
+  });
+
   it("keeps explicit Git attribution across a sparse patch and conflicting sibling", async () => {
     const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-settlement-sparse-"));
     const bridge = createLifecycleBridge({

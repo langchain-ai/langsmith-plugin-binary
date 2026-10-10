@@ -288,6 +288,7 @@ async function settleOneTurn(
       metadata,
       options.integration,
       restoreEndTime ? endTime : undefined,
+      hasCausalRunError(captureEvents),
     );
     const eventId = settlementEventId(turnId, runId, dependencies, rootRunId, childRunIds, added);
     const scope: CaptureScope = {
@@ -439,6 +440,7 @@ function patchPayload(
   metadata: CodingAgentMetadataOptions,
   integration: SettleCapturedTurnsOptions["integration"],
   endTime?: number | string,
+  causalRunError = false,
 ): ProjectedSubmission {
   const context = source.payload.run;
   const submission: PreparedRunPatchSubmission = {
@@ -459,12 +461,15 @@ function patchPayload(
       source.payload.operation === "patch"
         ? {
             ...source.payload.privacyContext,
-            ...(endTime !== undefined && source.payload.privacyContext.status !== "error"
-              ? { status: "completed" as const }
-              : {}),
+            ...(causalRunError
+              ? { status: "error" as const }
+              : endTime !== undefined && source.payload.privacyContext.status !== "error"
+                ? { status: "completed" as const }
+                : {}),
           }
         : {
             status:
+              causalRunError ||
               source.payload.run.error !== undefined ||
               source.payload.privacyContext?.status === "error"
                 ? "error"
@@ -480,6 +485,20 @@ function patchPayload(
   const projected = projectSubmission(submission, integration);
   if (projected.status === "deferred") throw new Error("Settlement patch lost thread identity");
   return projected.value;
+}
+
+function hasCausalRunError(events: readonly ProjectedCapture[]): boolean {
+  let hasError = false;
+  for (const { payload } of events) {
+    if (payload.operation === "post") {
+      hasError = payload.run.error !== undefined || payload.privacyContext?.status === "error";
+    } else if (payload.patch.fields.includes("error")) {
+      hasError = payload.patch.values.error !== undefined;
+    } else if (payload.privacyContext.status === "error") {
+      hasError = true;
+    }
+  }
+  return hasError;
 }
 
 function addAttribution(
