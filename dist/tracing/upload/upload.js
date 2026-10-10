@@ -1,8 +1,10 @@
 import { buildCodingAgentMetadata } from "../../metadata/index.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
+import { isPlainRecord } from "../../utils/validation/objects.js";
 import { resolveUploadDestinations } from "./destinations.js";
 import { UPLOAD_PATCH_FIELDS } from "./constants.js";
 import { redactSdkOmittedFields } from "./redaction.js";
+import { remapReplicaRunContext, remapReplicaRunId } from "./replica-identifiers.js";
 export function createLangSmithUploadWriter(options) {
     const resolved = resolveUploadDestinations(options);
     const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
@@ -18,6 +20,9 @@ export function createLangSmithUploadWriter(options) {
             const payload = submission.operation === "post"
                 ? preparePostRunPayload(submission, destination)
                 : preparePatchRunPayload(submission, destination);
+            if (submission.operation === "patch") {
+                applyReplicaPatchUpdates(payload, destination, submission.privacyMode);
+            }
             redactSdkOmittedFields(payload, destination.anonymizer);
             const clientOptions = {
                 apiKey: destination.apiKey,
@@ -29,7 +34,7 @@ export function createLangSmithUploadWriter(options) {
                     await destination.client.createRun({ ...payload, project_name: destination.projectName }, clientOptions);
                     return { destinationId, runId: submission.run.id, operation: "posted" };
                 }
-                await destination.client.updateRun(submission.run.id, payload, clientOptions);
+                await destination.client.updateRun(runIdForDestination(submission.run.id, destination), payload, clientOptions);
                 return { destinationId, runId: submission.run.id, operation: "patched" };
             }
             catch {
@@ -40,18 +45,63 @@ export function createLangSmithUploadWriter(options) {
 }
 function runConfig(context, submission, destination) {
     const metadata = buildCodingAgentMetadata(submission.metadata);
+    const destinationContext = contextForDestination(context, destination);
     return {
-        id: context.id,
-        name: context.name,
-        run_type: context.run_type,
+        id: destinationContext.id,
+        name: destinationContext.name,
+        run_type: destinationContext.run_type,
         project_name: destination.projectName,
         inputs: {},
         extra: { metadata },
         client: destination.client,
-        ...(context.start_time === undefined ? {} : { start_time: context.start_time }),
-        ...(context.parent_run_id === undefined ? {} : { parent_run_id: context.parent_run_id }),
-        ...(context.trace_id === undefined ? {} : { trace_id: context.trace_id }),
-        ...(context.dotted_order === undefined ? {} : { dotted_order: context.dotted_order }),
+        ...(destinationContext.start_time === undefined
+            ? {}
+            : { start_time: destinationContext.start_time }),
+        ...(destinationContext.parent_run_id === undefined
+            ? {}
+            : { parent_run_id: destinationContext.parent_run_id }),
+        ...(destinationContext.trace_id === undefined ? {} : { trace_id: destinationContext.trace_id }),
+        ...(destinationContext.dotted_order === undefined
+            ? {}
+            : { dotted_order: destinationContext.dotted_order }),
+    };
+}
+function contextForDestination(context, destination) {
+    if (destination.sourceProjectName === undefined)
+        return context;
+    return remapReplicaRunContext(context, destination.sourceProjectName, destination.projectName);
+}
+function runIdForDestination(runId, destination) {
+    if (destination.sourceProjectName === undefined ||
+        destination.sourceProjectName === destination.projectName) {
+        return runId;
+    }
+    return remapReplicaRunId(runId, destination.projectName);
+}
+function applyReplicaPatchUpdates(payload, destination, privacyMode) {
+    if (privacyMode !== "full" || destination.updates === undefined)
+        return;
+    const mutablePayload = payload;
+    for (const [field, value] of Object.entries(destination.updates)) {
+        if (field === "inputs")
+            continue;
+        if (field === "extra") {
+            mutablePayload.extra = mergeReplicaExtra(mutablePayload.extra, value);
+        }
+        else {
+            mutablePayload[field] = structuredClone(value);
+        }
+    }
+}
+function mergeReplicaExtra(baseValue, updateValue) {
+    const baseExtra = isPlainRecord(baseValue) ? baseValue : {};
+    const updateExtra = isPlainRecord(updateValue) ? structuredClone(updateValue) : {};
+    const baseMetadata = isPlainRecord(baseExtra["metadata"]) ? baseExtra["metadata"] : {};
+    const updateMetadata = isPlainRecord(updateExtra["metadata"]) ? updateExtra["metadata"] : {};
+    return {
+        ...baseExtra,
+        ...updateExtra,
+        metadata: { ...updateMetadata, ...baseMetadata },
     };
 }
 function preparePostRunPayload(submission, destination) {

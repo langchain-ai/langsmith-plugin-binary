@@ -1,1 +1,1 @@
-{"version":3,"file":"destinations.d.ts","sourceRoot":"","sources":["../../../src/tracing/upload/destinations.ts"],"names":[],"mappings":"AASA,OAAO,KAAK,EAEV,4BAA4B,EAE5B,0BAA0B,EAC3B,MAAM,aAAa,CAAC;AAGrB,wBAAgB,yBAAyB,CACvC,OAAO,EAAE,4BAA4B,GACpC,0BAA0B,CAsB5B"}
+{"version":3,"file":"destinations.d.ts","sourceRoot":"","sources":["../../../src/tracing/upload/destinations.ts"],"names":[],"mappings":"AAYA,OAAO,KAAK,EAGV,4BAA4B,EAE5B,0BAA0B,EAC3B,MAAM,aAAa,CAAC;AAGrB,wBAAgB,yBAAyB,CACvC,OAAO,EAAE,4BAA4B,GACpC,0BAA0B,CAqC5B"}

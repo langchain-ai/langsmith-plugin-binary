@@ -1,0 +1,1 @@
+{"version":3,"file":"replica-identifiers.d.ts","sourceRoot":"","sources":["../../../src/tracing/upload/replica-identifiers.ts"],"names":[],"mappings":"AASA,OAAO,KAAK,EAAE,oBAAoB,EAAE,MAAM,aAAa,CAAC;AAExD,wBAAgB,sBAAsB,CACpC,OAAO,EAAE,oBAAoB,EAC7B,iBAAiB,EAAE,MAAM,EACzB,sBAAsB,EAAE,MAAM,GAC7B,oBAAoB,CAetB;AAED,wBAAgB,iBAAiB,CAAC,KAAK,EAAE,MAAM,EAAE,WAAW,EAAE,MAAM,GAAG,MAAM,CAc5E"}

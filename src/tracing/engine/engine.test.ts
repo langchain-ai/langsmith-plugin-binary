@@ -113,7 +113,17 @@ afterEach(async () => {
 
 it("snapshots session callbacks and stops when the active account changes", async () => {
   const area = createArea();
-  const mutableWriter = structuredClone(writer);
+  const mutableWriter: LangSmithUploadWriterOptions = {
+    ...structuredClone(writer),
+    replicas: [
+      {
+        apiKey: "synthetic-engine-replica-key",
+        apiUrl: "https://replica.example.test/api/v1",
+        projectName: "engine-replica-test",
+        updates: { extra: { metadata: { marker: "original" } } },
+      },
+    ],
+  };
   const expectedAccount = createLangSmithUploadWriter(mutableWriter).accountFingerprint;
   const engineOptions: TracingEngineOptions = {
     storageRoot: area.root,
@@ -122,6 +132,7 @@ it("snapshots session callbacks and stops when the active account changes", asyn
   };
   const engine = createTracingEngine(engineOptions);
   mutableWriter.destinations[0]!.projectName = "mutated-project";
+  mutableWriter.replicas![0]!.updates!.extra = { metadata: { marker: "mutated" } };
   engineOptions.integration = "cursor";
   const expectedScope: TracingEngineScope = {
     integration,

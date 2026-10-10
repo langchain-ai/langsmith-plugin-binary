@@ -75,8 +75,16 @@ export interface LangSmithUploadDestinationConfig {
     projectName: string;
     workspaceId?: string;
 }
+export interface LangSmithUploadReplicaConfig {
+    apiKey?: string;
+    apiUrl?: string;
+    projectName?: string;
+    workspaceId?: string;
+    updates?: Record<string, unknown>;
+}
 export interface LangSmithUploadWriterOptions {
     destinations: readonly LangSmithUploadDestinationConfig[];
+    replicas?: readonly LangSmithUploadReplicaConfig[];
     redact: boolean;
     redactExtraRules?: readonly UploadRedactRule[];
 }
@@ -88,6 +96,8 @@ export interface ResolvedUploadDestination extends UploadDestination {
     apiUrl: string;
     projectName: string;
     workspaceId?: string;
+    sourceProjectName?: string;
+    updates?: Record<string, unknown>;
     anonymizer?: UploadAnonymizer;
     client: Client;
 }

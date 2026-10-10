@@ -31,6 +31,20 @@ function snapshotWriterOptions(
     destinations: Object.freeze(
       options.destinations.map((destination) => Object.freeze({ ...destination })),
     ),
+    ...(options.replicas === undefined
+      ? {}
+      : {
+          replicas: Object.freeze(
+            options.replicas.map((replica) =>
+              Object.freeze({
+                ...replica,
+                ...(replica.updates === undefined
+                  ? {}
+                  : { updates: structuredClone(replica.updates) }),
+              }),
+            ),
+          ),
+        }),
     ...(options.redactExtraRules === undefined
       ? {}
       : {
