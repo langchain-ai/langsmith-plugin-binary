@@ -104,19 +104,20 @@ async function hasMissingChildReceipts(record, evidence, sourceSnapshot, destina
     if (children.length === 0)
         return false;
     for (const childRunId of children) {
-        const child = sourceSnapshot.find((source) => source.turnId === record.turnId &&
-            source.runId === childRunId &&
+        const childCaptures = sourceSnapshot.filter((source) => source.runId === childRunId &&
             source.destinationFingerprint === record.destinationFingerprint &&
             source.eventKind === LIFECYCLE_POST_EVENT_KIND);
-        if (child === undefined)
+        if (childCaptures.length === 0)
             return true;
-        const scope = captureScope(child);
-        for (const destination of destinations) {
-            const outcome = await readOutcome(scope, destination.id);
-            if (outcome.status === "failed")
-                throw new Error(`Could not read child delivery receipt: ${outcome.code}`);
-            if (outcome.status !== "settled" || outcome.receipt.outcome !== "delivered")
-                return true;
+        for (const child of childCaptures) {
+            const scope = captureScope(child);
+            for (const destination of destinations) {
+                const outcome = await readOutcome(scope, destination.id);
+                if (outcome.status === "failed")
+                    throw new Error(`Could not read child delivery receipt: ${outcome.code}`);
+                if (outcome.status !== "settled" || outcome.receipt.outcome !== "delivered")
+                    return true;
+            }
         }
     }
     return false;

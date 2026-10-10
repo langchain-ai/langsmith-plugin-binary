@@ -117,8 +117,8 @@ async function fixture(
   return { bridge, store };
 }
 
-function scope(eventId: string): CaptureScope {
-  return { integration: "claude-code", sessionId: SESSION_ID, turnId: TURN_ID, eventId };
+function scope(eventId: string, turnId = TURN_ID): CaptureScope {
+  return { integration: "claude-code", sessionId: SESSION_ID, turnId, eventId };
 }
 
 async function sourceCaptures(store: CaptureStore): Promise<EnumeratedCapture[]> {
@@ -136,7 +136,7 @@ async function recordReceipts(
   for (const { record } of captures) {
     for (const destination of destinations) {
       const receipt = await store.recordOutcome({
-        ...scope(record.eventId),
+        ...scope(record.eventId, record.turnId),
         destination,
         outcome,
       });
@@ -234,6 +234,82 @@ describe("captured turn settlement", () => {
     expect(complete.progress.turns).toMatchObject([
       { status: "pending", reason: "settlement-pending", patches: 1 },
     ]);
+  });
+
+  it("settles an external child post with its current-turn patch", async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), "plugins-base-cross-turn-child-patch-"));
+    const bridge = createLifecycleBridge({
+      storageRoot,
+      integration: "claude-code",
+      sessionId: SESSION_ID,
+      writer: {
+        destinations: [
+          {
+            apiKey: "synthetic-settlement-key",
+            apiUrl: "http://127.0.0.1:1/api/v1",
+            projectName: "settlement-test",
+          },
+        ],
+        redact: false,
+      },
+    });
+    const store = createCaptureStore(storageRoot);
+    const parentTurnId = "settlement-parent-turn";
+    const childTurnId = "settlement-subagent-turn";
+    const rootScope = scope("event-cross-turn-root", parentTurnId);
+    await bridge.capture({
+      turnId: childTurnId,
+      eventId: "event-external-child-post",
+      submission: post(CHILD_ID, "tool"),
+      turnEvidence: {
+        rootRunId: CHILD_ID,
+        childRunIds: [],
+        closureState: "authoritative",
+      },
+    });
+    await bridge.capture({
+      turnId: parentTurnId,
+      eventId: rootScope.eventId,
+      submission: post(ROOT_ID, "root", { end_time: "2026-10-10T12:00:01.000Z" }),
+      turnEvidence: evidence("authoritative"),
+    });
+    await bridge.capture({
+      turnId: parentTurnId,
+      eventId: "event-current-child-patch",
+      submission: {
+        operation: "patch",
+        integration: "claude-code",
+        privacyMode: "full",
+        metadata: metadata("tool"),
+        run: {
+          id: CHILD_ID,
+          name: "test run",
+          run_type: "tool",
+          start_time: "2026-10-10T12:00:00.001Z",
+          parent_run_id: ROOT_ID,
+          trace_id: ROOT_ID,
+          dotted_order: CHILD_ORDER,
+        },
+        privacyContext: { status: "completed" },
+        patch: { fields: ["outputs"], values: { outputs: { result: "done" } } },
+      },
+      turnEvidence: evidence("authoritative"),
+      dependencies: [rootScope],
+    });
+    const captures = await sourceCaptures(store);
+    await recordReceipts(store, captures, ["destination-a"]);
+
+    const work = await settle(store, bridge, ["destination-a"]);
+
+    expect(work.progress.turns).toContainEqual(
+      expect.objectContaining({
+        turnId: parentTurnId,
+        status: "pending",
+        reason: "settlement-pending",
+        patches: 1,
+      }),
+    );
+    expect(work.patches).toMatchObject([{ turnId: parentTurnId, runId: ROOT_ID }]);
   });
 
   it("uses a new settlement event when captured attribution changes", async () => {

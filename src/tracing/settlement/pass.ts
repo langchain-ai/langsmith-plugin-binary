@@ -81,6 +81,7 @@ export async function settleCapturedTurns(
     turn.push(capture);
     projected.set(record.turnId, turn);
   }
+  const allEvents = [...projected.values()].flat();
   const generatedByTurn = groupByTurn(generatedRecords);
   const turns = [...new Set([...projected.keys(), ...generatedByTurn.keys()])].toSorted();
   const reports: TurnSettlementReport[] = [];
@@ -89,7 +90,7 @@ export async function settleCapturedTurns(
   for (const turnId of turns) {
     const events = projected.get(turnId) ?? [];
     const generated = generatedByTurn.get(turnId) ?? [];
-    const result = await settleOneTurn(turnId, events, generated, options);
+    const result = await settleOneTurn(turnId, events, generated, allEvents, options);
     reports.push(result.report);
     patches.push(...result.patches);
     captured += result.captured;
@@ -154,6 +155,7 @@ async function settleOneTurn(
   turnId: string,
   events: ProjectedCapture[],
   generated: StoredCapture[],
+  allEvents: readonly ProjectedCapture[],
   options: SettleCapturedTurnsOptions,
 ): Promise<TurnSettlementResult> {
   const rootRunIds = new Set<string>();
@@ -184,14 +186,24 @@ async function settleOneTurn(
   const rootRunId = [...rootRunIds][0]!;
   childRunIds.delete(rootRunId);
   const requiredRunIds = [rootRunId, ...[...childRunIds].toSorted()];
-  const byRunId = new Map<string, ProjectedCapture[]>();
+  const currentByRunId = new Map<string, ProjectedCapture[]>();
   for (const event of events) {
-    const runEvents = byRunId.get(event.record.runId) ?? [];
+    const runEvents = currentByRunId.get(event.record.runId) ?? [];
     runEvents.push(event);
-    byRunId.set(event.record.runId, runEvents);
+    currentByRunId.set(event.record.runId, runEvents);
   }
+  const allByRunId = new Map<string, ProjectedCapture[]>();
+  for (const event of allEvents) {
+    const runEvents = allByRunId.get(event.record.runId) ?? [];
+    runEvents.push(event);
+    allByRunId.set(event.record.runId, runEvents);
+  }
+  const byRunId = new Map<string, ProjectedCapture[]>();
   for (const runId of requiredRunIds) {
-    if (!(byRunId.get(runId) ?? []).some(({ payload }) => payload.operation === "post")) {
+    const runEvents =
+      runId === rootRunId ? (currentByRunId.get(runId) ?? []) : (allByRunId.get(runId) ?? []);
+    byRunId.set(runId, runEvents);
+    if (!runEvents.some(({ payload }) => payload.operation === "post")) {
       return {
         report: report(turnId, "deferred", "missing-run", [runId]),
         patches: [],
@@ -199,7 +211,11 @@ async function settleOneTurn(
       };
     }
   }
-  const sourceScopes = uniqueScopes(events.map(({ record }) => captureScope(record)));
+  const sourceEvents = [...events];
+  for (const childRunId of childRunIds) {
+    sourceEvents.push(...(allByRunId.get(childRunId) ?? []));
+  }
+  const sourceScopes = uniqueScopes(sourceEvents.map(({ record }) => captureScope(record)));
   const sourceReadiness = await captureReadiness(
     sourceScopes,
     options.destinations,
@@ -257,6 +273,7 @@ async function settleOneTurn(
   const patches: TurnSettlementPlannedPatch[] = [];
   let captured = 0;
   for (const runId of requiredRunIds) {
+    if (!currentByRunId.has(runId)) continue;
     const captureEvents = runEvents.get(runId)!;
     const latest = captureEvents.at(-1)!;
     const run = recorded.get(runId)!;

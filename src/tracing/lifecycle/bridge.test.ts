@@ -516,6 +516,230 @@ describe("durable run lifecycle bridge", () => {
     });
   });
 
+  it("restores a parent end time after child receipts arrive from another turn", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-cross-turn-closure-"));
+    const sessionId = "session-cross-turn-closure";
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId,
+      writer: { destinations: [destination()], redact: false },
+    });
+    const parentTurnId = "turn-parent-closure";
+    const childTurnId = "turn-child-closure";
+    const rootScope = scope(parentTurnId, "event-parent-root", sessionId);
+    const parentEvidence = evidence({
+      rootRunId: PARENT_ID,
+      childRunIds: [CHILD_ID],
+      closureState: "authoritative",
+    });
+    const rootSubmission = post(
+      PARENT_ID,
+      metadata("claude-code", "root"),
+      {
+        start_time: "2026-10-10T12:00:00.000Z",
+        end_time: "2026-10-10T12:00:01.000Z",
+        trace_id: PARENT_ID,
+        dotted_order: PARENT_DOTTED_ORDER,
+      },
+      "metadata",
+    );
+    const childSubmission = post(
+      CHILD_ID,
+      {
+        ...metadata("claude-code", "subagent"),
+        base: {
+          repository_name: "acme/project",
+          repository_provider: "github",
+          repository_url: "https://github.com/acme/project",
+          git_branch: "main",
+          ls_attribution_identifier: "author-1",
+        },
+      },
+      {
+        run_type: "chain",
+        start_time: "2026-10-10T12:00:00.100Z",
+        end_time: "2026-10-10T12:00:00.900Z",
+        parent_run_id: PARENT_ID,
+        trace_id: PARENT_ID,
+        dotted_order: CHILD_DOTTED_ORDER,
+      },
+      "metadata",
+    );
+
+    await bridge.capture({
+      turnId: parentTurnId,
+      eventId: rootScope.eventId,
+      submission: rootSubmission,
+      turnEvidence: parentEvidence,
+    });
+    await bridge.capture({
+      turnId: childTurnId,
+      eventId: "event-child-root",
+      submission: childSubmission,
+      turnEvidence: evidence({
+        rootRunId: CHILD_ID,
+        childRunIds: [],
+        closureState: "authoritative",
+      }),
+      dependencies: [rootScope],
+    });
+
+    await expect(bridge.drain()).resolves.toMatchObject({
+      status: "drained",
+      delivered: 3,
+      pending: 0,
+    });
+    expect(requests.map(({ method, path }) => [method, path])).toEqual([
+      ["POST", "/api/v1/runs"],
+      ["POST", "/api/v1/runs"],
+      ["PATCH", `/api/v1/runs/${PARENT_ID}`],
+    ]);
+    expect(requests[0]?.payload).not.toHaveProperty("end_time");
+    expect(requests[2]?.payload["end_time"]).toBe("2026-10-10T12:00:01.000Z");
+  });
+
+  it("keeps a parent end time when a child from another turn is already delivered", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-cross-turn-receipt-"));
+    const sessionId = "session-cross-turn-receipt";
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId,
+      writer: { destinations: [destination()], redact: false },
+    });
+    const childTurnId = "turn-child-receipt";
+    await bridge.capture({
+      turnId: childTurnId,
+      eventId: "event-child-receipt",
+      submission: post(
+        CHILD_ID,
+        metadata("claude-code", "subagent"),
+        {
+          run_type: "chain",
+          start_time: "2026-10-10T12:00:00.100Z",
+          end_time: "2026-10-10T12:00:00.900Z",
+          parent_run_id: PARENT_ID,
+          trace_id: PARENT_ID,
+          dotted_order: CHILD_DOTTED_ORDER,
+        },
+        "metadata",
+      ),
+      turnEvidence: evidence({
+        rootRunId: CHILD_ID,
+        childRunIds: [],
+        closureState: "authoritative",
+      }),
+    });
+    await expect(bridge.drain()).resolves.toMatchObject({ delivered: 1, pending: 0 });
+
+    const requestStart = requests.length;
+    await bridge.capture({
+      turnId: "turn-parent-receipt",
+      eventId: "event-parent-receipt",
+      submission: post(
+        PARENT_ID,
+        metadata("claude-code", "root"),
+        {
+          start_time: "2026-10-10T12:00:00.000Z",
+          end_time: "2026-10-10T12:00:01.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+        },
+        "metadata",
+      ),
+      turnEvidence: evidence({
+        rootRunId: PARENT_ID,
+        childRunIds: [CHILD_ID],
+        closureState: "authoritative",
+      }),
+    });
+    await expect(bridge.drain()).resolves.toMatchObject({ status: "drained" });
+
+    const parentPost = requests
+      .slice(requestStart)
+      .find(({ method, payload }) => method === "POST" && payload["id"] === PARENT_ID);
+    expect(parentPost?.payload["end_time"]).toBe("2026-10-10T12:00:01.000Z");
+  });
+
+  it("keeps a parent open while a child from another turn is undelivered", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-cross-turn-pending-child-"));
+    const sessionId = "session-cross-turn-pending-child";
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId,
+      writer: { destinations: [destination()], redact: false },
+    });
+    const parentTurnId = "turn-parent-pending-child";
+    const parentScope = scope(parentTurnId, "event-parent-pending-child", sessionId);
+    await bridge.capture({
+      turnId: parentTurnId,
+      eventId: parentScope.eventId,
+      submission: post(
+        PARENT_ID,
+        metadata("claude-code", "root"),
+        {
+          start_time: "2026-10-10T12:00:00.000Z",
+          end_time: "2026-10-10T12:00:01.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+        },
+        "metadata",
+      ),
+      turnEvidence: evidence({
+        rootRunId: PARENT_ID,
+        childRunIds: [CHILD_ID],
+        closureState: "authoritative",
+      }),
+    });
+    await bridge.capture({
+      turnId: "turn-child-pending-delivery",
+      eventId: "event-child-pending-delivery",
+      submission: post(
+        CHILD_ID,
+        metadata("claude-code", "subagent"),
+        {
+          run_type: "chain",
+          start_time: "2026-10-10T12:00:00.100Z",
+          end_time: "2026-10-10T12:00:00.900Z",
+          parent_run_id: PARENT_ID,
+          trace_id: PARENT_ID,
+          dotted_order: CHILD_DOTTED_ORDER,
+        },
+        "metadata",
+      ),
+      turnEvidence: evidence({
+        rootRunId: CHILD_ID,
+        childRunIds: [],
+        closureState: "authoritative",
+      }),
+      dependencies: [parentScope],
+    });
+
+    failRequestIndexes = new Set([1]);
+    await bridge.drain();
+    expect(requests.map(({ method, path }) => [method, path])).toEqual([
+      ["POST", "/api/v1/runs"],
+      ["POST", "/api/v1/runs"],
+    ]);
+    expect(requests[0]?.payload).not.toHaveProperty("end_time");
+
+    failRequestIndexes.clear();
+    const retryStart = requests.length;
+    await bridge.drain();
+    expect(
+      requests
+        .slice(retryStart)
+        .some(
+          ({ method, path, payload }) =>
+            method === "PATCH" &&
+            path === `/api/v1/runs/${PARENT_ID}` &&
+            payload["end_time"] === "2026-10-10T12:00:01.000Z",
+        ),
+    ).toBe(true);
+  });
+
   it("delivers generated patches in dependency order when their timestamps match", async () => {
     const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-settlement-order-"));
     const sessionId = "session-settlement-order";
