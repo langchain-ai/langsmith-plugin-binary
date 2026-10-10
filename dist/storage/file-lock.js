@@ -233,6 +233,7 @@ export async function tryAcquireFileLock(filePath) {
 async function acquireLegacyDirectoryGate(filePath, deadline) {
     const gatePath = `${filePath}${FILE_LOCK_LEGACY_DIRECTORY_SUFFIX}`;
     await mkdir(dirname(filePath), { recursive: true, mode: FILE_LOCK_DIRECTORY_MODE });
+    let retriedMissingPermission = false;
     for (;;) {
         if (performance.now() >= deadline)
             throw timeoutError(filePath);
@@ -245,8 +246,8 @@ async function acquireLegacyDirectoryGate(filePath, deadline) {
         }
         catch (error) {
             const code = error.code;
-            if (code !== FILE_LOCK_EXISTS_CODE &&
-                !FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES.some((candidate) => candidate === code)) {
+            const permissionDenied = FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES.some((candidate) => candidate === code);
+            if (code !== FILE_LOCK_EXISTS_CODE && !permissionDenied) {
                 throw error;
             }
             let isDirectory = false;
@@ -254,15 +255,22 @@ async function acquireLegacyDirectoryGate(filePath, deadline) {
                 isDirectory = (await lstat(gatePath)).isDirectory();
             }
             catch (statError) {
-                if (code === FILE_LOCK_EXISTS_CODE &&
-                    statError.code === FILE_LOCK_MISSING_CODE) {
-                    await waitForNextScan(deadline, filePath);
-                    continue;
+                if (statError.code === FILE_LOCK_MISSING_CODE) {
+                    if (code === FILE_LOCK_EXISTS_CODE) {
+                        retriedMissingPermission = false;
+                        await waitForNextScan(deadline, filePath);
+                        continue;
+                    }
+                    if (permissionDenied && !retriedMissingPermission) {
+                        retriedMissingPermission = true;
+                        continue;
+                    }
                 }
                 throw error;
             }
             if (!isDirectory)
                 throw error;
+            retriedMissingPermission = false;
             await waitForNextScan(deadline, filePath);
         }
     }

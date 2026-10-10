@@ -22,6 +22,7 @@ const faults = vi.hoisted(() => ({
   mkdirCodes: [] as string[],
   mkdirAttempts: 0,
   mkdirFailures: 0,
+  vanishGateBeforeReject: "",
   rmdirPath: "",
   rmdirCode: "",
   rmdirFailures: 0,
@@ -43,6 +44,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         if (faults.mkdirCodes.length > 0) {
           faults.mkdirFailures += 1;
           const code = faults.mkdirCodes.shift() ?? "EIO";
+          if (faults.vanishGateBeforeReject === String(args[0])) {
+            faults.vanishGateBeforeReject = "";
+            await actual.rmdir(String(args[0]));
+          }
           throw Object.assign(new Error("Injected lock-directory contention"), { code });
         }
       }
@@ -142,6 +147,7 @@ beforeEach(() => {
   faults.mkdirCodes = [];
   faults.mkdirAttempts = 0;
   faults.mkdirFailures = 0;
+  faults.vanishGateBeforeReject = "";
   faults.rmdirPath = "";
   faults.rmdirCode = "";
   faults.rmdirFailures = 0;
@@ -271,6 +277,24 @@ it("treats Windows mkdir errors as contention only for an actual directory", asy
       cleanDirectory(directoryArea.directory);
     }
 
+    const releasedArea = createArea();
+    mkdirSync(releasedArea.gatePath, { mode: 0o700 });
+    faults.gatePath = releasedArea.gatePath;
+    faults.mkdirCodes = [code];
+    faults.vanishGateBeforeReject = releasedArea.gatePath;
+    const previousRaceFailures = faults.mkdirFailures;
+    try {
+      const handle = await acquireCompatibleDirectoryFileLock(releasedArea.filePath, {
+        timeoutMs: 1_000,
+      });
+      expect(faults.mkdirFailures).toBe(previousRaceFailures + 1);
+      expect(lstatSync(releasedArea.gatePath).isDirectory()).toBe(true);
+      await handle.release();
+    } finally {
+      faults.gatePath = "";
+      cleanDirectory(releasedArea.directory);
+    }
+
     const fileArea = createArea();
     writeFileSync(fileArea.gatePath, "unowned");
     faults.gatePath = fileArea.gatePath;
@@ -284,6 +308,44 @@ it("treats Windows mkdir errors as contention only for an actual directory", asy
     } finally {
       faults.gatePath = "";
       cleanDirectory(fileArea.directory);
+    }
+
+    const deniedArea = createArea();
+    faults.gatePath = deniedArea.gatePath;
+    faults.mkdirCodes = [code, code];
+    const previousDenials = faults.mkdirFailures;
+    try {
+      await expect(
+        acquireCompatibleDirectoryFileLock(deniedArea.filePath, { timeoutMs: 60 }),
+      ).rejects.toMatchObject({ code });
+      expect(faults.mkdirFailures).toBe(previousDenials + 2);
+      expect(existsSync(deniedArea.gatePath)).toBe(false);
+      expect(existsSync(deniedArea.claimsPath)).toBe(false);
+    } finally {
+      faults.gatePath = "";
+      cleanDirectory(deniedArea.directory);
+    }
+  }
+});
+
+it("retries missing-gate permission errors after an existence race", async () => {
+  for (const code of ["EACCES", "EPERM"]) {
+    const area = createArea();
+    faults.gatePath = area.gatePath;
+    faults.mkdirCodes = [code, "EEXIST", code];
+    const previousAttempts = faults.mkdirAttempts;
+    const previousFailures = faults.mkdirFailures;
+    try {
+      const handle = await acquireCompatibleDirectoryFileLock(area.filePath, {
+        timeoutMs: 1_000,
+      });
+      expect(faults.mkdirAttempts).toBe(previousAttempts + 4);
+      expect(faults.mkdirFailures).toBe(previousFailures + 3);
+      expect(lstatSync(area.gatePath).isDirectory()).toBe(true);
+      await handle.release();
+    } finally {
+      faults.gatePath = "";
+      cleanDirectory(area.directory);
     }
   }
 });
