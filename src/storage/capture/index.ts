@@ -4,6 +4,7 @@ export type {
   CaptureScope,
   CaptureStore,
   CaptureWriteResult,
+  EnumeratedCapture,
   JsonValue,
   OutcomeInput,
   OutcomeReadResult,

@@ -1,0 +1,11 @@
+export const DELIVERY_DIRECTORY = "delivery-v1";
+export const DELIVERY_ATTEMPT_VERSION = 1;
+export const DELIVERY_DEFAULT_MAX_ATTEMPTS = 5;
+export const DELIVERY_DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const DELIVERY_DEFAULT_MAX_ENTRIES = 500;
+export const DELIVERY_ATTEMPT_FILE = /^([1-9]\d*)\.json$/u;
+export const DELIVERY_STAGING_FILE = /^\.[0-9a-f-]{36}\.tmp$/u;
+export const DELIVERY_EXPIRED_REASON = "expired";
+export const DELIVERY_CAPACITY_REASON = "capacity";
+export const DELIVERY_RETRY_EXHAUSTED_REASON = "retry-exhausted";
+//# sourceMappingURL=constants.js.map

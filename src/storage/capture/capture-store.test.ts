@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { lstatSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -104,6 +111,56 @@ describe("immutable capture storage", () => {
     await expect(store.read(input)).resolves.toMatchObject({
       normalizedPayload: input.normalizedPayload,
     });
+  });
+
+  it("enumerates committed events with their persisted capture times", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const first = captureInput("native-a");
+    const second = { ...captureInput("native-b"), turnId: "turn-2" };
+    await store.capture(first);
+    await store.capture(second);
+    const persisted = (await store.read(first))!;
+    utimesSync(eventPath(root, first), new Date(0), new Date(0));
+    const entries = await store.enumerate(first.integration, first.sessionId);
+    expect(entries.map(({ record }) => record.eventId).toSorted()).toEqual([
+      "native-a",
+      "native-b",
+    ]);
+    expect(entries.find(({ record }) => record.eventId === first.eventId)?.capturedAtMs).toBe(
+      persisted.capturedAtMs,
+    );
+    await expect(store.capture(first)).resolves.toMatchObject({
+      status: "duplicate",
+      record: { capturedAtMs: persisted.capturedAtMs },
+    });
+  });
+
+  it("fails enumeration when a committed event is malformed", async () => {
+    const root = temporaryRoot();
+    const input = captureInput();
+    const store = createCaptureStore(root);
+    await store.capture(input);
+    writeFileSync(eventPath(root, input), JSON.stringify({ version: 1, eventId: input.eventId }));
+    await expect(store.enumerate(input.integration, input.sessionId)).rejects.toThrow(
+      "Unsupported capture record",
+    );
+  });
+
+  it("rejects symlinked directories during event enumeration", async () => {
+    const input = captureInput();
+    const outsideRoot = temporaryRoot();
+    await createCaptureStore(outsideRoot).capture(input);
+    const linkedRoot = temporaryRoot();
+    const captureRoot = join(linkedRoot, "capture-v1");
+    await mkdir(captureRoot);
+    createDirectoryLink(
+      join(outsideRoot, "capture-v1", "integrations"),
+      join(captureRoot, "integrations"),
+    );
+    await expect(
+      createCaptureStore(linkedRoot).enumerate(input.integration, input.sessionId),
+    ).rejects.toThrow("Private path contains a non-directory");
   });
 
   it("rejects an invalid destination fingerprint", async () => {

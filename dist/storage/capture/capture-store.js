@@ -1,8 +1,10 @@
-import { resolve } from "node:path";
-import { CAPTURE_DIRECTORY, CAPTURE_RECORD_VERSION, CAPTURE_RECEIPT_VERSION } from "./constants.js";
-import { eventPath, identifierHash, receiptPath, validateIdentifier, validateIntegration, } from "./paths.js";
+import { lstat } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { CAPTURE_DIRECTORY, CAPTURE_EVENT_FILE, CAPTURE_HASH, CAPTURE_RECORD_VERSION, CAPTURE_RECEIPT_VERSION, CAPTURE_STAGING_FILE, } from "./constants.js";
+import { captureDirectory, eventPath, identifierHash, receiptPath, validateIdentifier, validateIntegration, } from "./paths.js";
 import { ensurePrivateDirectory, publishExclusive, readPrivateFile } from "./utils/atomic-file.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
+import { listPrivateDirectory } from "../../utils/files/private-directory.js";
 export function createCaptureStore(root) {
     const storageRoot = resolve(root);
     return {
@@ -16,6 +18,7 @@ export function createCaptureStore(root) {
                 validateIdentifier(input.eventKind, "event kind");
                 record = {
                     version: CAPTURE_RECORD_VERSION,
+                    capturedAtMs: Date.now(),
                     integration: input.integration,
                     sessionId: input.sessionId,
                     turnId: input.turnId,
@@ -46,7 +49,7 @@ export function createCaptureStore(root) {
                     };
                 if (!sameScope(previous, input))
                     return { status: "conflict" };
-                return canonicalJson(previous) === contents
+                return sameCapture(previous, record)
                     ? { status: "duplicate", record: previous }
                     : { status: "conflict" };
             }
@@ -62,6 +65,45 @@ export function createCaptureStore(root) {
             if (!sameScope(record, scope))
                 throw new Error("Capture namespace does not match");
             return record;
+        },
+        async enumerate(integration, sessionId) {
+            validateIntegration(integration);
+            validateIdentifier(sessionId, "session ID");
+            const turnsDirectory = join(captureDirectory(storageRoot), "integrations", integration, "sessions", identifierHash(sessionId), "turns");
+            const turns = await listPrivateDirectory(storageRoot, turnsDirectory);
+            if (turns === undefined)
+                return [];
+            const captures = [];
+            for (const turn of turns) {
+                if (!turn.isDirectory() || turn.isSymbolicLink() || !CAPTURE_HASH.test(turn.name))
+                    throw new Error("Invalid capture turn directory");
+                const eventDirectory = join(turnsDirectory, turn.name, "events");
+                const events = await listPrivateDirectory(storageRoot, eventDirectory);
+                if (events === undefined)
+                    continue;
+                for (const event of events) {
+                    if (event.isSymbolicLink() || !event.isFile())
+                        throw new Error("Capture event must be a regular file");
+                    if (CAPTURE_STAGING_FILE.test(event.name))
+                        continue;
+                    if (!CAPTURE_EVENT_FILE.test(event.name))
+                        throw new Error("Invalid capture event path");
+                    const path = join(eventDirectory, event.name);
+                    const record = await readRecord(storageRoot, path);
+                    if (record === undefined ||
+                        record.integration !== integration ||
+                        record.sessionId !== sessionId ||
+                        identifierHash(record.turnId) !== turn.name ||
+                        `${identifierHash(record.eventId)}.json` !== event.name) {
+                        throw new Error("Capture event namespace does not match");
+                    }
+                    const info = await lstat(path);
+                    if (!info.isFile() || info.isSymbolicLink() || !Number.isFinite(info.mtimeMs))
+                        throw new Error("Capture event must be a regular file");
+                    captures.push({ record, capturedAtMs: record.capturedAtMs });
+                }
+            }
+            return captures.toSorted(compareCaptures);
         },
         async recordOutcome(input) {
             try {
@@ -132,6 +174,20 @@ export function createCaptureStore(root) {
         await ensurePrivateDirectory(storageRoot, pathSegments);
     }
 }
+function compareCaptures(left, right) {
+    if (left.capturedAtMs !== right.capturedAtMs)
+        return left.capturedAtMs < right.capturedAtMs ? -1 : 1;
+    if (left.record.eventId === right.record.eventId)
+        return 0;
+    return left.record.eventId < right.record.eventId ? -1 : 1;
+}
+function sameCapture(left, right) {
+    const leftContent = { ...left };
+    const rightContent = { ...right };
+    delete leftContent.capturedAtMs;
+    delete rightContent.capturedAtMs;
+    return canonicalJson(leftContent) === canonicalJson(rightContent);
+}
 function receiptValue(input, recordedAt) {
     return {
         version: CAPTURE_RECEIPT_VERSION,
@@ -151,6 +207,9 @@ async function readRecord(root, path) {
         return undefined;
     const value = parseObject(contents);
     if (value.version !== CAPTURE_RECORD_VERSION ||
+        typeof value.capturedAtMs !== "number" ||
+        !Number.isSafeInteger(value.capturedAtMs) ||
+        !Number.isFinite(new Date(value.capturedAtMs).getTime()) ||
         typeof value.integration !== "string" ||
         typeof value.sessionId !== "string" ||
         typeof value.turnId !== "string" ||

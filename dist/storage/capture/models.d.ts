@@ -15,6 +15,11 @@ export interface CaptureInput {
 }
 export interface StoredCapture extends CaptureInput {
     version: number;
+    capturedAtMs: number;
+}
+export interface EnumeratedCapture {
+    record: StoredCapture;
+    capturedAtMs: number;
 }
 export type StorageFailure = {
     status: "failed";
@@ -70,6 +75,7 @@ export type OutcomeReadResult = {
 export interface CaptureStore {
     capture(input: CaptureInput): Promise<CaptureWriteResult>;
     read(scope: CaptureScope): Promise<StoredCapture | undefined>;
+    enumerate(integration: string, sessionId: string): Promise<EnumeratedCapture[]>;
     recordOutcome(input: OutcomeInput): Promise<OutcomeWriteResult>;
     readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
 }

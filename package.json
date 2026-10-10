@@ -39,6 +39,10 @@
     "./storage/capture": {
       "types": "./dist/storage/capture/index.d.ts",
       "default": "./dist/storage/capture/index.js"
+    },
+    "./tracing/delivery": {
+      "types": "./dist/tracing/delivery/index.d.ts",
+      "default": "./dist/tracing/delivery/index.js"
     }
   },
   "publishConfig": {
