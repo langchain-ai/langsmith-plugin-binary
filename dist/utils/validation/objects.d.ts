@@ -9,6 +9,7 @@ export declare function canonicalJsonObject(value: unknown, name: string): Recor
 export declare function canonicalJsonArray(value: unknown, name: string): unknown[];
 export declare function requireNonBlankString(value: unknown, name: string): string;
 export declare function requireString(value: unknown, name: string): string;
+export declare function requireBoolean(value: unknown, name: string): boolean;
 export declare function requireStringArray(value: unknown, name: string): string[];
 export declare function requireTimestamp(value: unknown): number | string;
 //# sourceMappingURL=objects.d.ts.map

@@ -54,6 +54,11 @@ export function requireString(value: unknown, name: string): string {
   return value;
 }
 
+export function requireBoolean(value: unknown, name: string): boolean {
+  if (typeof value !== "boolean") throw new TypeError(`${name} must be a boolean`);
+  return value;
+}
+
 export function requireStringArray(value: unknown, name: string): string[] {
   const values = canonicalJsonArray(value, name);
   if (!values.every((entry) => typeof entry === "string"))

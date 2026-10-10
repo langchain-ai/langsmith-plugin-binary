@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { buildCodingAgentMetadata, CODING_AGENT_INTEGRATION_POLICIES, } from "../../metadata/index.js";
-import { canonicalJsonObject, canonicalJsonValue, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireStringArray, } from "../../utils/validation/objects.js";
-import { LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLEMENT_EVENT_KIND, LIFECYCLE_TURN_CLOSURE_STATES, } from "../lifecycle/constants.js";
+import { canonicalJsonObject, canonicalJsonValue, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireStringArray, requireTimestamp, } from "../../utils/validation/objects.js";
+import { LIFECYCLE_ATTRIBUTION_READY_FIELD, LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLEMENT_EVENT_KIND, LIFECYCLE_TURN_CLOSURE_STATES, } from "../lifecycle/constants.js";
+import { storedAttributionReadiness } from "../lifecycle/closure.js";
 import { projectSubmission } from "../lifecycle/projection.js";
 import { SETTLEMENT_EVENT_ID_PREFIX } from "./constants.js";
 import { attributionOf, metadataAfterFill, turnAttribution } from "./settlement.js";
@@ -91,7 +92,7 @@ async function settleOneTurn(turnId, events, generated, options) {
     const childRunIds = new Set();
     let closureState = "open";
     for (const event of events) {
-        const evidence = parseEvidence(event.record.turnEvidence);
+        const evidence = parseEvidence(event.record.turnEvidence, event.attributionReady);
         if (evidence.rootRunId !== undefined)
             rootRunIds.add(evidence.rootRunId);
         for (const childRunId of evidence.childRunIds)
@@ -170,8 +171,6 @@ async function settleOneTurn(turnId, events, generated, options) {
         fixed: new Set(),
     };
     const attribution = turnAttribution(turn);
-    if (attribution === undefined)
-        return { report: report(turnId, "settled", "no-attribution"), patches: [], captured: 0 };
     const dependencies = sourceScopes;
     const patches = [];
     let captured = 0;
@@ -179,18 +178,22 @@ async function settleOneTurn(turnId, events, generated, options) {
         const captureEvents = runEvents.get(runId);
         const latest = captureEvents.at(-1);
         const run = recorded.get(runId);
-        const merged = metadataAfterFill(run, attribution);
-        if (merged === undefined)
-            continue;
+        const merged = attribution === undefined ? undefined : metadataAfterFill(run, attribution);
         const currentAttribution = attributionOf(run.metadata);
-        const added = Object.fromEntries(Object.entries(attribution).filter(([key]) => currentAttribution[key] === undefined));
-        if (Object.keys(added).length === 0)
+        const added = Object.fromEntries(Object.entries(merged === undefined ? {} : (attribution ?? {})).filter(([key]) => currentAttribution[key] === undefined));
+        const endTime = retainedEndTime(captureEvents);
+        const restoreEndTime = endTime !== undefined &&
+            captureEvents.some((event) => (event.metadata.runType === "tool" || event.metadata.runType === "root") &&
+                !event.attributionReady &&
+                capturedEndTime(event) !== undefined);
+        if (Object.keys(added).length === 0 && !restoreEndTime)
             continue;
-        const metadata = addAttribution(mergeMetadataOptions(captureEvents), added);
+        const sourceMetadata = mergeMetadataOptions(captureEvents);
+        const metadata = Object.keys(added).length === 0 ? sourceMetadata : addAttribution(sourceMetadata, added);
         const updatedMetadata = buildCodingAgentMetadata(metadata);
         if (Object.entries(added).some(([key, value]) => updatedMetadata[key] !== value))
             throw new Error("Settlement metadata could not preserve attribution");
-        const submission = patchPayload(latest, metadata, options.integration);
+        const submission = patchPayload(latest, metadata, options.integration, restoreEndTime ? endTime : undefined);
         const eventId = settlementEventId(turnId, runId, dependencies, rootRunId, childRunIds, added);
         const scope = {
             integration: options.integration,
@@ -222,6 +225,7 @@ async function settleOneTurn(turnId, events, generated, options) {
                 rootRunId,
                 childRunIds: [...childRunIds].toSorted(),
                 closureState,
+                [LIFECYCLE_ATTRIBUTION_READY_FIELD]: latest.attributionReady,
             }),
             dependencies: uniqueScopes([...dependencies, ...previousDependency]),
         });
@@ -244,11 +248,13 @@ function projectCapture(record, integration) {
         : LIFECYCLE_PATCH_EVENT_KIND;
     if (record.eventKind !== expectedKind)
         throw new TypeError("Capture event kind does not match its operation");
+    const evidence = parseEvidence(record.turnEvidence, storedAttributionReadiness(record, integration));
     return {
         record,
         payload: submission.value.payload,
         metadata: submission.value.metadata,
         open: captureIsOpen(submission.value.payload),
+        attributionReady: evidence.attributionReady,
     };
 }
 function captureIsOpen(payload) {
@@ -299,7 +305,7 @@ function mergeMetadataObject(previous, current) {
         return undefined;
     return { ...previous, ...current };
 }
-function patchPayload(source, metadata, integration) {
+function patchPayload(source, metadata, integration, endTime) {
     const context = source.payload.run;
     const submission = {
         operation: "patch",
@@ -316,16 +322,23 @@ function patchPayload(source, metadata, integration) {
             ...(context.dotted_order === undefined ? {} : { dotted_order: context.dotted_order }),
         },
         privacyContext: source.payload.operation === "patch"
-            ? source.payload.privacyContext
+            ? {
+                ...source.payload.privacyContext,
+                ...(endTime !== undefined && source.payload.privacyContext.status !== "error"
+                    ? { status: "completed" }
+                    : {}),
+            }
             : {
-                status: source.payload.privacyContext?.status ??
-                    (source.payload.run.error !== undefined
-                        ? "error"
-                        : source.payload.run.end_time !== undefined
-                            ? "completed"
-                            : "running"),
+                status: source.payload.run.error !== undefined ||
+                    source.payload.privacyContext?.status === "error"
+                    ? "error"
+                    : endTime !== undefined || source.payload.run.end_time !== undefined
+                        ? "completed"
+                        : (source.payload.privacyContext?.status ?? "running"),
             },
-        patch: { fields: [], values: {} },
+        patch: endTime === undefined
+            ? { fields: [], values: {} }
+            : { fields: ["end_time"], values: { end_time: endTime } },
     };
     const projected = projectSubmission(submission, integration);
     if (projected.status === "deferred")
@@ -339,7 +352,7 @@ function addAttribution(metadata, attribution) {
     const previous = metadata[layer] ?? {};
     return { ...metadata, [layer]: { ...previous, ...attribution } };
 }
-function parseEvidence(value) {
+function parseEvidence(value, attributionReady) {
     const source = requirePlainRecord(value, "Stored turn evidence");
     const childRunIds = requireStringArray(requireOwnDataField(source, "childRunIds"), "Child run IDs").map((runId) => requireNonBlankString(runId, "Child run ID"));
     const closureState = requireOwnDataField(source, "closureState");
@@ -350,11 +363,29 @@ function parseEvidence(value) {
     const result = {
         childRunIds,
         closureState: closureState,
+        attributionReady,
     };
     const rootRunId = ownDataField(source, "rootRunId");
     if (rootRunId.present && rootRunId.value !== undefined)
         result.rootRunId = requireNonBlankString(rootRunId.value, "Root run ID");
     return result;
+}
+function capturedEndTime(event) {
+    if (event.payload.operation === "post")
+        return event.payload.run.end_time;
+    if (!event.payload.patch.fields.includes("end_time"))
+        return undefined;
+    const value = event.payload.patch.values.end_time;
+    return value === undefined ? undefined : requireTimestamp(value);
+}
+function retainedEndTime(events) {
+    let endTime;
+    for (const event of events) {
+        const captured = capturedEndTime(event);
+        if (captured !== undefined)
+            endTime = captured;
+    }
+    return endTime;
 }
 function closureRank(state) {
     return state === "authoritative" ? 2 : state === "provisional" ? 1 : 0;

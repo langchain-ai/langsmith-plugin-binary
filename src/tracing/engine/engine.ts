@@ -4,6 +4,7 @@ import type { BackgroundWorkerScope } from "../background-worker/models.js";
 import { createLifecycleBridge } from "../lifecycle/index.js";
 import type { LifecycleCaptureInput, LifecycleCaptureResult } from "../lifecycle/models.js";
 import { createReconstructionWorker } from "../reconstruction/index.js";
+import { wakeCapturedWork } from "../capture-wake.js";
 import type { ReconstructionJobInput } from "../reconstruction/models.js";
 import { lifecyclePassResult, reconstructionPassResult } from "./pass-results.js";
 import { snapshotEngineOptions, snapshotSessionOptions } from "./options.js";
@@ -59,7 +60,7 @@ export function createTracingEngine(options: TracingEngineOptions): TracingEngin
         async queueReconstruction(input: ReconstructionJobInput): Promise<CaptureWriteResult> {
           const result = await reconstructionWorker.enqueue(input);
           if (result.status === "published" || result.status === "duplicate")
-            await backgroundWorker?.wake();
+            await wakeCapturedWork(result, () => backgroundWorker?.wake());
           return result;
         },
         async wake() {

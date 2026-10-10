@@ -1,6 +1,7 @@
 import { createBackgroundWorker } from "../background-worker/index.js";
 import { createLifecycleBridge } from "../lifecycle/index.js";
 import { createReconstructionWorker } from "../reconstruction/index.js";
+import { wakeCapturedWork } from "../capture-wake.js";
 import { lifecyclePassResult, reconstructionPassResult } from "./pass-results.js";
 import { snapshotEngineOptions, snapshotSessionOptions } from "./options.js";
 export function createTracingEngine(options) {
@@ -47,7 +48,7 @@ export function createTracingEngine(options) {
                 async queueReconstruction(input) {
                     const result = await reconstructionWorker.enqueue(input);
                     if (result.status === "published" || result.status === "duplicate")
-                        await backgroundWorker?.wake();
+                        await wakeCapturedWork(result, () => backgroundWorker?.wake());
                     return result;
                 },
                 async wake() {

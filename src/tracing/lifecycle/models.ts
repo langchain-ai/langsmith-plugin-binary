@@ -1,6 +1,16 @@
 import type { CodingAgentIntegration, CodingAgentMetadataOptions } from "../../metadata/index.js";
-import type { CaptureDependency, CaptureWriteResult } from "../../storage/capture/models.js";
-import type { DeliveryDrainResult, DeliveryPolicy } from "../delivery/index.js";
+import type {
+  CaptureDependency,
+  CaptureScope,
+  CaptureWriteResult,
+  OutcomeReadResult,
+  StoredCapture,
+} from "../../storage/capture/models.js";
+import type {
+  DeliveryDestination,
+  DeliveryDrainResult,
+  DeliveryPolicy,
+} from "../delivery/index.js";
 import type { PreparedRunPatchSubmission, PreparedRunPostSubmission } from "../upload/models.js";
 import type { LangSmithUploadWriterOptions, PreparedRunSubmission } from "../upload/index.js";
 import type { TurnSettlementReport } from "../settlement/models.js";
@@ -68,6 +78,16 @@ export interface LifecycleCaptureInput {
   submission: PreparedRunSubmission;
   turnEvidence: LifecycleTurnEvidence;
   dependencies?: CaptureDependency[];
+}
+
+export interface LifecycleEndTimeWithholdingInput {
+  record: StoredCapture;
+  submission: PreparedRunSubmission;
+  sourceSnapshot: readonly StoredCapture[];
+  sourceByScope: ReadonlyMap<string, StoredCapture>;
+  integration: CodingAgentIntegration;
+  destinations: readonly DeliveryDestination[];
+  readOutcome: (scope: CaptureScope, destination: string) => Promise<OutcomeReadResult>;
 }
 
 export type LifecycleCaptureResult =

@@ -5,6 +5,7 @@ export const DOTTED_ORDER_STRIP_PATTERN = /[-:.]/gu;
 export const LIFECYCLE_POST_EVENT_KIND = "run-post";
 export const LIFECYCLE_PATCH_EVENT_KIND = "run-patch";
 export const LIFECYCLE_SETTLEMENT_EVENT_KIND = "run-settlement-patch";
+export const LIFECYCLE_ATTRIBUTION_READY_FIELD = "attributionReady";
 export const LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY = "lifecycle-settlement-v1";
 export const LIFECYCLE_SETTLEMENT_LOCK_FILE = "drain";
 export const LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY = "integrations";

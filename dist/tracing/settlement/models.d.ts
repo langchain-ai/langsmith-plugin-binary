@@ -60,12 +60,14 @@ export interface TurnEvidenceSnapshot {
     rootRunId?: string;
     childRunIds: string[];
     closureState: TurnEvidenceClosureState;
+    attributionReady: boolean;
 }
 export interface ProjectedCapture {
     record: StoredCapture;
     payload: ProjectedPayload;
     metadata: CodingAgentMetadataOptions;
     open: boolean;
+    attributionReady: boolean;
 }
 export interface SettlementSourceReadiness {
     status: "delivered" | "pending" | "dropped";

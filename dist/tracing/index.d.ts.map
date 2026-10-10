@@ -1,1 +1,1 @@
-{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../src/tracing/index.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,mBAAmB,EAAE,MAAM,mBAAmB,CAAC;AACxD,YAAY,EACV,aAAa,EACb,oBAAoB,EACpB,kBAAkB,EAClB,0BAA0B,EAC1B,oBAAoB,EACpB,2BAA2B,GAC5B,MAAM,mBAAmB,CAAC"}
+{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../src/tracing/index.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,mBAAmB,EAAE,MAAM,mBAAmB,CAAC;AACxD,OAAO,EAAE,gBAAgB,EAAE,MAAM,mBAAmB,CAAC;AACrD,YAAY,EACV,aAAa,EACb,oBAAoB,EACpB,kBAAkB,EAClB,0BAA0B,EAC1B,oBAAoB,EACpB,2BAA2B,GAC5B,MAAM,mBAAmB,CAAC"}

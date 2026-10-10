@@ -7,6 +7,7 @@ import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.
 import { createDeliveryCoordinator } from "../delivery/index.js";
 import type { DeliveryDestination } from "../delivery/models.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
+import { wakeCapturedWork } from "../capture-wake.js";
 import type { NormalizedRunContext, PreparedRunSubmission } from "../upload/models.js";
 import { refreshSettlementProgress, settleCapturedTurns } from "../settlement/pass.js";
 import {
@@ -30,6 +31,7 @@ import type {
   LifecycleTurnEvidence,
 } from "./models.js";
 import {
+  LIFECYCLE_ATTRIBUTION_READY_FIELD,
   LIFECYCLE_PATCH_EVENT_KIND,
   LIFECYCLE_POST_EVENT_KIND,
   LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY,
@@ -40,6 +42,11 @@ import {
   LIFECYCLE_TURN_CLOSURE_STATES,
 } from "./constants.js";
 import { projectSubmission } from "./projection.js";
+import {
+  deriveAttributionReadiness,
+  indexCaptureSources,
+  withholdUnresolvedEndTime,
+} from "./closure.js";
 
 export function createLifecycleBridge(options: LifecycleBridgeOptions): LifecycleBridge {
   const integration = options.integration;
@@ -76,6 +83,7 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
       const turnEvidence = projectTurnEvidence(
         capture["turnEvidence"],
         projected.value.payload.privacyMode,
+        deriveAttributionReadiness(capture["submission"], integration),
       );
       const dependencies = capture["dependencies"] as LifecycleCaptureInput["dependencies"];
       const identityPresence =
@@ -118,7 +126,8 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
           if (retry.status === "ready") result = await captureProjected(retry.value);
         }
       }
-      if (result.status === "published" || result.status === "duplicate") await wake?.();
+      if (result.status === "published" || result.status === "duplicate")
+        await wakeCapturedWork(result, () => wake?.());
       return result;
     },
     async drain(input: LifecycleDrainInput = {}) {
@@ -138,24 +147,40 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
         return { status: "busy" as const, settlement: { captured: 0, turns: [] } };
       let drainResult: LifecycleDrainResult;
       try {
-        const drainRequest = {
-          writer: {
-            accountFingerprint: writer.accountFingerprint,
-            destinations: writer.destinations,
-            async send(
-              record: StoredCapture,
-              destination: DeliveryDestination,
-              fingerprint: string,
-            ) {
-              if (fingerprint !== writer.accountFingerprint)
-                throw new Error("Upload account changed");
-              const submission = restoreSubmission(record, integration);
-              await writer.send(submission, destination.id);
+        const drainOnce = async () => {
+          const sourceSnapshot = (await captureStore.enumerate(integration, sessionId)).map(
+            ({ record }) => record,
+          );
+          const sourceByScope = indexCaptureSources(sourceSnapshot);
+          return coordinator.drain({
+            writer: {
+              accountFingerprint: writer.accountFingerprint,
+              destinations: writer.destinations,
+              async send(
+                record: StoredCapture,
+                destination: DeliveryDestination,
+                fingerprint: string,
+              ) {
+                if (fingerprint !== writer.accountFingerprint)
+                  throw new Error("Upload account changed");
+                const submission = restoreSubmission(record, integration);
+                const outgoing = await withholdUnresolvedEndTime({
+                  record,
+                  submission,
+                  sourceSnapshot,
+                  sourceByScope,
+                  integration,
+                  destinations: writer.destinations,
+                  readOutcome: (scope, destinationId) =>
+                    captureStore.readOutcome(scope, destinationId),
+                });
+                await writer.send(outgoing, destination.id);
+              },
             },
-          },
-          ...(input.now === undefined ? {} : { now: input.now }),
+            ...(input.now === undefined ? {} : { now: input.now }),
+          });
         };
-        const first = await coordinator.drain(drainRequest);
+        const first = await drainOnce();
         if (first.status === "busy")
           return { status: "busy" as const, settlement: { captured: 0, turns: [] } };
         const readOutcome = (scope: CaptureScope, destination: string) =>
@@ -171,7 +196,7 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
         });
         let result = first;
         if (work.progress.captured > 0) {
-          const second = await coordinator.drain(drainRequest);
+          const second = await drainOnce();
           if (second.status === "drained") {
             result = {
               status: "drained",
@@ -238,7 +263,11 @@ function previousRunContext(record: StoredCapture): NormalizedRunContext {
   return context;
 }
 
-function projectTurnEvidence(value: unknown, mode: "full" | "metadata"): JsonValue {
+function projectTurnEvidence(
+  value: unknown,
+  mode: "full" | "metadata",
+  attributionReady: boolean,
+): JsonValue {
   const source = requirePlainRecord(value, "Lifecycle turn evidence");
   const childRunIds = requireStringArray(
     requireOwnDataField(source, "childRunIds"),
@@ -255,11 +284,12 @@ function projectTurnEvidence(value: unknown, mode: "full" | "metadata"): JsonVal
     childRunIds,
     closureState: closureState as LifecycleTurnEvidence["closureState"],
   };
+  const persisted = { ...structural, [LIFECYCLE_ATTRIBUTION_READY_FIELD]: attributionReady };
   const rootRunId = ownDataField(source, "rootRunId");
   if (rootRunId.present && rootRunId.value !== undefined) {
-    structural.rootRunId = requireNonBlankString(rootRunId.value, "Root run ID");
+    persisted.rootRunId = requireNonBlankString(rootRunId.value, "Root run ID");
   }
-  return canonicalJsonValue(mode === "metadata" ? structural : source);
+  return canonicalJsonValue(mode === "metadata" ? persisted : { ...source, ...persisted });
 }
 
 function restoreSubmission(

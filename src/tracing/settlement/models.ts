@@ -89,6 +89,7 @@ export interface TurnEvidenceSnapshot {
   rootRunId?: string;
   childRunIds: string[];
   closureState: TurnEvidenceClosureState;
+  attributionReady: boolean;
 }
 
 export interface ProjectedCapture {
@@ -96,6 +97,7 @@ export interface ProjectedCapture {
   payload: ProjectedPayload;
   metadata: CodingAgentMetadataOptions;
   open: boolean;
+  attributionReady: boolean;
 }
 
 export interface SettlementSourceReadiness {

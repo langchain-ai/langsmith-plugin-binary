@@ -1,10 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCaptureStore } from "../../storage/capture/index.js";
+import { eventPath } from "../../storage/capture/paths.js";
 import type { CaptureDependency, CaptureScope } from "../../storage/capture/models.js";
 import { MUTED_TRACE_CONTENT } from "../../privacy/index.js";
 import type {
@@ -28,6 +29,7 @@ let server: ReturnType<typeof createServer>;
 let endpoint: string;
 let requests: LocalRequest[];
 let failChildPatches = false;
+let failRequestIndexes: Set<number>;
 
 function requestBody(request: IncomingMessage, response: ServerResponse): void {
   let body = "";
@@ -36,13 +38,18 @@ function requestBody(request: IncomingMessage, response: ServerResponse): void {
     body += chunk;
   });
   request.on("end", () => {
+    const index = requests.length;
+    const payload = body === "" ? {} : (JSON.parse(body) as Record<string, unknown>);
     requests.push({
       method: request.method ?? "",
       path: request.url ?? "",
-      payload: body === "" ? {} : (JSON.parse(body) as Record<string, unknown>),
+      payload,
     });
     response.writeHead(
-      failChildPatches && request.method === "PATCH" && request.url === `/api/v1/runs/${CHILD_ID}`
+      (failChildPatches &&
+        request.method === "PATCH" &&
+        request.url === `/api/v1/runs/${CHILD_ID}`) ||
+        failRequestIndexes.has(index)
         ? 400
         : 200,
       { "content-type": "application/json" },
@@ -111,6 +118,7 @@ async function scan(directory: string): Promise<string[]> {
 beforeEach(async () => {
   requests = [];
   failChildPatches = false;
+  failRequestIndexes = new Set();
   server = createServer(requestBody);
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", () => {
@@ -301,7 +309,11 @@ describe("durable run lifecycle bridge", () => {
     expect(
       (record.metadataProvenance as Record<string, unknown>)["providerMetadata"],
     ).not.toHaveProperty("ls_provider");
-    expect(record.turnEvidence).toEqual({ childRunIds: [], closureState: "provisional" });
+    expect(record.turnEvidence).toEqual({
+      childRunIds: [],
+      closureState: "provisional",
+      attributionReady: false,
+    });
     expect(record.normalizedPayload).toMatchObject({
       privacyContext: { status: "error" },
       run: {
@@ -461,6 +473,17 @@ describe("durable run lifecycle bridge", () => {
 
     await bridge.capture({
       turnId,
+      eventId: "event-child",
+      submission: childSubmission,
+      turnEvidence: evidence({
+        rootRunId: PARENT_ID,
+        childRunIds: [CHILD_ID],
+        closureState: "authoritative",
+      }),
+      dependencies: [rootScope],
+    });
+    await bridge.capture({
+      turnId,
       eventId: rootScope.eventId,
       submission: rootSubmission,
       turnEvidence: evidence({
@@ -468,13 +491,6 @@ describe("durable run lifecycle bridge", () => {
         childRunIds: [CHILD_ID],
         closureState: "authoritative",
       }),
-    });
-    await bridge.capture({
-      turnId,
-      eventId: "event-child",
-      submission: childSubmission,
-      turnEvidence: evidence({ rootRunId: PARENT_ID, childRunIds: [CHILD_ID] }),
-      dependencies: [rootScope],
     });
 
     await expect(bridge.drain()).resolves.toMatchObject({
@@ -487,8 +503,8 @@ describe("durable run lifecycle bridge", () => {
       ["POST", "/api/v1/runs"],
       ["PATCH", `/api/v1/runs/${CHILD_ID}`],
     ]);
-    expect(requests[1]?.payload["end_time"]).toBe("2026-10-10T12:00:00.010Z");
-    expect(requests[2]?.payload).not.toHaveProperty("end_time");
+    expect(requests[1]?.payload).not.toHaveProperty("end_time");
+    expect(requests[2]?.payload["end_time"]).toBe("2026-10-10T12:00:00.010Z");
     expect(requests[2]?.payload["extra"]).toMatchObject({
       metadata: {
         repository_name: "acme/project",
@@ -596,7 +612,7 @@ describe("durable run lifecycle bridge", () => {
 
       await expect(bridge.drain()).resolves.toMatchObject({
         status: "drained",
-        delivered: 2,
+        delivered: 3,
         failed: 1,
         pending: 1,
       });
@@ -708,6 +724,7 @@ describe("durable run lifecycle bridge", () => {
         run_type: "tool",
         start_time: "2026-10-10T12:00:00.001Z",
         end_time: "2026-10-10T12:00:00.010Z",
+        error: "synthetic tool error",
         parent_run_id: PARENT_ID,
         trace_id: PARENT_ID,
         dotted_order: CHILD_DOTTED_ORDER,
@@ -723,12 +740,17 @@ describe("durable run lifecycle bridge", () => {
     await bridge.capture({
       turnId,
       eventId: rootScope.eventId,
-      submission: post(PARENT_ID, rootMetadata, {
-        start_time: "2026-10-10T12:00:00.000Z",
-        trace_id: PARENT_ID,
-        dotted_order: PARENT_DOTTED_ORDER,
-        end_time: "2026-10-10T12:00:00.010Z",
-      }),
+      submission: post(
+        PARENT_ID,
+        rootMetadata,
+        {
+          start_time: "2026-10-10T12:00:00.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+          end_time: "2026-10-10T12:00:00.010Z",
+        },
+        "metadata",
+      ),
       turnEvidence,
     });
     await bridge.capture({
@@ -741,21 +763,417 @@ describe("durable run lifecycle bridge", () => {
 
     await expect(bridge.drain()).resolves.toMatchObject({
       status: "drained",
-      delivered: 3,
+      delivered: 4,
       pending: 0,
-      settlement: { turns: [{ status: "settled", patches: 1 }] },
+      settlement: { turns: [{ status: "settled", patches: 2 }] },
     });
     const captures = await createCaptureStore(root).enumerate("claude-code", sessionId);
     const sourceChild = captures.find(
       ({ record }) => record.eventId === "event-child-metadata-mode",
     )?.record;
-    const settlement = captures.find(
+    const sourceRoot = captures.find(({ record }) => record.eventId === rootScope.eventId)?.record;
+    const settlements = captures.filter(
       ({ record }) => record.eventKind === "run-settlement-patch" && record.runId === CHILD_ID,
+    );
+    const rootSettlement = captures.find(
+      ({ record }) => record.eventKind === "run-settlement-patch" && record.runId === PARENT_ID,
     )?.record;
 
+    expect(JSON.stringify(sourceRoot)).not.toContain(marker);
     expect(JSON.stringify(sourceChild)).not.toContain(marker);
-    expect(settlement).toBeDefined();
-    expect(JSON.stringify(settlement)).not.toContain(marker);
+    expect(settlements).toHaveLength(1);
+    expect(rootSettlement).toBeDefined();
+    expect(JSON.stringify(rootSettlement)).not.toContain(marker);
+    expect(JSON.stringify(settlements[0]?.record)).not.toContain(marker);
+    expect(requests.slice(0, 2).map(({ payload }) => payload["end_time"])).toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(requests[1]?.payload["extra"]).toMatchObject({ metadata: { status: "error" } });
+    expect(requests[2]?.payload["extra"]).toMatchObject({ metadata: { status: "completed" } });
+    expect(requests[3]?.payload["extra"]).toMatchObject({ metadata: { status: "error" } });
+  });
+
+  it("keeps a root open until every child destination receipt arrives", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-root-receipts-"));
+    const sessionId = "session-root-receipts";
+    const turnId = "turn-root-receipts";
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId,
+      writer: {
+        destinations: [
+          destination(),
+          {
+            apiKey: "synthetic-lifecycle-key-two",
+            apiUrl: endpoint,
+            projectName: "lifecycle-test-two",
+          },
+        ],
+        redact: false,
+      },
+    });
+    const rootScope = scope(turnId, "event-root-receipts", sessionId);
+    const turnEvidence = evidence({
+      rootRunId: PARENT_ID,
+      childRunIds: [CHILD_ID],
+      closureState: "authoritative",
+    });
+    const rootMetadata = {
+      ...metadata("claude-code", "root"),
+      base: { repository_name: "acme/project" },
+    };
+    await bridge.capture({
+      turnId,
+      eventId: rootScope.eventId,
+      submission: post(PARENT_ID, rootMetadata, {
+        start_time: "2026-10-10T12:00:00.000Z",
+        end_time: "2026-10-10T12:00:01.000Z",
+        trace_id: PARENT_ID,
+        dotted_order: PARENT_DOTTED_ORDER,
+      }),
+      turnEvidence,
+    });
+    await bridge.capture({
+      turnId,
+      eventId: "event-child-receipts",
+      submission: post(CHILD_ID, metadata("claude-code", "tool"), {
+        run_type: "tool",
+        start_time: "2026-10-10T12:00:00.001Z",
+        parent_run_id: PARENT_ID,
+        trace_id: PARENT_ID,
+        dotted_order: CHILD_DOTTED_ORDER,
+      }),
+      turnEvidence,
+      dependencies: [rootScope],
+    });
+
+    failRequestIndexes = new Set([3]);
+    await expect(bridge.drain()).resolves.toMatchObject({
+      status: "drained",
+      delivered: 3,
+      failed: 1,
+      pending: 1,
+    });
+    expect(requests.slice(0, 2).map(({ payload }) => payload["end_time"])).toEqual([
+      undefined,
+      undefined,
+    ]);
+
+    const rootEndTimePatch: PreparedRunPatchSubmission = {
+      operation: "patch",
+      integration: "claude-code",
+      privacyMode: "full",
+      metadata: rootMetadata,
+      run: {
+        id: PARENT_ID,
+        name: "test run",
+        run_type: "chain",
+        start_time: "2026-10-10T12:00:00.000Z",
+        trace_id: PARENT_ID,
+        dotted_order: PARENT_DOTTED_ORDER,
+      },
+      privacyContext: { status: "completed" },
+      patch: {
+        fields: ["end_time"],
+        values: { end_time: "2026-10-10T12:00:01.000Z" },
+      },
+    };
+    await bridge.capture({
+      turnId,
+      eventId: "event-root-end-time-revision",
+      submission: rootEndTimePatch,
+      turnEvidence,
+      dependencies: [rootScope],
+    });
+    const retryIndex = requests.length;
+    failRequestIndexes = new Set([retryIndex]);
+    await bridge.drain();
+    const rootRevisionRequests = requests.slice(retryIndex + 1);
+    expect(
+      rootRevisionRequests.filter(
+        ({ method, path }) => method === "PATCH" && path === `/api/v1/runs/${PARENT_ID}`,
+      ),
+    ).toHaveLength(2);
+    expect(
+      rootRevisionRequests
+        .filter(({ method, path }) => method === "PATCH" && path === `/api/v1/runs/${PARENT_ID}`)
+        .map(({ payload }) => payload["end_time"]),
+    ).toEqual([undefined, undefined]);
+
+    failRequestIndexes.clear();
+    const settlementStart = requests.length;
+    await bridge.drain();
+    expect(
+      requests
+        .slice(settlementStart)
+        .some(
+          ({ method, path, payload }) =>
+            method === "PATCH" &&
+            path === `/api/v1/runs/${PARENT_ID}` &&
+            payload["end_time"] === "2026-10-10T12:00:01.000Z",
+        ),
+    ).toBe(true);
+  });
+
+  it("keeps a resolved root end time even when child receipts are missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-root-resolved-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-root-resolved",
+      writer: { destinations: [destination()], redact: false },
+    });
+    const turnId = "turn-root-resolved";
+    const turnEvidence = evidence({
+      rootRunId: PARENT_ID,
+      childRunIds: [CHILD_ID],
+      closureState: "authoritative",
+    });
+    await bridge.capture({
+      turnId,
+      eventId: "event-root-resolved",
+      submission: post(
+        PARENT_ID,
+        {
+          ...metadata("claude-code", "root"),
+          base: { repository_name: "acme/project", ls_attribution_identifier: "Owner" },
+        },
+        {
+          start_time: "2026-10-10T12:00:00.000Z",
+          end_time: "2026-10-10T12:00:01.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+        },
+      ),
+      turnEvidence,
+    });
+
+    await bridge.drain();
+
+    expect(requests[0]?.payload["end_time"]).toBe("2026-10-10T12:00:01.000Z");
+  });
+
+  it("restores muted end times after a restart without attribution", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-restart-end-time-"));
+    const sessionId = "session-restart-end-time";
+    const turnId = "turn-restart-end-time";
+    const firstBridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId,
+      writer: { destinations: [destination()], redact: false },
+    });
+    const turnEvidence = evidence({
+      rootRunId: PARENT_ID,
+      childRunIds: [CHILD_ID],
+      closureState: "provisional",
+    });
+    const rootScope = scope(turnId, "event-root-restart", sessionId);
+    const marker = "private-muted-end-time-marker";
+    await firstBridge.capture({
+      turnId,
+      eventId: rootScope.eventId,
+      submission: post(
+        PARENT_ID,
+        { ...metadata("claude-code", "root"), base: { private: marker } },
+        {
+          start_time: "2026-10-10T12:00:00.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+        },
+        "metadata",
+      ),
+      turnEvidence,
+    });
+    await firstBridge.capture({
+      turnId,
+      eventId: "event-child-restart-post",
+      submission: post(
+        CHILD_ID,
+        { ...metadata("claude-code", "tool"), base: { private: marker } },
+        {
+          run_type: "tool",
+          start_time: "2026-10-10T12:00:00.001Z",
+          end_time: "2026-10-10T12:00:01.000Z",
+          inputs: { prompt: marker },
+          outputs: { result: marker },
+          parent_run_id: PARENT_ID,
+          trace_id: PARENT_ID,
+          dotted_order: CHILD_DOTTED_ORDER,
+        },
+        "metadata",
+      ),
+      turnEvidence,
+      dependencies: [rootScope],
+    });
+    await firstBridge.capture({
+      turnId,
+      eventId: "event-child-restart-sparse",
+      submission: {
+        operation: "patch",
+        integration: "claude-code",
+        privacyMode: "metadata",
+        metadata: metadata("claude-code", "tool"),
+        run: {
+          id: CHILD_ID,
+          name: "test run",
+          run_type: "tool",
+          start_time: "2026-10-10T12:00:00.001Z",
+          parent_run_id: PARENT_ID,
+          trace_id: PARENT_ID,
+          dotted_order: CHILD_DOTTED_ORDER,
+        },
+        privacyContext: { status: "completed" },
+        patch: { fields: ["outputs"], values: { outputs: { result: marker } } },
+      },
+      turnEvidence,
+      dependencies: [scope(turnId, "event-child-restart-post", sessionId)],
+    });
+
+    await expect(firstBridge.drain()).resolves.toMatchObject({
+      status: "drained",
+      delivered: 3,
+      settlement: { turns: [{ status: "deferred", reason: "provisional" }] },
+    });
+    const storedBeforeRestart = await createCaptureStore(root).enumerate("claude-code", sessionId);
+    const storedChild = storedBeforeRestart.find(
+      ({ record }) => record.eventId === "event-child-restart-post",
+    )?.record;
+    expect(storedChild?.normalizedPayload).toMatchObject({
+      run: { end_time: "2026-10-10T12:00:01.000Z" },
+    });
+    expect(JSON.stringify(storedBeforeRestart)).not.toContain(marker);
+    expect(requests[1]?.payload).not.toHaveProperty("end_time");
+    expect(requests[2]?.payload).not.toHaveProperty("end_time");
+    expect(requests[2]?.payload["extra"]).toMatchObject({ metadata: { status: "running" } });
+
+    const restartedBridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId,
+      writer: { destinations: [destination()], redact: false },
+    });
+    await restartedBridge.capture({
+      turnId,
+      eventId: "event-root-authoritative-restart",
+      submission: {
+        operation: "patch",
+        integration: "claude-code",
+        privacyMode: "metadata",
+        metadata: metadata("claude-code", "root"),
+        run: {
+          id: PARENT_ID,
+          name: "test run",
+          run_type: "chain",
+          start_time: "2026-10-10T12:00:00.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+        },
+        privacyContext: { status: "running" },
+        patch: { fields: [], values: {} },
+      },
+      turnEvidence: { ...turnEvidence, closureState: "authoritative" },
+      dependencies: [rootScope],
+    });
+    const settlementStart = requests.length;
+    await restartedBridge.drain();
+
+    const finalPatch = requests
+      .slice(settlementStart)
+      .find(
+        ({ method, path, payload }) =>
+          method === "PATCH" &&
+          path === `/api/v1/runs/${CHILD_ID}` &&
+          payload["end_time"] === "2026-10-10T12:00:01.000Z",
+      );
+    expect(finalPatch?.payload["extra"]).toMatchObject({ metadata: { status: "completed" } });
+    expect(finalPatch?.payload["extra"]).not.toMatchObject({
+      metadata: { repository_name: expect.anything() },
+    });
+    expect(JSON.stringify(await scan(root))).not.toContain(marker);
+  });
+
+  it("drains historical captures without attribution readiness", async () => {
+    const fullRoot = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-legacy-full-"));
+    const fullSessionId = "session-legacy-full";
+    const fullTurnId = "turn-legacy-full";
+    const fullEventId = "event-legacy-full";
+    const fullScope = scope(fullTurnId, fullEventId, fullSessionId);
+    const fullBridge = createLifecycleBridge({
+      storageRoot: fullRoot,
+      integration: "claude-code",
+      sessionId: fullSessionId,
+      writer: { destinations: [destination()], redact: false },
+    });
+    await fullBridge.capture({
+      turnId: fullTurnId,
+      eventId: fullEventId,
+      submission: post(
+        CHILD_ID,
+        {
+          ...metadata("claude-code", "tool"),
+          base: { repository_name: "acme/project", ls_attribution_identifier: "Owner" },
+        },
+        {
+          run_type: "tool",
+          end_time: "2026-10-10T12:00:01.000Z",
+        },
+      ),
+      turnEvidence: evidence({ closureState: "provisional" }),
+    });
+    const fullPath = eventPath(fullRoot, fullScope);
+    const fullRecord = JSON.parse(await readFile(fullPath, "utf8")) as {
+      turnEvidence: Record<string, unknown>;
+    };
+    delete fullRecord.turnEvidence["attributionReady"];
+    await writeFile(fullPath, JSON.stringify(fullRecord));
+
+    await expect(fullBridge.drain()).resolves.toMatchObject({ delivered: 1, pending: 0 });
+    expect(requests[0]?.payload["end_time"]).toBe("2026-10-10T12:00:01.000Z");
+
+    fullRecord.turnEvidence["attributionReady"] = "invalid";
+    await writeFile(fullPath, JSON.stringify(fullRecord));
+    await expect(fullBridge.drain()).rejects.toThrow("attributionReady must be a boolean");
+
+    const metadataRoot = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-legacy-metadata-"));
+    const metadataSessionId = "session-legacy-metadata";
+    const metadataTurnId = "turn-legacy-metadata";
+    const metadataEventId = "event-legacy-metadata";
+    const metadataPath = eventPath(
+      metadataRoot,
+      scope(metadataTurnId, metadataEventId, metadataSessionId),
+    );
+    const metadataBridge = createLifecycleBridge({
+      storageRoot: metadataRoot,
+      integration: "claude-code",
+      sessionId: metadataSessionId,
+      writer: { destinations: [destination()], redact: false },
+    });
+    await metadataBridge.capture({
+      turnId: metadataTurnId,
+      eventId: metadataEventId,
+      submission: post(
+        CHILD_ID,
+        { ...metadata("claude-code", "tool"), base: { private: "legacy-private" } },
+        { run_type: "tool", end_time: "2026-10-10T12:00:02.000Z" },
+        "metadata",
+      ),
+      turnEvidence: evidence({ closureState: "provisional" }),
+    });
+    const metadataRecord = JSON.parse(await readFile(metadataPath, "utf8")) as {
+      turnEvidence: Record<string, unknown>;
+    };
+    delete metadataRecord.turnEvidence["attributionReady"];
+    await writeFile(metadataPath, JSON.stringify(metadataRecord));
+
+    const requestStart = requests.length;
+    await expect(metadataBridge.drain()).resolves.toMatchObject({ delivered: 1, pending: 0 });
+    expect(requests[requestStart]?.payload).not.toHaveProperty("end_time");
+    expect(requests[requestStart]?.payload["extra"]).toMatchObject({
+      metadata: { status: "running" },
+    });
   });
 
   it("preserves stored metadata-mode error status on generated attribution patches", async () => {
@@ -773,6 +1191,7 @@ describe("durable run lifecycle bridge", () => {
         metadata("openai-codex", "root"),
         {
           start_time: "2026-10-10T12:00:00.000Z",
+          end_time: "2026-10-10T12:00:01.000Z",
           trace_id: PARENT_ID,
           dotted_order: PARENT_DOTTED_ORDER,
         },
@@ -827,6 +1246,7 @@ describe("durable run lifecycle bridge", () => {
     expect(requests[0]?.payload["extra"]).toMatchObject({ metadata: { status: "error" } });
     expect(requests[2]?.method).toBe("PATCH");
     expect(requests[2]?.path).toBe(`/api/v1/runs/${PARENT_ID}`);
+    expect(requests[2]?.payload["end_time"]).toBe("2026-10-10T12:00:01.000Z");
     expect(requests[2]?.payload["extra"]).toMatchObject({ metadata: { status: "error" } });
   });
 
@@ -1158,7 +1578,11 @@ describe("durable run lifecycle bridge", () => {
     const record = await createCaptureStore(root).read(
       scope("turn-evidence-snapshot", "event-evidence-snapshot"),
     );
-    expect(record?.turnEvidence).toEqual({ childRunIds: [CHILD_ID], closureState: "open" });
+    expect(record?.turnEvidence).toEqual({
+      childRunIds: [CHILD_ID],
+      closureState: "open",
+      attributionReady: false,
+    });
     expect(record?.dependencies).toEqual([scope("turn-prerequisite", "event-prerequisite")]);
   });
 

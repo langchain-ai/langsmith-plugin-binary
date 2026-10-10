@@ -11,6 +11,7 @@ import { createLangSmithUploadWriter } from "../upload/index.js";
 import type { LangSmithUploadWriterOptions, PreparedRunPostSubmission } from "../upload/models.js";
 import { workerPendingPath } from "../background-worker/paths.js";
 import { createTracingEngine } from "./engine.js";
+import { CaptureWakeError } from "../index.js";
 import type {
   TracingEngineOptions,
   TracingEngineScope,
@@ -153,15 +154,18 @@ it("snapshots session callbacks and stops when the active account changes", asyn
   };
   sessionOptions.resolveScope = () => ({ ...expectedScope, accountFingerprint: "other-account" });
 
-  await expect(
-    session.queueReconstruction({
-      turnId: "turn-1",
-      eventId: "job-1",
-      sourceRefs: ["snapshot:job-1"],
-      privacyMode: "full",
-      turnEvidence: { childRunIds: [], closureState: "authoritative" },
-    }),
-  ).rejects.toThrow("injected worker startup failure");
+  const queued = session.queueReconstruction({
+    turnId: "turn-1",
+    eventId: "job-1",
+    sourceRefs: ["snapshot:job-1"],
+    privacyMode: "full",
+    turnEvidence: { childRunIds: [], closureState: "authoritative" },
+  });
+  await expect(queued).rejects.toThrow("injected worker startup failure");
+  await expect(queued).rejects.toBeInstanceOf(CaptureWakeError);
+  await expect(queued).rejects.toMatchObject({
+    captureResult: { status: "published", record: { eventId: "job-1" } },
+  });
   expect(existsSync(workerPendingPath(area.root, expectedScope))).toBe(true);
 
   currentScope = { ...expectedScope, accountFingerprint: "other-account" };
@@ -175,6 +179,51 @@ it("snapshots session callbacks and stops when the active account changes", asyn
   expect(replacementReconstruct).not.toHaveBeenCalled();
   expect(launch).toHaveBeenCalledTimes(1);
   expect(existsSync(workerPendingPath(area.root, expectedScope))).toBe(false);
+});
+
+it("distinguishes saved captures from invalid retries after a failed wake", async () => {
+  const area = createArea();
+  const failure = new Error("injected launcher failure");
+  const session = createTracingEngine({ storageRoot: area.root, integration, writer }).forSession({
+    sessionId,
+    resolveScope: (expected) => expected,
+    scheduleWake: () => {
+      throw failure;
+    },
+    reconstruct: async () => ({ status: "deferred", reason: "missing-thread-identity" }),
+  });
+  const submission: PreparedRunPostSubmission = {
+    operation: "post",
+    integration,
+    privacyMode: "full",
+    metadata: { integration, threadId: sessionId, agentType: "root", runType: "root" },
+    run: {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "root",
+      run_type: "chain",
+      inputs: {},
+    },
+  };
+  const input = {
+    turnId: "turn-wake-result",
+    eventId: "event-wake-result",
+    submission,
+    turnEvidence: { childRunIds: [], closureState: "open" as const },
+  };
+  for (const status of ["published", "duplicate"]) {
+    const pending = session.capture(input);
+    await expect(pending).rejects.toBeInstanceOf(CaptureWakeError);
+    await expect(pending).rejects.toMatchObject({
+      captureResult: { status, record: { eventId: input.eventId } },
+      cause: failure,
+    });
+  }
+  const invalid = session.capture({
+    ...input,
+    submission: { ...submission, run: { ...submission.run, name: "" } },
+  });
+  await expect(invalid).rejects.toBeInstanceOf(TypeError);
+  await expect(invalid).rejects.not.toBeInstanceOf(CaptureWakeError);
 });
 
 it("recovers a persisted reconstruction job after a later explicit wake", async () => {
