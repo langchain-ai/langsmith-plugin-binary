@@ -1,5 +1,6 @@
 import { CAPTURE_WAKE_ERROR_NAME, CAPTURE_WAKE_FAILURE_MESSAGE } from "./capture-wake-constants.js";
-import type { SavedCaptureResult } from "./capture-wake-models.js";
+import { canonicalJson } from "../storage/capture/utils/serialization.js";
+import type { SavedCaptureResult, SavedCaptureWakeOptions } from "./capture-wake-models.js";
 
 export class CaptureWakeError extends Error {
   readonly captureResult: SavedCaptureResult;
@@ -23,4 +24,30 @@ export async function wakeCapturedWork(
   } catch (cause) {
     throw new CaptureWakeError(captureResult, cause);
   }
+}
+
+export async function readSavedCaptureWake(
+  error: unknown,
+  options: SavedCaptureWakeOptions,
+): Promise<SavedCaptureResult | undefined> {
+  if (!(error instanceof CaptureWakeError)) return undefined;
+  const { record } = error.captureResult;
+  if (
+    record.integration !== options.integration ||
+    record.sessionId !== options.sessionId ||
+    record.turnId !== options.turnId ||
+    record.destinationFingerprint !== options.destinationFingerprint ||
+    (options.eventId !== undefined && record.eventId !== options.eventId) ||
+    (options.runId !== undefined && record.runId !== options.runId)
+  )
+    return undefined;
+  const saved = await options.store.read({
+    integration: record.integration,
+    sessionId: record.sessionId,
+    turnId: record.turnId,
+    eventId: record.eventId,
+  });
+  return saved !== undefined && canonicalJson(saved) === canonicalJson(record)
+    ? error.captureResult
+    : undefined;
 }
