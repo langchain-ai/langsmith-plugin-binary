@@ -20,10 +20,17 @@ jobs:
     env:
       HOME: ${{ github.workspace }}/../plugins-base-ci-home
       USERPROFILE: ${{ github.workspace }}/../plugins-base-ci-home
+      TMPDIR: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      TEMP: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      TMP: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      LANGCHAIN_API_KEY: ""
+      LANGSMITH_API_KEY: ""
+      OPENAI_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
     steps:
       - name: Create an Isolated Home
         run: |
-          node -e "require('node:fs').mkdirSync(process.env.HOME, {recursive: true})"
+          node -e "require('node:fs').mkdirSync(process.env.TMPDIR, {recursive: true})"
       - name: Check Out the Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install pnpm
@@ -52,10 +59,17 @@ jobs:
     env:
       HOME: ${{ github.workspace }}/../plugins-base-ci-home
       USERPROFILE: ${{ github.workspace }}/../plugins-base-ci-home
+      TMPDIR: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      TEMP: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      TMP: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      LANGCHAIN_API_KEY: ""
+      LANGSMITH_API_KEY: ""
+      OPENAI_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
     steps:
       - name: Create an Isolated Home
         run: |
-          node -e "require('node:fs').mkdirSync(process.env.HOME, {recursive: true})"
+          node -e "require('node:fs').mkdirSync(process.env.TMPDIR, {recursive: true})"
       - name: Check Out the Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install pnpm
@@ -76,10 +90,17 @@ jobs:
     env:
       HOME: ${{ github.workspace }}/../plugins-base-ci-home
       USERPROFILE: ${{ github.workspace }}/../plugins-base-ci-home
+      TMPDIR: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      TEMP: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      TMP: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      LANGCHAIN_API_KEY: ""
+      LANGSMITH_API_KEY: ""
+      OPENAI_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
     steps:
       - name: Create an Isolated Home
         run: |
-          node -e "require('node:fs').mkdirSync(process.env.HOME, {recursive: true})"
+          node -e "require('node:fs').mkdirSync(process.env.TMPDIR, {recursive: true})"
       - name: Check Out the Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install pnpm
@@ -93,6 +114,13 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test Shared Runtime
         run: pnpm exec vitest run src/settings src/git src/storage src/metadata src/privacy src/tracing
+      - name: Stress Windows Lock Contention
+        shell: pwsh
+        run: |
+          for ($iteration = 0; $iteration -lt 10; $iteration++) {
+            pnpm exec vitest run src/storage/file-lock.test.ts --reporter=dot
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
   test-sdk-wire-matrix:
     name: Wire Tests (${{ matrix.os }}, LangSmith ${{ matrix.langsmith-version }})
@@ -100,6 +128,13 @@ jobs:
     env:
       HOME: ${{ github.workspace }}/../plugins-base-ci-home
       USERPROFILE: ${{ github.workspace }}/../plugins-base-ci-home
+      TMPDIR: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      TEMP: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      TMP: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+      LANGCHAIN_API_KEY: ""
+      LANGSMITH_API_KEY: ""
+      OPENAI_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
     strategy:
       fail-fast: false
       matrix:
@@ -108,7 +143,7 @@ jobs:
     steps:
       - name: Create an Isolated Home
         run: |
-          node -e "require('node:fs').mkdirSync(process.env.HOME, {recursive: true})"
+          node -e "require('node:fs').mkdirSync(process.env.TMPDIR, {recursive: true})"
       - name: Check Out the Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install pnpm

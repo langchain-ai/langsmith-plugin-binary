@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -681,6 +682,120 @@ describe("durable reconstruction jobs", () => {
       pending: 0,
     });
     expect(reconstruct).not.toHaveBeenCalled();
+  });
+
+  it("expires old reconstructed sources individually while uploading fresh sources", async () => {
+    const storageRoot = await root();
+    const uploads: Record<string, unknown>[] = [];
+    const server = createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk: string) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        uploads.push(JSON.parse(body) as Record<string, unknown>);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("{}");
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      throw new Error("Local upload endpoint did not start");
+    try {
+      const now = Date.now();
+      const sourceAges = { old: now - 120_000, fresh: now - 1_000 };
+      const lifecycle = createLifecycleBridge({
+        storageRoot,
+        integration: "claude-code",
+        sessionId: "session-1",
+        writer: {
+          destinations: [
+            {
+              apiKey: "synthetic-handoff-review-key",
+              apiUrl: `http://127.0.0.1:${address.port}/api/v1`,
+              projectName: "handoff-review",
+            },
+          ],
+          redact: false,
+        },
+        policy: { maxAgeMs: 60_000 },
+      });
+      const reconstruct = vi.fn(async () => ({
+        status: "ready" as const,
+        outputs: [
+          {
+            eventId: "output-old",
+            sourceRef: "source-old",
+            submission: post("11111111-1111-4111-8111-111111111111"),
+          },
+          {
+            eventId: "output-fresh",
+            sourceRef: "source-fresh",
+            submission: post("22222222-2222-4222-8222-222222222222"),
+          },
+        ],
+      }));
+      const reconstructionWorker = worker(
+        storageRoot,
+        lifecycle.accountFingerprint,
+        reconstruct,
+        lifecycle.capture,
+        { maxAgeMs: 60_000 },
+      );
+      const oldSubmission = post("33333333-3333-4333-8333-333333333333");
+      oldSubmission.run.start_time = sourceAges.old;
+      const freshSubmission = post("44444444-4444-4444-8444-444444444444");
+      freshSubmission.run.start_time = sourceAges.fresh;
+      await reconstructionWorker.enqueue({
+        ...job("job-mixed-source-age"),
+        sourceRefs: ["source-old", "source-fresh"],
+        sourceSnapshots: [
+          {
+            sourceRef: "source-old",
+            submission: oldSubmission,
+            sourceAgeStartedAtMs: sourceAges.old,
+          },
+          {
+            sourceRef: "source-fresh",
+            submission: freshSubmission,
+            sourceAgeStartedAtMs: sourceAges.fresh,
+          },
+        ],
+      });
+
+      expect(await reconstructionWorker.drain({ now })).toMatchObject({
+        status: "drained",
+        captured: 2,
+        pending: 0,
+      });
+      expect(await lifecycle.drain({ now })).toMatchObject({
+        status: "drained",
+        delivered: 1,
+        dropped: 1,
+        pending: 0,
+      });
+      expect(reconstruct).toHaveBeenCalledTimes(1);
+      expect(uploads).toHaveLength(1);
+      expect(uploads[0]).toMatchObject({ id: "22222222-2222-4222-8222-222222222222" });
+      const records = await createCaptureStore(storageRoot).enumerate("claude-code", "session-1");
+      expect(
+        records
+          .map(({ record }) => [record.eventId, record.sourceAgeStartedAtMs])
+          .toSorted(([left], [right]) => String(left).localeCompare(String(right))),
+      ).toEqual([
+        ["output-fresh", sourceAges.fresh],
+        ["output-old", sourceAges.old],
+      ]);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 
   it("drops the oldest pending job when reconstruction capacity is full", async () => {

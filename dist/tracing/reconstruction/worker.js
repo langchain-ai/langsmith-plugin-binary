@@ -245,7 +245,7 @@ function snapshotJob(job) {
 }
 function jobAgeStartedAtMs(job, capturedAtMs) {
     if (job.sourceSnapshots !== undefined) {
-        return Math.min(...job.sourceSnapshots.map(({ sourceAgeStartedAtMs }) => sourceAgeStartedAtMs));
+        return Math.max(...job.sourceSnapshots.map(({ sourceAgeStartedAtMs }) => sourceAgeStartedAtMs));
     }
     return job.sourceAgeStartedAtMs ?? capturedAtMs;
 }
