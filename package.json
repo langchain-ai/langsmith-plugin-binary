@@ -43,6 +43,10 @@
     "./tracing/delivery": {
       "types": "./dist/tracing/delivery/index.d.ts",
       "default": "./dist/tracing/delivery/index.js"
+    },
+    "./metadata": {
+      "types": "./dist/metadata/index.d.ts",
+      "default": "./dist/metadata/index.js"
     }
   },
   "publishConfig": {
