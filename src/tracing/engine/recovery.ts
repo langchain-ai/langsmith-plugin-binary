@@ -1,8 +1,14 @@
 import { join } from "node:path";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import { RECONSTRUCTION_DIRECTORY, RECONSTRUCTION_JOB_KIND } from "../reconstruction/constants.js";
+import {
+  LIFECYCLE_PATCH_EVENT_KIND,
+  LIFECYCLE_POST_EVENT_KIND,
+  LIFECYCLE_SETTLEMENT_EVENT_KIND,
+} from "../lifecycle/constants.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import { TRACING_ENGINE_FOREIGN_SESSION_MIN_AGE_MS } from "./constants.js";
+import { hasUnsettledRecoverySettlement } from "./recovery-settlement.js";
 import type {
   TracingEngineRecoveryOptions,
   TracingEngineRecoveryReport,
@@ -53,14 +59,13 @@ export async function recoverTracingSessions(
     try {
       const lifecycleEntries = lifecycleBySession.get(sessionId) ?? [];
       const reconstructionEntries = reconstructionBySession.get(sessionId) ?? [];
-      let hasLifecycleRecord = false;
       let hasPendingWork = false;
+      let hasUnsettledTurn = false;
       let oldestPendingAtMs = Number.POSITIVE_INFINITY;
       let lastActivityAtMs = 0;
       for (const entry of lifecycleEntries) {
         const record = entry.record;
         if (record.destinationFingerprint !== runtime.accountFingerprint) continue;
-        hasLifecycleRecord = true;
         lastActivityAtMs = Math.max(lastActivityAtMs, entry.capturedAtMs);
         let pending = false;
         for (const destinationId of destinationIds) {
@@ -86,6 +91,29 @@ export async function recoverTracingSessions(
           hasPendingWork = true;
           oldestPendingAtMs = Math.min(oldestPendingAtMs, entry.capturedAtMs);
         }
+      }
+      const hasUnsupportedLifecycleRecord = lifecycleEntries.some(
+        ({ record }) =>
+          record.destinationFingerprint === runtime.accountFingerprint &&
+          record.eventKind !== LIFECYCLE_POST_EVENT_KIND &&
+          record.eventKind !== LIFECYCLE_PATCH_EVENT_KIND &&
+          record.eventKind !== LIFECYCLE_SETTLEMENT_EVENT_KIND,
+      );
+      if (hasUnsupportedLifecycleRecord) hasUnsettledTurn = true;
+      else if (
+        !hasPendingWork &&
+        lifecycleEntries.some(
+          ({ record }) => record.destinationFingerprint === runtime.accountFingerprint,
+        )
+      ) {
+        hasUnsettledTurn = await hasUnsettledRecoverySettlement({
+          captures: lifecycleEntries,
+          integration: runtime.integration,
+          sessionId,
+          destinationFingerprint: runtime.accountFingerprint,
+          destinations: writer.destinations,
+          store: lifecycleStore,
+        });
       }
       for (const entry of reconstructionEntries) {
         const record = entry.record;
@@ -115,7 +143,7 @@ export async function recoverTracingSessions(
         }
       }
       const isCurrentSession = sessionId === runtime.currentSessionId;
-      if (!hasLifecycleRecord && !hasPendingWork) continue;
+      if (!hasUnsettledTurn && !hasPendingWork) continue;
       if (
         !isCurrentSession &&
         now - oldestPendingAtMs < minimumForeignAgeMs &&

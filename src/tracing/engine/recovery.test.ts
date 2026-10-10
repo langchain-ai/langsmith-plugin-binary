@@ -13,9 +13,13 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { createCaptureStore } from "../../storage/capture/index.js";
-import type { CaptureInput } from "../../storage/capture/models.js";
+import type { CaptureScope, CaptureStore } from "../../storage/capture/models.js";
 import { receiptPath } from "../../storage/capture/paths.js";
+import { LIFECYCLE_SETTLEMENT_EVENT_KIND } from "../lifecycle/constants.js";
+import { createLifecycleBridge } from "../lifecycle/index.js";
+import type { LifecycleTurnEvidence } from "../lifecycle/models.js";
 import type { ReconstructionJob } from "../reconstruction/models.js";
+import { settleCapturedTurns } from "../settlement/pass.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import type { LangSmithUploadWriterOptions, PreparedRunPostSubmission } from "../upload/models.js";
 import { createTracingEngine } from "./engine.js";
@@ -39,6 +43,16 @@ const writer: LangSmithUploadWriterOptions = {
   redact: false,
 };
 const accountFingerprint = createLangSmithUploadWriter(writer).accountFingerprint;
+const recoveryRootRunId = "77777777-7777-4777-8777-777777777777";
+const recoveryFirstChildRunId = "88888888-8888-4888-8888-888888888888";
+const recoveryRootOrder = `20261010T120000000000Z${recoveryRootRunId}`;
+const recoveryRepository = {
+  repository_name: "acme/project",
+  repository_provider: "github",
+  repository_url: "https://github.com/acme/project",
+  git_branch: "main",
+  git_commit_sha: "abc123",
+};
 const roots: string[] = [];
 const children = new Set<ChildProcess>();
 
@@ -130,6 +144,117 @@ function recoveryPost(runId: string): PreparedRunPostSubmission {
   };
 }
 
+function recoveryRunPost(
+  runId: string,
+  runType: "root" | "tool",
+  repository = recoveryRepository,
+): PreparedRunPostSubmission {
+  const isRoot = runType === "root";
+  return {
+    operation: "post",
+    integration,
+    privacyMode: "full",
+    metadata: {
+      integration,
+      threadId: "settlement-recovery-thread",
+      agentType: "root",
+      runType,
+      ...(isRoot ? {} : { toolName: "Read", base: repository }),
+    },
+    run: {
+      id: runId,
+      name: isRoot ? "root run" : "Read",
+      run_type: isRoot ? "chain" : "tool",
+      start_time: isRoot ? "2026-10-10T12:00:00.000Z" : "2026-10-10T12:00:00.001Z",
+      end_time: isRoot ? "2026-10-10T12:00:01.000Z" : "2026-10-10T12:00:01.001Z",
+      ...(isRoot ? {} : { parent_run_id: recoveryRootRunId }),
+      trace_id: recoveryRootRunId,
+      dotted_order: isRoot
+        ? recoveryRootOrder
+        : `${recoveryRootOrder}.20261010T120000001000Z${runId}`,
+      inputs: {},
+      outputs: {},
+    },
+  };
+}
+
+function recoveryEvidence(childRunIds: string[]): LifecycleTurnEvidence {
+  return { rootRunId: recoveryRootRunId, childRunIds, closureState: "authoritative" };
+}
+
+async function recordDeliveredOutcomes(
+  store: CaptureStore,
+  captures: Awaited<ReturnType<CaptureStore["enumerate"]>>,
+): Promise<void> {
+  const destinations = createLangSmithUploadWriter(writer).destinations;
+  for (const { record } of captures) {
+    const scope: CaptureScope = {
+      integration: record.integration,
+      sessionId: record.sessionId,
+      turnId: record.turnId,
+      eventId: record.eventId,
+    };
+    for (const destination of destinations) {
+      const result = await store.recordOutcome({
+        ...scope,
+        destination: destination.id,
+        outcome: "delivered",
+      });
+      if (result.status !== "recorded" && result.status !== "duplicate")
+        throw new Error(`Could not mark recovery capture delivered: ${result.status}`);
+    }
+  }
+}
+
+async function createSettlementSession(root: string, sessionId: string, settle = true) {
+  const bridge = createLifecycleBridge({
+    storageRoot: root,
+    integration,
+    sessionId,
+    writer,
+    wake: async () => {},
+  });
+  const store = createCaptureStore(root);
+  const rootScope: CaptureScope = {
+    integration,
+    sessionId,
+    turnId: "root-turn",
+    eventId: "root-post",
+  };
+  await bridge.capture({
+    turnId: rootScope.turnId,
+    eventId: rootScope.eventId,
+    submission: recoveryRunPost(recoveryRootRunId, "root"),
+    turnEvidence: recoveryEvidence([recoveryFirstChildRunId]),
+  });
+  await bridge.capture({
+    turnId: rootScope.turnId,
+    eventId: "first-child-post",
+    submission: recoveryRunPost(recoveryFirstChildRunId, "tool"),
+    turnEvidence: recoveryEvidence([recoveryFirstChildRunId]),
+    dependencies: [rootScope],
+  });
+  let captures = await store.enumerate(integration, sessionId);
+  await recordDeliveredOutcomes(store, captures);
+  if (!settle) return { bridge, store };
+  const work = await settleCapturedTurns({
+    captures,
+    integration,
+    sessionId,
+    destinationFingerprint: bridge.accountFingerprint,
+    destinations: createLangSmithUploadWriter(writer).destinations,
+    capture: (input) => store.capture({ ...input, integration, sessionId }),
+    readOutcome: (scope, destination) => store.readOutcome(scope, destination),
+  });
+  if (!work.progress.turns.some((turn) => turn.status === "pending"))
+    throw new Error("Settlement fixture did not create pending closure work");
+  captures = await store.enumerate(integration, sessionId);
+  await recordDeliveredOutcomes(store, captures);
+  if (!captures.some(({ record }) => record.eventKind === LIFECYCLE_SETTLEMENT_EVENT_KIND))
+    throw new Error("Settlement fixture did not save a closure capture");
+  return { bridge, store };
+}
+
 function createPausedSessionOptions(
   sessionId: string,
   scheduleWake: TracingEngineSessionOptions["scheduleWake"],
@@ -210,27 +335,71 @@ function sessionCallbacks(): TracingEngineSessionCallbacks {
   };
 }
 
-async function captureEvent(
-  root: string,
-  sessionId: string,
-  destinationFingerprint: string,
-  eventKind = "run-post",
-) {
-  const input: CaptureInput = {
-    integration,
-    sessionId,
+async function captureEvent(root: string, sessionId: string) {
+  const runId = "66666666-6666-4666-8666-666666666666";
+  const bridge = createLifecycleBridge({ storageRoot: root, integration, sessionId, writer });
+  const result = await bridge.capture({
     turnId: "recovery-turn",
     eventId: `event-${sessionId}`,
-    runId: `run-${sessionId}`,
-    destinationFingerprint,
-    eventKind,
-    normalizedPayload: {},
-    turnEvidence: {},
-    metadataProvenance: {},
-  };
-  const result = await createCaptureStore(root).capture(input);
+    submission: recoveryPost(runId),
+    turnEvidence: { rootRunId: runId, childRunIds: [], closureState: "open" },
+  });
   if (result.status !== "published") throw new Error(`Capture failed: ${result.status}`);
   return result.record;
+}
+
+async function createCrossTurnSettlementSession(root: string, sessionId: string) {
+  const bridge = createLifecycleBridge({ storageRoot: root, integration, sessionId, writer });
+  const store = createCaptureStore(root);
+  const parentTurnId = "parent-turn";
+  const childTurnId = "child-turn-initial";
+  const rootScope: CaptureScope = {
+    integration,
+    sessionId,
+    turnId: parentTurnId,
+    eventId: "parent-root-post",
+  };
+  await bridge.capture({
+    turnId: parentTurnId,
+    eventId: rootScope.eventId,
+    submission: recoveryRunPost(recoveryRootRunId, "root"),
+    turnEvidence: recoveryEvidence([recoveryFirstChildRunId]),
+  });
+  await bridge.capture({
+    turnId: childTurnId,
+    eventId: "child-post-initial",
+    submission: recoveryRunPost(recoveryFirstChildRunId, "tool"),
+    turnEvidence: {
+      rootRunId: recoveryFirstChildRunId,
+      childRunIds: [],
+      closureState: "authoritative",
+    },
+    dependencies: [rootScope],
+  });
+  let captures = await store.enumerate(integration, sessionId);
+  await recordDeliveredOutcomes(store, captures);
+  const work = await settleCapturedTurns({
+    captures,
+    integration,
+    sessionId,
+    destinationFingerprint: bridge.accountFingerprint,
+    destinations: createLangSmithUploadWriter(writer).destinations,
+    capture: (input) => store.capture({ ...input, integration, sessionId }),
+    readOutcome: (scope, destination) => store.readOutcome(scope, destination),
+  });
+  if (work.progress.turns.find(({ turnId }) => turnId === parentTurnId)?.status !== "pending")
+    throw new Error("Cross-turn settlement fixture did not create pending closure work");
+  captures = await store.enumerate(integration, sessionId);
+  await recordDeliveredOutcomes(store, captures);
+  if (
+    !captures.some(
+      ({ record }) =>
+        record.turnId === parentTurnId && record.eventKind === LIFECYCLE_SETTLEMENT_EVENT_KIND,
+    )
+  ) {
+    throw new Error("Cross-turn settlement fixture did not save a parent closure capture");
+  }
+  return { bridge, store, rootScope };
 }
 
 afterEach(async () => {
@@ -242,8 +411,8 @@ afterEach(async () => {
 
 it("reports callback failures and continues recovering other sessions", async () => {
   const root = createArea();
-  await captureEvent(root, "failed-session", accountFingerprint);
-  await captureEvent(root, "good-session", accountFingerprint);
+  await captureEvent(root, "failed-session");
+  await captureEvent(root, "good-session");
   const { runtime, createdSessions, currentWakes } = createRuntime(root);
 
   const report = await recoverTracingSessions(runtime, {
@@ -264,8 +433,8 @@ it("reports callback failures and continues recovering other sessions", async ()
 
 it("reports an unreadable receipt for one session and continues with healthy work", async () => {
   const root = createArea();
-  const failedRecord = await captureEvent(root, "broken-session", accountFingerprint);
-  await captureEvent(root, "healthy-session", accountFingerprint);
+  const failedRecord = await captureEvent(root, "broken-session");
+  await captureEvent(root, "healthy-session");
   const uploadWriter = createLangSmithUploadWriter(writer);
   const destinationId = uploadWriter.destinations[0]?.id;
   if (!destinationId) throw new Error("Recovery destination is missing");
@@ -291,6 +460,146 @@ it("reports an unreadable receipt for one session and continues with healthy wor
   expect(report.failed).toHaveLength(1);
   expect(report.failed[0]?.sessionId).toBe("broken-session");
   expect(report.failed[0]?.message).toBe("Unsupported outcome receipt");
+});
+
+it("skips an aged session whose source and settlement captures are delivered", async () => {
+  const root = createArea();
+  const sessionId = "aged-settled-session";
+  await createSettlementSession(root, sessionId);
+  const { runtime, createdSessions, currentWakes } = createRuntime(root);
+
+  const report = await recoverTracingSessions(runtime, {
+    optionsForSession: () => {
+      throw new Error("Settled session should not request recovery options");
+    },
+    minimumForeignAgeMs: 60_000,
+    now: Date.now() + 3_600_000,
+  });
+
+  expect(createdSessions).toEqual([]);
+  expect(currentWakes).toEqual([]);
+  expect(report).toEqual({ scheduled: [], failed: [] });
+});
+
+it("recovers delivered source captures when their settlement capture is missing", async () => {
+  const root = createArea();
+  const sessionId = "missing-settlement-session";
+  await createSettlementSession(root, sessionId, false);
+  const { runtime, createdSessions, currentWakes } = createRuntime(root);
+
+  const report = await recoverTracingSessions(runtime, {
+    optionsForSession: () => sessionCallbacks(),
+    minimumForeignAgeMs: 60_000,
+    now: Date.now() + 3_600_000,
+  });
+
+  expect(createdSessions).toEqual([sessionId]);
+  expect(currentWakes).toEqual([]);
+  expect(report).toEqual({
+    scheduled: [{ sessionId, status: "queued" }],
+    failed: [],
+  });
+});
+
+it("recovers when a newer cross-turn source invalidates an older settlement", async () => {
+  const root = createArea();
+  const sessionId = "cross-turn-revision-session";
+  const { bridge, store, rootScope } = await createCrossTurnSettlementSession(root, sessionId);
+  const captures = await store.enumerate(integration, sessionId);
+  const parentSettlement = captures.find(
+    ({ record }) =>
+      record.turnId === rootScope.turnId && record.eventKind === LIFECYCLE_SETTLEMENT_EVENT_KIND,
+  )?.record;
+  if (!parentSettlement)
+    throw new Error("Cross-turn settlement fixture is missing its parent closure");
+  const newerScope: CaptureScope = {
+    integration,
+    sessionId,
+    turnId: "child-turn-initial",
+    eventId: "child-post-newer",
+  };
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+  const newerSource = await bridge.capture({
+    turnId: newerScope.turnId,
+    eventId: newerScope.eventId,
+    submission: recoveryRunPost(recoveryFirstChildRunId, "tool"),
+    turnEvidence: {
+      rootRunId: recoveryFirstChildRunId,
+      childRunIds: [],
+      closureState: "authoritative",
+    },
+    dependencies: [rootScope],
+  });
+  if (newerSource.status !== "published")
+    throw new Error(`Newer cross-turn source was not published: ${newerSource.status}`);
+  expect(newerSource.record.capturedAtMs).toBeGreaterThan(parentSettlement.capturedAtMs);
+  expect(parentSettlement.dependencies).not.toContainEqual(newerScope);
+  await recordDeliveredOutcomes(store, await store.enumerate(integration, sessionId));
+  const destinations = createLangSmithUploadWriter(writer).destinations;
+  const revisedWork = await settleCapturedTurns({
+    captures: await store.enumerate(integration, sessionId),
+    integration,
+    sessionId,
+    destinationFingerprint: bridge.accountFingerprint,
+    destinations,
+    capture: (input) => store.capture({ ...input, integration, sessionId }),
+    readOutcome: (scope, destination) => store.readOutcome(scope, destination),
+  });
+  const revisedParentSettlement = (await store.enumerate(integration, sessionId)).find(
+    ({ record }) =>
+      record.turnId === rootScope.turnId &&
+      record.eventKind === LIFECYCLE_SETTLEMENT_EVENT_KIND &&
+      record.eventId !== parentSettlement.eventId,
+  )?.record;
+  if (!revisedParentSettlement)
+    throw new Error("New cross-turn source did not create a revised parent closure");
+  if (!revisedWork.patches.some(({ turnId }) => turnId === rootScope.turnId))
+    throw new Error("Revised parent closure was not included in settlement work");
+  for (const { record } of await store.enumerate(integration, sessionId)) {
+    const scope: CaptureScope = {
+      integration: record.integration,
+      sessionId: record.sessionId,
+      turnId: record.turnId,
+      eventId: record.eventId,
+    };
+    const outcome =
+      record.eventKind === LIFECYCLE_SETTLEMENT_EVENT_KIND &&
+      record.eventId === revisedParentSettlement.eventId
+        ? "dropped"
+        : "delivered";
+    for (const destination of destinations) {
+      const result = await store.recordOutcome({ ...scope, destination: destination.id, outcome });
+      if (result.status !== "recorded" && result.status !== "duplicate")
+        throw new Error(`Could not mark revised settlement outcome: ${result.status}`);
+    }
+  }
+  const parentSettlementOutcome = await store.readOutcome(
+    {
+      integration,
+      sessionId,
+      turnId: revisedParentSettlement.turnId,
+      eventId: revisedParentSettlement.eventId,
+    },
+    destinations[0]!.id,
+  );
+  expect(parentSettlementOutcome).toMatchObject({
+    status: "settled",
+    receipt: { outcome: "dropped" },
+  });
+  const { runtime, createdSessions, currentWakes } = createRuntime(root);
+
+  const report = await recoverTracingSessions(runtime, {
+    optionsForSession: () => sessionCallbacks(),
+    minimumForeignAgeMs: 60_000,
+    now: Date.now() + 3_600_000,
+  });
+
+  expect(createdSessions).toEqual([sessionId]);
+  expect(currentWakes).toEqual([]);
+  expect(report).toEqual({
+    scheduled: [{ sessionId, status: "queued" }],
+    failed: [],
+  });
 });
 
 it("recovers stale current, foreign, and reconstruction work through localhost while preserving young and other-account captures", async () => {

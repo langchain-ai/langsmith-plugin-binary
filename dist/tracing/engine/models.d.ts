@@ -1,7 +1,7 @@
 import type { CodingAgentIntegration } from "../../metadata/models.js";
-import type { CaptureWriteResult } from "../../storage/capture/models.js";
+import type { CaptureStore, CaptureWriteResult, EnumeratedCapture } from "../../storage/capture/models.js";
 import type { BackgroundWorkerOptions, BackgroundWorkerRetryPolicy, BackgroundWorkerRunResult, BackgroundWorkerScope, BackgroundWorkerWakeResult } from "../background-worker/models.js";
-import type { DeliveryPolicy } from "../delivery/models.js";
+import type { DeliveryDestination, DeliveryPolicy } from "../delivery/models.js";
 import type { LifecycleCaptureInput, LifecycleCaptureResult, LifecycleSnapshotCaptureInput } from "../lifecycle/models.js";
 import type { ReconstructionCallback, ReconstructionJobInput } from "../reconstruction/models.js";
 import type { LangSmithUploadWriterOptions } from "../upload/models.js";
@@ -24,6 +24,14 @@ export interface TracingEngineRecoveryOptions {
     optionsForSession: (sessionId: string) => TracingEngineSessionCallbacks | Promise<TracingEngineSessionCallbacks>;
     minimumForeignAgeMs?: number;
     now?: number;
+}
+export interface TracingEngineRecoverySettlementAssessmentOptions {
+    captures: readonly EnumeratedCapture[];
+    integration: CodingAgentIntegration;
+    sessionId: string;
+    destinationFingerprint: string;
+    destinations: readonly DeliveryDestination[];
+    store: CaptureStore;
 }
 export interface TracingEngineRecoveryRuntime {
     storageRoot: string;
