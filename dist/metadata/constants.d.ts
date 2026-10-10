@@ -56,4 +56,6 @@ export declare const CODING_AGENT_INTEGRATION_POLICIES: {
 export declare const TRUSTED_METADATA: unique symbol;
 export declare const METADATA_MODE_STATUS_VALUES: readonly ["running", "completed", "error"];
 export declare const METADATA_MODE_NAME = "metadata";
+export declare const CODING_AGENT_METADATA_PROVENANCE_FIELDS: readonly ["integration", "integrationVersion", "runtimeVersion", "threadId", "turnId", "turnNumber", "agentType", "runType", "approvalPolicy", "subagentId", "subagentType", "clearSubagent", "toolName", "runName", "skillName", "modelName", "usageMetadata", "providerMetadata", "runSpecific", "base"];
+export declare const CODING_AGENT_METADATA_PROJECTION_FIELDS: readonly [readonly ["integrationVersion", "ls_integration_version"], readonly ["runtimeVersion", "ls_agent_runtime_version"], readonly ["turnId", "turn_id"], readonly ["turnNumber", "turn_number"], readonly ["approvalPolicy", "approval_policy"], readonly ["subagentId", "ls_subagent_id"], readonly ["subagentType", "ls_subagent_type"], readonly ["skillName", "ls_skill_name"], readonly ["modelName", "ls_model_name"]];
 //# sourceMappingURL=constants.d.ts.map

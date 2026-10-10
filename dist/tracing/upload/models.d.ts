@@ -60,6 +60,7 @@ export interface PreparedRunSubmissionBase {
 export interface PreparedRunPostSubmission extends PreparedRunSubmissionBase {
     operation: "post";
     run: NormalizedRunSnapshot;
+    privacyContext?: CodingAgentPrivacyContext;
 }
 export interface PreparedRunPatchSubmission extends PreparedRunSubmissionBase {
     operation: "patch";

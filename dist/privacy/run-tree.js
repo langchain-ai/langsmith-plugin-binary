@@ -113,4 +113,10 @@ export function createCodingAgentRunTree(config, integration, mode = "full", pri
     const run = new RunTree(mode === "metadata" ? configForMetadataMode(config, integration, privacyContext) : config);
     return mode === "metadata" ? protectRunTree(run, integration) : preserveFullModePatchInputs(run);
 }
+export function survivingCodingAgentPatchFields(projectedRun, fields) {
+    return fields.filter((field) => {
+        const descriptor = Object.getOwnPropertyDescriptor(projectedRun, field);
+        return (descriptor?.enumerable === true && "value" in descriptor && descriptor.value !== undefined);
+    });
+}
 //# sourceMappingURL=run-tree.js.map

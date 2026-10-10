@@ -118,4 +118,4 @@ jobs:
           ANTHROPIC_API_KEY: ""
         run: |
           mkdir -p "$RUNNER_TEMP/sdk-wire-home"
-          pnpm exec vitest run src/privacy/run-tree.test.ts src/tracing/upload/upload.test.ts --reporter=dot
+          pnpm exec vitest run src/privacy/run-tree.test.ts src/tracing/upload/upload.test.ts src/tracing/lifecycle/bridge.test.ts --reporter=dot

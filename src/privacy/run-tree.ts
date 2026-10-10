@@ -153,3 +153,15 @@ export function createCodingAgentRunTree(
   );
   return mode === "metadata" ? protectRunTree(run, integration) : preserveFullModePatchInputs(run);
 }
+
+export function survivingCodingAgentPatchFields(
+  projectedRun: Record<string, unknown>,
+  fields: readonly string[],
+): string[] {
+  return fields.filter((field) => {
+    const descriptor = Object.getOwnPropertyDescriptor(projectedRun, field);
+    return (
+      descriptor?.enumerable === true && "value" in descriptor && descriptor.value !== undefined
+    );
+  });
+}

@@ -72,6 +72,10 @@ export interface CodingAgentMetadataOptions {
   base?: Record<string, unknown> | undefined;
 }
 
+export type CodingAgentMetadataProvenanceResult =
+  | { status: "ready"; value: CodingAgentMetadataOptions }
+  | { status: "deferred" };
+
 export interface MetadataValidationIssue {
   key: string;
   reason: "missing" | "type" | "value" | "scope" | "integration";

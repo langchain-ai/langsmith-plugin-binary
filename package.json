@@ -44,6 +44,10 @@
       "types": "./dist/tracing/delivery/index.d.ts",
       "default": "./dist/tracing/delivery/index.js"
     },
+    "./tracing/lifecycle": {
+      "types": "./dist/tracing/lifecycle/index.d.ts",
+      "default": "./dist/tracing/lifecycle/index.js"
+    },
     "./metadata": {
       "types": "./dist/metadata/index.d.ts",
       "default": "./dist/metadata/index.js"

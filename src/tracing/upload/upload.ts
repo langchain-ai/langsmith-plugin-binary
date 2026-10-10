@@ -94,7 +94,12 @@ function preparePostRunPayload(
   if (source.reference_example_id !== undefined) {
     config.reference_example_id = source.reference_example_id;
   }
-  const run = createCodingAgentRunTree(config, submission.integration, submission.privacyMode);
+  const run = createCodingAgentRunTree(
+    config,
+    submission.integration,
+    submission.privacyMode,
+    submission.privacyContext,
+  );
   if (source.events !== undefined) run.events = source.events;
   return JSON.parse(JSON.stringify(run.toJSON())) as LangSmithRunCreate;
 }
