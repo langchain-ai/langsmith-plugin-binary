@@ -53,6 +53,9 @@ export function buildCodingAgentMetadata(
     options.runType,
   );
   const trusted = { ...identity, ...explicit, ...provider };
+  if (policy.metadataModePreservesToolName && options.toolName) {
+    trusted.ls_tool_name = options.toolName;
+  }
   const pieces = [identity, explicit, provider, options.runSpecific, options.base];
   const full = policy.fullModePrecedence === "custom-wins" ? pieces : pieces.toReversed();
   const result: Record<string, unknown> = {};

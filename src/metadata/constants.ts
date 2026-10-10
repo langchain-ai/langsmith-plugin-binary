@@ -65,16 +65,19 @@ export const CODING_AGENT_INTEGRATION_POLICIES = {
   "claude-code": {
     fullModePrecedence: "custom-wins",
     metadataModeUsesDirectMetadata: true,
+    metadataModePreservesToolName: false,
     legacyAliases: true,
   },
   cursor: {
     fullModePrecedence: "custom-wins",
     metadataModeUsesDirectMetadata: true,
+    metadataModePreservesToolName: true,
     legacyAliases: false,
   },
   "openai-codex": {
     fullModePrecedence: "structural-wins",
     metadataModeUsesDirectMetadata: false,
+    metadataModePreservesToolName: false,
     legacyAliases: false,
   },
 } as const satisfies Readonly<Record<CodingAgentIntegration, CodingAgentIntegrationPolicy>>;

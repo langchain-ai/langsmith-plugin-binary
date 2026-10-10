@@ -40,16 +40,19 @@ export declare const CODING_AGENT_INTEGRATION_POLICIES: {
     readonly "claude-code": {
         readonly fullModePrecedence: "custom-wins";
         readonly metadataModeUsesDirectMetadata: true;
+        readonly metadataModePreservesToolName: false;
         readonly legacyAliases: true;
     };
     readonly cursor: {
         readonly fullModePrecedence: "custom-wins";
         readonly metadataModeUsesDirectMetadata: true;
+        readonly metadataModePreservesToolName: true;
         readonly legacyAliases: false;
     };
     readonly "openai-codex": {
         readonly fullModePrecedence: "structural-wins";
         readonly metadataModeUsesDirectMetadata: false;
+        readonly metadataModePreservesToolName: false;
         readonly legacyAliases: false;
     };
 };

@@ -9,6 +9,21 @@ import {
 import type { CodingAgentRunType } from "./index.js";
 
 describe("coding-agent-v1 metadata contract", () => {
+  it("preserves Cursor's native tool name in muted metadata when it matches the run name", () => {
+    const metadata = buildCodingAgentMetadata({
+      integration: "cursor",
+      threadId: "session",
+      agentType: "root",
+      runType: "tool",
+      toolName: "ReadFile",
+      runName: "ReadFile",
+    });
+    expect(metadata).not.toHaveProperty("ls_tool_name");
+    expect(metadataForMode(metadata, "cursor", "metadata")).toMatchObject({
+      ls_tool_name: "ReadFile",
+    });
+  });
+
   it("keeps integration identity and versions explicit", () => {
     const metadata = buildCodingAgentMetadata({
       integration: "claude-code",

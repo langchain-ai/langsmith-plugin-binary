@@ -11,6 +11,7 @@ export type CodingAgentMetadataMode = "full" | "metadata";
 export interface CodingAgentIntegrationPolicy {
   fullModePrecedence: "custom-wins" | "structural-wins";
   metadataModeUsesDirectMetadata: boolean;
+  metadataModePreservesToolName: boolean;
   legacyAliases: boolean;
 }
 
