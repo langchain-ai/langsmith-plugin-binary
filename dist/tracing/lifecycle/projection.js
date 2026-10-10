@@ -2,7 +2,7 @@ import { buildCodingAgentMetadata, prepareCodingAgentMetadataProvenance, } from 
 import { createCodingAgentRunTree, survivingCodingAgentPatchFields, } from "../../privacy/index.js";
 import { canonicalJsonArray, canonicalJsonObject, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireString, requireStringArray, requireTimestamp, } from "../../utils/validation/objects.js";
 import { UPLOAD_PATCH_FIELDS } from "../upload/constants.js";
-import { ROOT_RUN_EXECUTION_ORDER } from "./constants.js";
+import { createRunIdentity } from "./identity.js";
 export function projectSubmission(value, integration, priorIdentity) {
     const source = requirePlainRecord(value, "Prepared run submission");
     if (requireOwnDataField(source, "integration") !== integration) {
@@ -209,26 +209,20 @@ function canonicalIdentity(run, prior, requireStableIdentity = false) {
     }
     const startTime = knownStartTime ?? Date.now();
     const result = { ...run, start_time: startTime };
-    const traceId = result.trace_id ??
-        reusable?.trace_id ??
-        (requireStableIdentity || result.parent_run_id !== undefined ? undefined : result.id);
-    const order = result.dotted_order ??
-        reusable?.dotted_order ??
-        (requireStableIdentity || result.parent_run_id !== undefined
-            ? undefined
-            : dottedOrder(startTime, result.id));
+    const canGenerateRootIdentity = !requireStableIdentity && result.parent_run_id === undefined;
+    const generatedOrder = canGenerateRootIdentity &&
+        result.dotted_order === undefined &&
+        reusable?.dotted_order === undefined
+        ? createRunIdentity({ id: result.id, start_time: startTime }).dotted_order
+        : undefined;
+    const traceId = result.trace_id ?? reusable?.trace_id ?? (canGenerateRootIdentity ? result.id : undefined);
+    const order = result.dotted_order ?? reusable?.dotted_order ?? generatedOrder;
     if (traceId === undefined || order === undefined) {
         throw new TypeError("Run context must preserve its canonical trace ID and dotted order");
     }
     result.trace_id = traceId;
     result.dotted_order = order;
     return result;
-}
-function dottedOrder(startTime, runId) {
-    const epoch = new Date(startTime).getTime();
-    const serialized = new Date(epoch).toISOString().slice(0, -1);
-    const precisionTime = `${serialized}${String(ROOT_RUN_EXECUTION_ORDER).padStart(3, "0")}Z`;
-    return `${precisionTime.replace(/[-:.]/gu, "")}${runId}`;
 }
 function normalizedPatch(value) {
     const source = requirePlainRecord(value, "Normalized run patch");

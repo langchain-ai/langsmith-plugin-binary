@@ -7,6 +7,7 @@ import {
 import {
   createCodingAgentRunTree,
   survivingCodingAgentPatchFields,
+  type CodingAgentPrivacyContext,
   type CodingAgentPrivacyStatus,
 } from "../../privacy/index.js";
 import {
@@ -28,8 +29,8 @@ import type {
   NormalizedRunPatchValues,
   NormalizedRunSnapshot,
 } from "../upload/models.js";
-import type { ProjectedSubmission, SubmissionProjectionResult } from "./models.js";
-import { ROOT_RUN_EXECUTION_ORDER } from "./constants.js";
+import { createRunIdentity } from "./identity.js";
+import type { ProjectedSubmission, RunIdentity, SubmissionProjectionResult } from "./models.js";
 
 export function projectSubmission(
   value: unknown,
@@ -159,7 +160,7 @@ function projectPatch(
   patch: NormalizedRunPatch,
   integration: CodingAgentIntegration,
   metadata: CodingAgentMetadataOptions,
-  privacyContext: { status: "running" | "completed" | "error" },
+  privacyContext: CodingAgentPrivacyContext,
 ): NormalizedRunPatch {
   const tree = createCodingAgentRunTree(
     {
@@ -277,7 +278,7 @@ function canonicalIdentity<T extends NormalizedRunContext>(
   run: T,
   prior?: NormalizedRunContext,
   requireStableIdentity = false,
-): T & { start_time: number | string; trace_id: string; dotted_order: string } {
+): T & RunIdentity {
   const reusable =
     prior?.id === run.id && prior.parent_run_id === run.parent_run_id ? prior : undefined;
   if (
@@ -294,29 +295,22 @@ function canonicalIdentity<T extends NormalizedRunContext>(
   }
   const startTime = knownStartTime ?? Date.now();
   const result: T = { ...run, start_time: startTime };
+  const canGenerateRootIdentity = !requireStableIdentity && result.parent_run_id === undefined;
+  const generatedOrder =
+    canGenerateRootIdentity &&
+    result.dotted_order === undefined &&
+    reusable?.dotted_order === undefined
+      ? createRunIdentity({ id: result.id, start_time: startTime }).dotted_order
+      : undefined;
   const traceId =
-    result.trace_id ??
-    reusable?.trace_id ??
-    (requireStableIdentity || result.parent_run_id !== undefined ? undefined : result.id);
-  const order =
-    result.dotted_order ??
-    reusable?.dotted_order ??
-    (requireStableIdentity || result.parent_run_id !== undefined
-      ? undefined
-      : dottedOrder(startTime, result.id));
+    result.trace_id ?? reusable?.trace_id ?? (canGenerateRootIdentity ? result.id : undefined);
+  const order = result.dotted_order ?? reusable?.dotted_order ?? generatedOrder;
   if (traceId === undefined || order === undefined) {
     throw new TypeError("Run context must preserve its canonical trace ID and dotted order");
   }
   result.trace_id = traceId;
   result.dotted_order = order;
-  return result as T & { start_time: number | string; trace_id: string; dotted_order: string };
-}
-
-function dottedOrder(startTime: number | string, runId: string): string {
-  const epoch = new Date(startTime).getTime();
-  const serialized = new Date(epoch).toISOString().slice(0, -1);
-  const precisionTime = `${serialized}${String(ROOT_RUN_EXECUTION_ORDER).padStart(3, "0")}Z`;
-  return `${precisionTime.replace(/[-:.]/gu, "")}${runId}`;
+  return result as T & RunIdentity;
 }
 
 function normalizedPatch(value: unknown): NormalizedRunPatch {
@@ -362,7 +356,7 @@ function normalizedPatch(value: unknown): NormalizedRunPatch {
   return { fields, values };
 }
 
-function privacyStatus(value: unknown): { status: "running" | "completed" | "error" } {
+function privacyStatus(value: unknown): CodingAgentPrivacyContext {
   const source = requirePlainRecord(value, "Patch privacy context");
   const status = requireOwnDataField(source, "status");
   if (status !== "running" && status !== "completed" && status !== "error") {
@@ -371,7 +365,7 @@ function privacyStatus(value: unknown): { status: "running" | "completed" | "err
   return { status };
 }
 
-function statusForPost(run: NormalizedRunSnapshot): "running" | "completed" | "error" {
+function statusForPost(run: NormalizedRunSnapshot): CodingAgentPrivacyStatus {
   if (run.error !== undefined) return "error";
   if (run.end_time !== undefined) return "completed";
   return "running";

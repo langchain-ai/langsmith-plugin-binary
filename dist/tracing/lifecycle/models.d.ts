@@ -13,6 +13,29 @@ export interface LifecycleTurnEvidence {
     childRunIds: string[];
     closureState: LifecycleTurnClosureState;
 }
+export interface RunIdentity {
+    id: string;
+    start_time: number | string;
+    parent_run_id?: string;
+    trace_id: string;
+    dotted_order: string;
+}
+export interface RunParentIdentity {
+    id: string;
+    parent_run_id?: string;
+    trace_id: string;
+    dotted_order: string;
+    start_time?: number | string;
+}
+export interface RunIdentityInput {
+    id: string;
+    start_time: number | string;
+    parent?: RunParentIdentity;
+}
+export interface DottedOrderSegment {
+    timestamp: string;
+    runId: string;
+}
 export type SubmissionProjectionResult = {
     status: "ready";
     value: ProjectedSubmission;
