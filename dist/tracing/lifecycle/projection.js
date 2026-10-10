@@ -1,6 +1,7 @@
 import { buildCodingAgentMetadata, prepareCodingAgentMetadataProvenance, } from "../../metadata/index.js";
 import { createCodingAgentRunTree, survivingCodingAgentPatchFields, } from "../../privacy/index.js";
 import { canonicalJsonArray, canonicalJsonObject, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireString, requireStringArray, requireTimestamp, } from "../../utils/validation/objects.js";
+import { normalizedRedactedFields } from "../upload/redaction.js";
 import { UPLOAD_PATCH_FIELDS } from "../upload/constants.js";
 import { createRunIdentity } from "./identity.js";
 export function projectSubmission(value, integration, priorIdentity) {
@@ -11,6 +12,9 @@ export function projectSubmission(value, integration, priorIdentity) {
     const privacyMode = requireOwnDataField(source, "privacyMode");
     if (privacyMode !== "full" && privacyMode !== "metadata")
         throw new TypeError("Invalid privacy mode");
+    const redactedField = ownDataField(source, "redactedFields");
+    const redactedFields = normalizedRedactedFields(redactedField.present ? redactedField.value : undefined);
+    const redaction = privacyMode === "full" && redactedFields.length > 0 ? { redactedFields } : {};
     const operation = requireOwnDataField(source, "operation");
     if (operation !== "post" && operation !== "patch")
         throw new TypeError("Invalid run operation");
@@ -30,6 +34,7 @@ export function projectSubmission(value, integration, priorIdentity) {
                 operation,
                 integration,
                 privacyMode,
+                ...redaction,
                 ...(privacyMode === "metadata" ? { privacyContext: { status } } : {}),
                 run: privacyMode === "metadata" ? projectPost(run, metadata.value, status) : run,
             },
@@ -48,6 +53,7 @@ export function projectSubmission(value, integration, priorIdentity) {
             operation,
             integration,
             privacyMode,
+            ...redaction,
             run,
             privacyContext,
             patch: privacyMode === "metadata"

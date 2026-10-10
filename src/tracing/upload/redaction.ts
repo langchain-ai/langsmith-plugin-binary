@@ -1,5 +1,11 @@
 import { createSecretAnonymizer } from "langsmith/anonymizer";
-import type { SdkOmittedRunFields, UploadAnonymizer, UploadRedactRule } from "./models.js";
+import { UPLOAD_REDACTED_FIELDS } from "./constants.js";
+import type {
+  RedactedRunField,
+  SdkOmittedRunFields,
+  UploadAnonymizer,
+  UploadRedactRule,
+} from "./models.js";
 
 export function createUploadAnonymizer(
   enabled: boolean,
@@ -25,4 +31,16 @@ export function redactSdkOmittedFields(
     payload["serialized"] = anonymizer(payload["serialized"]);
   }
   if (payload["events"] !== undefined) payload["events"] = anonymizer(payload["events"]);
+}
+
+export function normalizedRedactedFields(value: unknown): readonly RedactedRunField[] {
+  if (value === undefined) return [];
+  if (
+    !Array.isArray(value) ||
+    value.some((field) => !UPLOAD_REDACTED_FIELDS.includes(field)) ||
+    new Set(value).size !== value.length
+  ) {
+    throw new TypeError("Redacted fields must be unique inputs or outputs");
+  }
+  return UPLOAD_REDACTED_FIELDS.filter((field) => value.includes(field));
 }

@@ -15,6 +15,8 @@ import type {
 } from "../upload/models.js";
 import type { LocalRequest } from "../../test-support/models/lifecycle.js";
 import { createLifecycleBridge } from "./index.js";
+import { createReconstructionWorker } from "../reconstruction/index.js";
+import type { ReconstructionJob } from "../reconstruction/models.js";
 import type { LifecycleCaptureInput, LifecycleTurnEvidence } from "./models.js";
 
 const PRIVATE_MARKER = "lifecycle-private-content-marker";
@@ -135,6 +137,17 @@ afterEach(async () => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
 });
+
+async function reconstructRedactedSnapshot(job: ReconstructionJob) {
+  const source = job.sourceSnapshots![0]!;
+  expect(source.submission.redactedFields).toEqual(["outputs"]);
+  return {
+    status: "ready" as const,
+    outputs: [
+      { eventId: "redacted-patch", sourceRef: source.sourceRef, submission: source.submission },
+    ],
+  };
+}
 
 describe("durable run lifecycle bridge", () => {
   it("sends dependent creates and patches to localhost in prerequisite order", async () => {
@@ -514,6 +527,85 @@ describe("durable run lifecycle bridge", () => {
         git_commit_sha: "abc123",
       },
     });
+  });
+
+  it("preserves field redaction through saved captures and reconstruction restart", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-redacted-restart-"));
+    const sessionId = "redacted-restart";
+    const turnId = "redacted-turn";
+    const replacement = `${PRIVATE_MARKER}_replaced`;
+    const options = {
+      storageRoot: root,
+      integration: "claude-code" as const,
+      sessionId,
+      writer: {
+        destinations: [destination()],
+        redact: true,
+        redactExtraRules: [{ pattern: PRIVATE_MARKER, replace: replacement }],
+      },
+    };
+    const bridge = createLifecycleBridge(options);
+    const turnEvidence = { rootRunId: PARENT_ID, childRunIds: [], closureState: "open" as const };
+    const submission = post(PARENT_ID, metadata("claude-code", "root"), {
+      start_time: "2026-10-10T12:00:00.000Z",
+      trace_id: PARENT_ID,
+      dotted_order: PARENT_DOTTED_ORDER,
+      inputs: { value: replacement },
+    });
+    const captured = await bridge.capture({
+      turnId,
+      eventId: "redacted-post",
+      submission: { ...submission, redactedFields: ["inputs"] },
+      turnEvidence,
+    });
+    expect(captured.status).toBe("published");
+
+    const queued = createReconstructionWorker({
+      ...options,
+      bridge,
+      reconstruct: reconstructRedactedSnapshot,
+    });
+    await queued.enqueue({
+      turnId,
+      eventId: "redacted-job",
+      privacyMode: "full",
+      sourceRefs: ["redacted-source"],
+      turnEvidence,
+      sourceSnapshots: [
+        {
+          sourceRef: "redacted-source",
+          sourceAgeStartedAtMs: Date.now(),
+          submission: {
+            operation: "patch",
+            integration: "claude-code",
+            privacyMode: "full",
+            redactedFields: ["outputs"],
+            metadata: metadata("claude-code", "root"),
+            privacyContext: { status: "running" },
+            run: {
+              id: PARENT_ID,
+              name: submission.run.name,
+              run_type: submission.run.run_type,
+              start_time: "2026-10-10T12:00:00.000Z",
+              trace_id: PARENT_ID,
+              dotted_order: PARENT_DOTTED_ORDER,
+            },
+            patch: { fields: ["outputs"], values: { outputs: { value: replacement } } },
+          },
+        },
+      ],
+    });
+    const resumed = createLifecycleBridge(options);
+    await resumed.drain();
+    const worker = createReconstructionWorker({
+      ...options,
+      bridge: resumed,
+      reconstruct: reconstructRedactedSnapshot,
+    });
+    expect(await worker.drain()).toMatchObject({ captured: 1 });
+    await resumed.drain();
+    expect(requests[0]?.payload).toMatchObject({ inputs: { value: replacement } });
+    expect(requests[1]?.payload).toMatchObject({ outputs: { value: replacement } });
   });
 
   it("restores a parent end time after child receipts arrive from another turn", async () => {

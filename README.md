@@ -25,6 +25,8 @@ Keep event IDs stable across retries and link updates to their saved create oper
 
 Configure one primary destination and optional replicas on the writer. Configured replicas replace the implicit primary route, with stable destination-specific run IDs and separate delivery receipts. Metadata-only traces discard private content and replica updates.
 
+Adapters that redact inputs or outputs before saving can mark those fields in `redactedFields` on the prepared submission. The writer skips only those fields and still redacts metadata, errors and fresh replica output overrides.
+
 The shared metadata contract lives in `@langchain/plugins-base/metadata`. Native adapters supply hook-specific values while this package owns the common field names, identity rules and privacy projection. Runtime consumers supply a compatible `langsmith` peer dependency (`^0.9.0` or `^0.10.0`).
 
 ## Plugin adapters

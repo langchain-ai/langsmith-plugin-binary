@@ -13,4 +13,5 @@ export declare const UPLOAD_REPLICA_DOTTED_ORDER_ID_LENGTH = 36;
 export declare const UPLOAD_REPLICA_IDENTITY_UPDATE_FIELDS: ReadonlySet<string>;
 export declare const UPLOAD_REPLICA_PATCH_UPDATE_FIELDS: ReadonlySet<string>;
 export declare const UPLOAD_PATCH_FIELDS: ReadonlySet<NormalizedRunPatchField>;
+export declare const UPLOAD_REDACTED_FIELDS: readonly ["inputs", "outputs"];
 //# sourceMappingURL=constants.d.ts.map

@@ -3,12 +3,14 @@ import { createCodingAgentRunTree } from "../../privacy/index.js";
 import { isPlainRecord } from "../../utils/validation/objects.js";
 import { resolveUploadDestinations } from "./destinations.js";
 import { UPLOAD_PATCH_FIELDS } from "./constants.js";
-import { redactSdkOmittedFields } from "./redaction.js";
+import { createUploadClient } from "./client.js";
+import { normalizedRedactedFields, redactSdkOmittedFields } from "./redaction.js";
 import { remapReplicaRunContext, remapReplicaRunId } from "./replica-identifiers.js";
 export function createLangSmithUploadWriter(options) {
     const resolved = resolveUploadDestinations(options);
     const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
     const byId = new Map(resolved.destinations.map((destination) => [destination.id, destination]));
+    const redactedClients = new Map();
     return Object.freeze({
         accountFingerprint: resolved.accountFingerprint,
         destinations: Object.freeze(destinations),
@@ -17,6 +19,18 @@ export function createLangSmithUploadWriter(options) {
             if (!destination)
                 throw new TypeError("Unknown upload destination");
             validateSubmission(submission);
+            const redactedFields = normalizedRedactedFields(submission.redactedFields).filter((field) => submission.privacyMode === "full" &&
+                !(submission.operation === "patch" &&
+                    field === "outputs" &&
+                    Object.hasOwn(destination.updates ?? {}, "outputs")));
+            let client = destination.client;
+            if (redactedFields.length > 0) {
+                const key = JSON.stringify([destinationId, redactedFields]);
+                const previous = redactedClients.get(key);
+                client = previous ?? createUploadClient({ ...destination, redactedFields });
+                if (previous === undefined)
+                    redactedClients.set(key, client);
+            }
             const payload = submission.operation === "post"
                 ? preparePostRunPayload(submission, destination)
                 : preparePatchRunPayload(submission, destination);
@@ -31,10 +45,10 @@ export function createLangSmithUploadWriter(options) {
             };
             try {
                 if (submission.operation === "post") {
-                    await destination.client.createRun({ ...payload, project_name: destination.projectName }, clientOptions);
+                    await client.createRun({ ...payload, project_name: destination.projectName }, clientOptions);
                     return { destinationId, runId: submission.run.id, operation: "posted" };
                 }
-                await destination.client.updateRun(runIdForDestination(submission.run.id, destination), payload, clientOptions);
+                await client.updateRun(runIdForDestination(submission.run.id, destination), payload, clientOptions);
                 return { destinationId, runId: submission.run.id, operation: "patched" };
             }
             catch {

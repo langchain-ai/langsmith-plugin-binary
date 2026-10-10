@@ -1,4 +1,5 @@
 import { createSecretAnonymizer } from "langsmith/anonymizer";
+import { UPLOAD_REDACTED_FIELDS } from "./constants.js";
 export function createUploadAnonymizer(enabled, extraRules) {
     if (!enabled)
         return undefined;
@@ -18,5 +19,15 @@ export function redactSdkOmittedFields(payload, anonymizer) {
     }
     if (payload["events"] !== undefined)
         payload["events"] = anonymizer(payload["events"]);
+}
+export function normalizedRedactedFields(value) {
+    if (value === undefined)
+        return [];
+    if (!Array.isArray(value) ||
+        value.some((field) => !UPLOAD_REDACTED_FIELDS.includes(field)) ||
+        new Set(value).size !== value.length) {
+        throw new TypeError("Redacted fields must be unique inputs or outputs");
+    }
+    return UPLOAD_REDACTED_FIELDS.filter((field) => value.includes(field));
 }
 //# sourceMappingURL=redaction.js.map

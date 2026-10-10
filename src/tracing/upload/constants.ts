@@ -48,3 +48,5 @@ export const UPLOAD_PATCH_FIELDS: ReadonlySet<NormalizedRunPatchField> = new Set
   "events",
   "reference_example_id",
 ] as const);
+
+export const UPLOAD_REDACTED_FIELDS = ["inputs", "outputs"] as const;

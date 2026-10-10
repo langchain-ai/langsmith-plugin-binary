@@ -41,4 +41,5 @@ export const UPLOAD_PATCH_FIELDS = new Set([
     "events",
     "reference_example_id",
 ]);
+export const UPLOAD_REDACTED_FIELDS = ["inputs", "outputs"];
 //# sourceMappingURL=constants.js.map

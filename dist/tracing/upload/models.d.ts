@@ -52,9 +52,15 @@ export interface NormalizedRunPatch {
     fields: readonly NormalizedRunPatchField[];
     values: NormalizedRunPatchValues;
 }
+export type RedactedRunField = "inputs" | "outputs";
+export interface UploadClientOptions extends Omit<LangSmithUploadDestinationConfig, "projectName"> {
+    anonymizer?: UploadAnonymizer;
+    redactedFields?: readonly RedactedRunField[];
+}
 export interface PreparedRunSubmissionBase {
     integration: CodingAgentIntegration;
     privacyMode: CodingAgentMetadataMode;
+    redactedFields?: readonly RedactedRunField[];
     metadata: CodingAgentMetadataOptions;
 }
 export interface PreparedRunPostSubmission extends PreparedRunSubmissionBase {

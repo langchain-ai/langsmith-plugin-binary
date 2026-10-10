@@ -368,6 +368,77 @@ describe("shared replica routing", () => {
     expect(metadataPayload).not.toHaveProperty("tags");
   });
 
+  it("redacts only fresh fields while still protecting replica output overrides", async () => {
+    const writer = replicaWriter([{ projectName: "replica-project" }], true, [
+      { pattern: PRIVATE_MARKER, replace: REDACTED_MARKER },
+    ]);
+    const id = destinationId(writer.destinations);
+    const original = postSubmission(ROOT_V7_ID);
+    await writer.send(
+      {
+        ...original,
+        redactedFields: ["inputs"],
+        metadata: { ...metadata(), base: { custom: PRIVATE_MARKER } },
+        run: {
+          ...original.run,
+          inputs: { value: REDACTED_MARKER },
+          outputs: { value: PRIVATE_MARKER },
+          error: PRIVATE_MARKER,
+          tags: [PRIVATE_MARKER],
+        },
+      },
+      id,
+    );
+    expect(requests[0]?.payload).toMatchObject({
+      inputs: { value: REDACTED_MARKER },
+      outputs: { value: REDACTED_MARKER },
+      error: REDACTED_MARKER,
+      tags: [REDACTED_MARKER],
+      extra: { metadata: { custom: REDACTED_MARKER } },
+    });
+    const prepared = patchSubmission(ROOT_V7_ID, undefined, {
+      redactedFields: ["outputs"],
+      patch: {
+        fields: ["inputs", "outputs"],
+        values: { inputs: { value: PRIVATE_MARKER }, outputs: { value: REDACTED_MARKER } },
+      },
+    });
+    await writer.send(prepared, id);
+    expect(requests[1]?.payload).toMatchObject({
+      inputs: { value: REDACTED_MARKER },
+      outputs: { value: REDACTED_MARKER },
+    });
+    const replica = replicaWriter(
+      [{ projectName: "replica-project", updates: { outputs: { value: PRIVATE_MARKER } } }],
+      true,
+      [{ pattern: PRIVATE_MARKER, replace: REDACTED_MARKER }],
+    );
+    await replica.send(prepared, destinationId(replica.destinations));
+    expect(requests[2]?.payload).toMatchObject({ outputs: { value: REDACTED_MARKER } });
+    await replica.send(
+      {
+        ...original,
+        redactedFields: ["outputs"],
+        run: { ...original.run, outputs: { value: REDACTED_MARKER } },
+      },
+      destinationId(replica.destinations),
+    );
+    expect(requests[3]?.payload).toMatchObject({ outputs: { value: REDACTED_MARKER } });
+  });
+
+  it("rejects unsupported and repeated redacted fields before upload", async () => {
+    const writer = replicaWriter([{ projectName: "replica-project" }]);
+    for (const redactedFields of [null, ["metadata"], ["inputs", "inputs"]]) {
+      await expect(
+        writer.send(
+          { ...postSubmission(ROOT_V7_ID), redactedFields } as unknown as PreparedRunPostSubmission,
+          destinationId(writer.destinations),
+        ),
+      ).rejects.toThrow("Redacted fields must be unique inputs or outputs");
+    }
+    expect(requests).toHaveLength(0);
+  });
+
   it("keeps withheld end times out of replica updates", async () => {
     const endTime = "2025-01-01T00:01:00Z";
     const writer = replicaWriter([

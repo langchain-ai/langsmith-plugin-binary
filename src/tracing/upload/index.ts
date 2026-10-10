@@ -6,6 +6,7 @@ export type {
   LangSmithUploadWriterOptions,
   NormalizedRunSnapshot,
   PreparedRunSubmission,
+  RedactedRunField,
   UploadDestination,
   UploadOperation,
   UploadReceipt,

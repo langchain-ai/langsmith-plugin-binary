@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Client } from "langsmith";
+import { createUploadClient } from "./client.js";
 import { canonicalJsonObject } from "../../utils/validation/objects.js";
 import {
   UPLOAD_ACCOUNT_FINGERPRINT_PREFIX,
@@ -85,17 +85,11 @@ function resolveDestination(
   });
   const id = `${UPLOAD_DESTINATION_ID_PREFIX}${fingerprint(identity)}`;
   const anonymizer = createUploadAnonymizer(options.redact, options.redactExtraRules);
-  const client = new Client({
+  const client = createUploadClient({
     apiKey: config.apiKey,
     apiUrl,
-    workspaceId: workspaceId ?? "",
-    autoBatchTracing: false,
-    tracingSamplingRate: 1,
-    disablePromptCache: true,
-    debug: false,
-    omitTracedRuntimeInfo: true,
-    tracingMode: "langsmith",
-    ...(anonymizer === undefined ? {} : { anonymizer, hideMetadata: anonymizer }),
+    ...(workspaceId === undefined ? {} : { workspaceId }),
+    ...(anonymizer === undefined ? {} : { anonymizer }),
   });
   return {
     id,

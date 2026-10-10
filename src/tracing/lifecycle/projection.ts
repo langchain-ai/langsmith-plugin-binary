@@ -21,6 +21,7 @@ import {
   requireStringArray,
   requireTimestamp,
 } from "../../utils/validation/objects.js";
+import { normalizedRedactedFields } from "../upload/redaction.js";
 import { UPLOAD_PATCH_FIELDS } from "../upload/constants.js";
 import type {
   NormalizedRunContext,
@@ -44,6 +45,11 @@ export function projectSubmission(
   const privacyMode = requireOwnDataField(source, "privacyMode");
   if (privacyMode !== "full" && privacyMode !== "metadata")
     throw new TypeError("Invalid privacy mode");
+  const redactedField = ownDataField(source, "redactedFields");
+  const redactedFields = normalizedRedactedFields(
+    redactedField.present ? redactedField.value : undefined,
+  );
+  const redaction = privacyMode === "full" && redactedFields.length > 0 ? { redactedFields } : {};
   const operation = requireOwnDataField(source, "operation");
   if (operation !== "post" && operation !== "patch") throw new TypeError("Invalid run operation");
 
@@ -71,6 +77,7 @@ export function projectSubmission(
         operation,
         integration,
         privacyMode,
+        ...redaction,
         ...(privacyMode === "metadata" ? { privacyContext: { status } } : {}),
         run: privacyMode === "metadata" ? projectPost(run, metadata.value, status) : run,
       },
@@ -98,6 +105,7 @@ export function projectSubmission(
       operation,
       integration,
       privacyMode,
+      ...redaction,
       run,
       privacyContext,
       patch:
