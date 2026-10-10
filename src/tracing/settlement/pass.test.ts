@@ -11,7 +11,7 @@ import type {
 import type { CodingAgentMetadataOptions } from "../../metadata/models.js";
 import { createLifecycleBridge } from "../lifecycle/index.js";
 import type { LifecycleTurnEvidence } from "../lifecycle/models.js";
-import type { PreparedRunPostSubmission } from "../upload/models.js";
+import type { PreparedRunPatchSubmission, PreparedRunPostSubmission } from "../upload/models.js";
 import { refreshSettlementProgress, settleCapturedTurns } from "./pass.js";
 
 const SESSION_ID = "settlement-test-session";
@@ -77,7 +77,12 @@ function evidence(
   };
 }
 
-async function fixture(closureState: LifecycleTurnEvidence["closureState"], includeRoot = true) {
+async function fixture(
+  closureState: LifecycleTurnEvidence["closureState"],
+  includeRoot = true,
+  rootEventId = "event-root",
+  childEventId = "event-child",
+) {
   const storageRoot = await mkdtemp(join(tmpdir(), "plugins-base-settlement-pass-"));
   const bridge = createLifecycleBridge({
     storageRoot,
@@ -95,7 +100,7 @@ async function fixture(closureState: LifecycleTurnEvidence["closureState"], incl
     },
   });
   const store = createCaptureStore(storageRoot);
-  const rootScope = scope("event-root");
+  const rootScope = scope(rootEventId);
   await bridge.capture({
     turnId: TURN_ID,
     eventId: rootScope.eventId,
@@ -104,7 +109,7 @@ async function fixture(closureState: LifecycleTurnEvidence["closureState"], incl
   });
   await bridge.capture({
     turnId: TURN_ID,
-    eventId: "event-child",
+    eventId: childEventId,
     submission: post(CHILD_ID, "tool"),
     turnEvidence: evidence(closureState, includeRoot),
     dependencies: [rootScope],
@@ -146,9 +151,10 @@ async function settle(
   store: CaptureStore,
   bridge: Awaited<ReturnType<typeof fixture>>["bridge"],
   destinations: readonly string[],
+  captures?: readonly EnumeratedCapture[],
 ) {
   return settleCapturedTurns({
-    captures: await store.enumerate("claude-code", SESSION_ID),
+    captures: captures ?? (await store.enumerate("claude-code", SESSION_ID)),
     integration: "claude-code",
     sessionId: SESSION_ID,
     destinationFingerprint: bridge.accountFingerprint,
@@ -255,6 +261,64 @@ describe("captured turn settlement", () => {
     expect(second.patches).toHaveLength(1);
     expect(second.patches[0]?.scope.eventId).toMatch(/^turn-settlement-/);
     expect(second.patches[0]?.scope.eventId).not.toBe(firstEventId);
+  });
+
+  it("orders transitive source dependencies before applying a same-time root revision", async () => {
+    const { bridge, store } = await fixture("authoritative", true, "z-root", "a-child");
+    const revision: PreparedRunPatchSubmission = {
+      operation: "patch",
+      integration: "claude-code",
+      privacyMode: "full",
+      metadata: { ...metadata("root"), base: { ...REPOSITORY, git_branch: "release" } },
+      run: {
+        id: ROOT_ID,
+        name: "test run",
+        run_type: "chain",
+        start_time: "2026-10-10T12:00:00.000Z",
+        trace_id: ROOT_ID,
+        dotted_order: ROOT_ORDER,
+      },
+      privacyContext: { status: "completed" },
+      patch: { fields: [], values: {} },
+    };
+    await bridge.capture({
+      turnId: TURN_ID,
+      eventId: "b-root-revision",
+      submission: revision,
+      turnEvidence: evidence("authoritative"),
+      dependencies: [scope("a-child")],
+    });
+    const captures = await store.enumerate("claude-code", SESSION_ID);
+    await recordReceipts(store, captures, ["destination-a"]);
+    const sameTimeCaptures = captures.map((capture) => ({
+      ...capture,
+      capturedAtMs: 1,
+      record: { ...capture.record, capturedAtMs: 1 },
+    }));
+
+    const work = await settle(store, bridge, ["destination-a"], sameTimeCaptures);
+    const childSettlement = (await store.enumerate("claude-code", SESSION_ID)).find(
+      ({ record }) => record.eventKind === "run-settlement-patch" && record.runId === CHILD_ID,
+    );
+
+    expect(work.patches).toHaveLength(1);
+    expect(childSettlement?.record.metadataProvenance).toMatchObject({
+      base: { git_branch: "release" },
+    });
+  });
+
+  it("rejects cycles in source capture dependencies", async () => {
+    const { bridge, store } = await fixture("authoritative");
+    const captures = await store.enumerate("claude-code", SESSION_ID);
+    const cyclicCaptures = captures.map((capture) =>
+      capture.record.runId === ROOT_ID
+        ? { ...capture, record: { ...capture.record, dependencies: [scope("event-child")] } }
+        : capture,
+    );
+
+    await expect(settle(store, bridge, ["destination-a"], cyclicCaptures)).rejects.toThrow(
+      "Source capture dependencies contain a cycle",
+    );
   });
 
   it("removes stale pending details after every settlement patch is delivered", async () => {
