@@ -1,47 +1,40 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createGitHubLoginFallback } from "./github-login.js";
 
+vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
+
 const root = mkdtempSync(join(tmpdir(), "plugins-base gh login "));
-const bin = join(root, "bin");
-const argsPath = join(root, "gh args");
 const markerPath = join(root, "custom state", "login marker.json");
 
-beforeAll(() => {
-  mkdirSync(bin);
-  writeFileSync(
-    join(bin, "gh"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GH_PROBE_ARGS"\nprintf '%s\\n' "$GH_PROBE_OUTPUT"\n`,
-    { mode: 0o755 },
-  );
-});
-
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => vi.resetAllMocks());
 
 it("uses its configured marker and retries a failed GitHub lookup only after the quiet period", () => {
   const now = 1_800_000_000_000;
-  vi.stubEnv("HOME", root);
-  vi.stubEnv("PATH", bin);
-  vi.stubEnv("GH_PROBE_ARGS", argsPath);
-  vi.stubEnv("GH_PROBE_OUTPUT", "null");
+  const lookup = vi.mocked(execFileSync).mockReturnValue("null");
   const failedLookup = createGitHubLoginFallback({ markerPath, now: () => now });
 
   expect(failedLookup()).toBeUndefined();
   expect(existsSync(markerPath)).toBe(true);
-  expect(readFileSync(argsPath, "utf-8").trim()).toBe("api user --jq .login");
+  expect(lookup).toHaveBeenCalledWith("gh", ["api", "user", "--jq", ".login"], {
+    encoding: "utf-8",
+    timeout: 5_000,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
 
   const duringQuietPeriod = createGitHubLoginFallback({ markerPath, now: () => now + 1_000 });
   expect(duringQuietPeriod()).toBeUndefined();
-  expect(readFileSync(argsPath, "utf-8").trim().split("\n")).toHaveLength(1);
+  expect(lookup).toHaveBeenCalledTimes(1);
 
-  vi.stubEnv("GH_PROBE_OUTPUT", "recovered-user");
+  lookup.mockReturnValue("recovered-user");
   const afterQuietPeriod = createGitHubLoginFallback({
     markerPath,
     now: () => now + 24 * 60 * 60 * 1000 + 1,
   });
   expect(afterQuietPeriod()).toBe("recovered-user");
   expect(afterQuietPeriod()).toBe("recovered-user");
-  expect(readFileSync(argsPath, "utf-8").trim().split("\n")).toHaveLength(2);
+  expect(lookup).toHaveBeenCalledTimes(2);
 });
