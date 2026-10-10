@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import { createDeliveryCoordinator } from "../delivery/index.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
+import { refreshSettlementProgress, settleCapturedTurns } from "../settlement/index.js";
 import { canonicalJsonObject, canonicalJsonValue, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireStringArray, requireTimestamp, } from "../../utils/validation/objects.js";
 import { snapshotData } from "../../utils/validation/snapshot.js";
 import { LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_TURN_CLOSURE_STATES, } from "./constants.js";
@@ -73,7 +74,7 @@ export function createLifecycleBridge(options) {
             return result;
         },
         async drain(input = {}) {
-            const result = await coordinator.drain({
+            const drainRequest = {
                 writer: {
                     accountFingerprint: writer.accountFingerprint,
                     destinations: writer.destinations,
@@ -85,11 +86,39 @@ export function createLifecycleBridge(options) {
                     },
                 },
                 ...(input.now === undefined ? {} : { now: input.now }),
+            };
+            const first = await coordinator.drain(drainRequest);
+            if (first.status === "busy")
+                return { status: "busy", settlement: { captured: 0, turns: [] } };
+            const readOutcome = (scope, destination) => captureStore.readOutcome(scope, destination);
+            const work = await settleCapturedTurns({
+                captures: await captureStore.enumerate(integration, sessionId),
+                integration,
+                sessionId,
+                destinationFingerprint: writer.accountFingerprint,
+                destinations: writer.destinations,
+                capture: (capture) => coordinator.capture(capture),
+                readOutcome,
             });
+            let result = first;
+            if (work.progress.captured > 0) {
+                const second = await coordinator.drain(drainRequest);
+                if (second.status === "drained") {
+                    result = {
+                        status: "drained",
+                        delivered: first.delivered + second.delivered,
+                        dropped: first.dropped + second.dropped,
+                        failed: first.failed + second.failed,
+                        pending: second.pending,
+                        accountMismatch: second.accountMismatch,
+                    };
+                }
+            }
+            const settlement = await refreshSettlementProgress(work, writer.destinations, readOutcome);
             if (result.status === "drained" && result.delivered + result.dropped > 0) {
                 await wake?.();
             }
-            return result;
+            return { ...result, settlement };
         },
     });
 }
@@ -146,6 +175,10 @@ function projectTurnEvidence(value, mode) {
         childRunIds,
         closureState: closureState,
     };
+    const rootRunId = ownDataField(source, "rootRunId");
+    if (rootRunId.present && rootRunId.value !== undefined) {
+        structural.rootRunId = requireNonBlankString(rootRunId.value, "Root run ID");
+    }
     return canonicalJsonValue(mode === "metadata" ? structural : source);
 }
 function restoreSubmission(record, integration) {

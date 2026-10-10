@@ -1,0 +1,446 @@
+import { createHash } from "node:crypto";
+import { buildCodingAgentMetadata, CODING_AGENT_INTEGRATION_POLICIES, } from "../../metadata/index.js";
+import { canonicalJsonObject, canonicalJsonValue, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireStringArray, } from "../../utils/validation/objects.js";
+import { LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLEMENT_EVENT_KIND, LIFECYCLE_TURN_CLOSURE_STATES, } from "../lifecycle/constants.js";
+import { projectSubmission } from "../lifecycle/projection.js";
+import { SETTLEMENT_EVENT_ID_PREFIX } from "./constants.js";
+import { attributionOf, metadataAfterFill, turnAttribution } from "./settlement.js";
+export async function settleCapturedTurns(options) {
+    if (options.destinations.length === 0)
+        throw new TypeError("At least one settlement destination is required");
+    const sourceRecords = options.captures
+        .map(({ record }) => record)
+        .filter((record) => record.integration === options.integration &&
+        record.sessionId === options.sessionId &&
+        record.destinationFingerprint === options.destinationFingerprint &&
+        (record.eventKind === LIFECYCLE_POST_EVENT_KIND ||
+            record.eventKind === LIFECYCLE_PATCH_EVENT_KIND));
+    const generatedRecords = options.captures
+        .map(({ record }) => record)
+        .filter((record) => record.integration === options.integration &&
+        record.sessionId === options.sessionId &&
+        record.destinationFingerprint === options.destinationFingerprint &&
+        record.eventKind === LIFECYCLE_SETTLEMENT_EVENT_KIND);
+    const projected = new Map();
+    for (const record of sourceRecords) {
+        const capture = projectCapture(record, options.integration);
+        if (capture === undefined)
+            continue;
+        const turn = projected.get(record.turnId) ?? [];
+        turn.push(capture);
+        projected.set(record.turnId, turn);
+    }
+    const generatedByTurn = groupByTurn(generatedRecords);
+    const turns = [...new Set([...projected.keys(), ...generatedByTurn.keys()])].toSorted();
+    const reports = [];
+    const patches = [];
+    let captured = 0;
+    for (const turnId of turns) {
+        const events = projected.get(turnId) ?? [];
+        const generated = generatedByTurn.get(turnId) ?? [];
+        const result = await settleOneTurn(turnId, events, generated, options);
+        reports.push(result.report);
+        patches.push(...result.patches);
+        captured += result.captured;
+    }
+    return { progress: { captured, turns: reports }, patches };
+}
+export async function refreshSettlementProgress(work, destinations, readOutcome) {
+    const patchesByTurn = new Map();
+    for (const patch of work.patches) {
+        const turn = patchesByTurn.get(patch.turnId) ?? [];
+        turn.push(patch);
+        patchesByTurn.set(patch.turnId, turn);
+    }
+    const turns = [];
+    for (const entry of work.progress.turns) {
+        const patches = patchesByTurn.get(entry.turnId) ?? [];
+        if (patches.length === 0 || (entry.status !== "pending" && entry.status !== "settled")) {
+            turns.push(entry);
+            continue;
+        }
+        const readiness = await captureReadiness(patches.map(({ scope }) => scope), destinations, readOutcome);
+        const { reason: previousReason, destinations: previousDestinations, ...unchanged } = entry;
+        const reason = readiness.status === "delivered"
+            ? previousReason === "settlement-pending"
+                ? undefined
+                : previousReason
+            : readiness.status === "dropped"
+                ? "settlement-dropped"
+                : "settlement-pending";
+        const reportDestinations = readiness.destinations.length > 0
+            ? readiness.destinations
+            : previousReason === "settlement-pending"
+                ? undefined
+                : previousDestinations;
+        turns.push({
+            ...unchanged,
+            status: readiness.status === "dropped"
+                ? "blocked"
+                : readiness.status === "pending"
+                    ? "pending"
+                    : "settled",
+            ...(reason === undefined ? {} : { reason }),
+            ...(reportDestinations === undefined ? {} : { destinations: reportDestinations }),
+        });
+    }
+    return { captured: work.progress.captured, turns };
+}
+async function settleOneTurn(turnId, events, generated, options) {
+    const rootRunIds = new Set();
+    const childRunIds = new Set();
+    let closureState = "open";
+    for (const event of events) {
+        const evidence = parseEvidence(event.record.turnEvidence);
+        if (evidence.rootRunId !== undefined)
+            rootRunIds.add(evidence.rootRunId);
+        for (const childRunId of evidence.childRunIds)
+            childRunIds.add(childRunId);
+        if (closureRank(evidence.closureState) > closureRank(closureState))
+            closureState = evidence.closureState;
+    }
+    if (rootRunIds.size === 0)
+        return { report: report(turnId, "deferred", "missing-root"), patches: [], captured: 0 };
+    if (rootRunIds.size > 1)
+        return {
+            report: report(turnId, "blocked", "conflicting-root", [...rootRunIds].toSorted()),
+            patches: [],
+            captured: 0,
+        };
+    if (closureState !== "authoritative") {
+        return {
+            report: report(turnId, "deferred", closureState),
+            patches: [],
+            captured: 0,
+        };
+    }
+    const rootRunId = [...rootRunIds][0];
+    childRunIds.delete(rootRunId);
+    const requiredRunIds = [rootRunId, ...[...childRunIds].toSorted()];
+    const byRunId = new Map();
+    for (const event of events) {
+        const runEvents = byRunId.get(event.record.runId) ?? [];
+        runEvents.push(event);
+        byRunId.set(event.record.runId, runEvents);
+    }
+    for (const runId of requiredRunIds) {
+        if (!(byRunId.get(runId) ?? []).some(({ payload }) => payload.operation === "post")) {
+            return {
+                report: report(turnId, "deferred", "missing-run", [runId]),
+                patches: [],
+                captured: 0,
+            };
+        }
+    }
+    const sourceScopes = uniqueScopes(events.map(({ record }) => captureScope(record)));
+    const sourceReadiness = await captureReadiness(sourceScopes, options.destinations, options.readOutcome);
+    if (sourceReadiness.status === "dropped") {
+        return {
+            report: report(turnId, "blocked", "source-dropped", requiredRunIds, sourceReadiness.destinations),
+            patches: [],
+            captured: 0,
+        };
+    }
+    if (sourceReadiness.status === "pending") {
+        return {
+            report: report(turnId, "pending", "source-pending", requiredRunIds, sourceReadiness.destinations),
+            patches: [],
+            captured: 0,
+        };
+    }
+    const runEvents = new Map();
+    const recorded = new Map();
+    for (const runId of requiredRunIds) {
+        const captures = (byRunId.get(runId) ?? []).toSorted(compareProjectedCaptures);
+        runEvents.set(runId, captures);
+        recorded.set(runId, recordRun(captures));
+    }
+    const root = recorded.get(rootRunId);
+    const children = requiredRunIds
+        .filter((runId) => runId !== rootRunId)
+        .map((runId) => recorded.get(runId));
+    const turn = {
+        path: "",
+        origin: "capture",
+        root,
+        children,
+        turnId,
+        closed: true,
+        delivered: new Set(requiredRunIds),
+        fixed: new Set(),
+    };
+    const attribution = turnAttribution(turn);
+    if (attribution === undefined)
+        return { report: report(turnId, "settled", "no-attribution"), patches: [], captured: 0 };
+    const dependencies = sourceScopes;
+    const patches = [];
+    let captured = 0;
+    for (const runId of requiredRunIds) {
+        const captureEvents = runEvents.get(runId);
+        const latest = captureEvents.at(-1);
+        const run = recorded.get(runId);
+        const merged = metadataAfterFill(run, attribution);
+        if (merged === undefined)
+            continue;
+        const currentAttribution = attributionOf(run.metadata);
+        const added = Object.fromEntries(Object.entries(attribution).filter(([key]) => currentAttribution[key] === undefined));
+        if (Object.keys(added).length === 0)
+            continue;
+        const metadata = addAttribution(mergeMetadataOptions(captureEvents), added);
+        const updatedMetadata = buildCodingAgentMetadata(metadata);
+        if (Object.entries(added).some(([key, value]) => updatedMetadata[key] !== value))
+            throw new Error("Settlement metadata could not preserve attribution");
+        const payload = patchPayload(latest, metadata, options.integration);
+        const eventId = settlementEventId(turnId, runId, dependencies, rootRunId, childRunIds, added);
+        const scope = {
+            integration: options.integration,
+            sessionId: options.sessionId,
+            turnId,
+            eventId,
+        };
+        const previous = generated
+            .filter((item) => item.runId === runId && item.eventId !== eventId)
+            .toSorted(compareCaptures)
+            .at(-1);
+        const previousDependency = previous === undefined ? [] : [captureScope(previous)];
+        if (previous !== undefined) {
+            const previousReadiness = await captureReadiness(previousDependency, options.destinations, options.readOutcome);
+            if (previousReadiness.status === "dropped") {
+                return {
+                    report: report(turnId, "blocked", "settlement-dropped", [runId], previousReadiness.destinations),
+                    patches,
+                    captured,
+                };
+            }
+        }
+        const result = await options.capture({
+            turnId,
+            eventId,
+            runId,
+            destinationFingerprint: options.destinationFingerprint,
+            eventKind: LIFECYCLE_SETTLEMENT_EVENT_KIND,
+            normalizedPayload: canonicalJsonValue(payload),
+            metadataProvenance: canonicalJsonValue(metadata),
+            turnEvidence: canonicalJsonValue({
+                rootRunId,
+                childRunIds: [...childRunIds].toSorted(),
+                closureState,
+            }),
+            dependencies: uniqueScopes([...dependencies, ...previousDependency]),
+        });
+        if (result.status === "failed" || result.status === "conflict")
+            throw new Error(`Could not capture settled run ${runId}: ${result.status}`);
+        if (result.status === "published")
+            captured += 1;
+        patches.push({ turnId, runId, scope });
+    }
+    const reportResult = report(turnId, patches.length === 0 ? "settled" : "pending", patches.length === 0 ? "no-change" : "settlement-pending", patches.map(({ runId }) => runId));
+    return { report: { ...reportResult, patches: patches.length }, patches, captured };
+}
+function projectCapture(record, integration) {
+    const rawPayload = canonicalJsonObject(record.normalizedPayload, "Stored run payload");
+    const submission = projectSubmission({ ...rawPayload, metadata: record.metadataProvenance }, integration);
+    if (submission.status === "deferred")
+        return undefined;
+    const expectedKind = submission.value.payload.operation === "post"
+        ? LIFECYCLE_POST_EVENT_KIND
+        : LIFECYCLE_PATCH_EVENT_KIND;
+    if (record.eventKind !== expectedKind)
+        throw new TypeError("Capture event kind does not match its operation");
+    return {
+        record,
+        payload: submission.value.payload,
+        metadata: submission.value.metadata,
+        open: captureIsOpen(submission.value.payload),
+    };
+}
+function captureIsOpen(payload) {
+    if (payload.operation === "post")
+        return payload.run.end_time === undefined && payload.run.error === undefined;
+    if (payload.privacyContext.status === "running")
+        return true;
+    return false;
+}
+function recordRun(events) {
+    const ordered = events.toSorted(compareProjectedCaptures);
+    const latest = ordered.at(-1);
+    const run = latest.payload.run;
+    return {
+        run_id: latest.record.runId,
+        ...(run.parent_run_id === undefined ? {} : { parent_run_id: run.parent_run_id }),
+        trace_id: requireNonBlankString(run.trace_id, "Trace ID"),
+        dotted_order: requireNonBlankString(run.dotted_order, "Dotted order"),
+        name: requireNonBlankString(run.name, "Run name"),
+        run_type: requireNonBlankString(run.run_type, "Run type"),
+        tracing: latest.payload.privacyMode,
+        open: latest.open,
+        metadata: buildCodingAgentMetadata(mergeMetadataOptions(ordered)),
+    };
+}
+function mergeMetadataOptions(captures) {
+    const first = captures[0];
+    if (first === undefined)
+        throw new Error("Run metadata is required for settlement");
+    let merged = first.metadata;
+    for (const { metadata } of captures.slice(1)) {
+        const base = mergeMetadataObject(merged.base, metadata.base);
+        const runSpecific = mergeMetadataObject(merged.runSpecific, metadata.runSpecific);
+        const providerMetadata = mergeMetadataObject(merged.providerMetadata, metadata.providerMetadata);
+        const usageMetadata = mergeMetadataObject(merged.usageMetadata, metadata.usageMetadata);
+        merged = {
+            ...merged,
+            ...metadata,
+            ...(base === undefined ? {} : { base }),
+            ...(runSpecific === undefined ? {} : { runSpecific }),
+            ...(providerMetadata === undefined ? {} : { providerMetadata }),
+            ...(usageMetadata === undefined ? {} : { usageMetadata }),
+        };
+    }
+    return merged;
+}
+function mergeMetadataObject(previous, current) {
+    if (previous === undefined && current === undefined)
+        return undefined;
+    return { ...previous, ...current };
+}
+function patchPayload(source, metadata, integration) {
+    const context = source.payload.run;
+    const submission = {
+        operation: "patch",
+        integration,
+        privacyMode: source.payload.privacyMode,
+        metadata,
+        run: {
+            id: context.id,
+            name: context.name,
+            run_type: context.run_type,
+            ...(context.start_time === undefined ? {} : { start_time: context.start_time }),
+            ...(context.parent_run_id === undefined ? {} : { parent_run_id: context.parent_run_id }),
+            ...(context.trace_id === undefined ? {} : { trace_id: context.trace_id }),
+            ...(context.dotted_order === undefined ? {} : { dotted_order: context.dotted_order }),
+        },
+        privacyContext: source.payload.operation === "patch"
+            ? source.payload.privacyContext
+            : {
+                status: source.payload.privacyContext?.status ??
+                    (source.payload.run.error !== undefined
+                        ? "error"
+                        : source.payload.run.end_time !== undefined
+                            ? "completed"
+                            : "running"),
+            },
+        patch: { fields: [], values: {} },
+    };
+    const projected = projectSubmission(submission, integration);
+    if (projected.status === "deferred")
+        throw new Error("Settlement patch lost thread identity");
+    return projected.value.payload;
+}
+function addAttribution(metadata, attribution) {
+    const layer = CODING_AGENT_INTEGRATION_POLICIES[metadata.integration].fullModePrecedence === "custom-wins"
+        ? "base"
+        : "runSpecific";
+    const previous = metadata[layer] ?? {};
+    return { ...metadata, [layer]: { ...previous, ...attribution } };
+}
+function parseEvidence(value) {
+    const source = requirePlainRecord(value, "Stored turn evidence");
+    const childRunIds = requireStringArray(requireOwnDataField(source, "childRunIds"), "Child run IDs").map((runId) => requireNonBlankString(runId, "Child run ID"));
+    const closureState = requireOwnDataField(source, "closureState");
+    if (typeof closureState !== "string" ||
+        !LIFECYCLE_TURN_CLOSURE_STATES.includes(closureState)) {
+        throw new TypeError("Stored turn evidence has an invalid closure state");
+    }
+    const result = {
+        childRunIds,
+        closureState: closureState,
+    };
+    const rootRunId = ownDataField(source, "rootRunId");
+    if (rootRunId.present && rootRunId.value !== undefined)
+        result.rootRunId = requireNonBlankString(rootRunId.value, "Root run ID");
+    return result;
+}
+function closureRank(state) {
+    return state === "authoritative" ? 2 : state === "provisional" ? 1 : 0;
+}
+async function captureReadiness(scopes, destinations, readOutcome) {
+    const pending = new Set();
+    const dropped = new Set();
+    for (const scope of scopes) {
+        for (const destination of destinations) {
+            const outcome = await readOutcome(scope, destination.id);
+            if (outcome.status === "failed")
+                throw new Error(`Could not read settlement receipt: ${outcome.code}`);
+            if (outcome.status === "settled") {
+                if (outcome.receipt.outcome === "dropped")
+                    dropped.add(destination.id);
+            }
+            else {
+                pending.add(destination.id);
+            }
+        }
+    }
+    return dropped.size > 0
+        ? { status: "dropped", destinations: [...dropped].toSorted() }
+        : pending.size > 0
+            ? { status: "pending", destinations: [...pending].toSorted() }
+            : { status: "delivered", destinations: [] };
+}
+function settlementEventId(turnId, runId, dependencies, rootRunId, childRunIds, attribution) {
+    const revision = createHash("sha256")
+        .update(JSON.stringify({
+        turnId,
+        runId,
+        rootRunId,
+        childRunIds: [...childRunIds].toSorted(),
+        dependencies: dependencies.toSorted(compareScopes),
+        attribution,
+    }))
+        .digest("hex");
+    return `${SETTLEMENT_EVENT_ID_PREFIX}${revision}`;
+}
+function uniqueScopes(scopes) {
+    const unique = new Map();
+    for (const scope of scopes)
+        unique.set(JSON.stringify(scope), scope);
+    return [...unique.values()].toSorted(compareScopes);
+}
+function captureScope(record) {
+    return {
+        integration: record.integration,
+        sessionId: record.sessionId,
+        turnId: record.turnId,
+        eventId: record.eventId,
+    };
+}
+function compareScopes(left, right) {
+    return JSON.stringify(left).localeCompare(JSON.stringify(right));
+}
+function compareCaptures(left, right) {
+    if (left.capturedAtMs !== right.capturedAtMs)
+        return left.capturedAtMs - right.capturedAtMs;
+    return left.eventId.localeCompare(right.eventId);
+}
+function compareProjectedCaptures(left, right) {
+    return compareCaptures(left.record, right.record);
+}
+function groupByTurn(records) {
+    const turns = new Map();
+    for (const record of records) {
+        const captures = turns.get(record.turnId) ?? [];
+        captures.push(record);
+        turns.set(record.turnId, captures);
+    }
+    return turns;
+}
+function report(turnId, status, reason, runIds = [], destinations = []) {
+    return {
+        turnId,
+        status,
+        reason,
+        ...(runIds.length === 0 ? {} : { runIds }),
+        ...(destinations.length === 0 ? {} : { destinations }),
+        patches: 0,
+    };
+}
+//# sourceMappingURL=pass.js.map

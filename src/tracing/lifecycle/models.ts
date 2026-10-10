@@ -3,6 +3,7 @@ import type { CaptureDependency, CaptureWriteResult } from "../../storage/captur
 import type { DeliveryDrainResult, DeliveryPolicy } from "../delivery/index.js";
 import type { PreparedRunPatchSubmission, PreparedRunPostSubmission } from "../upload/models.js";
 import type { LangSmithUploadWriterOptions, PreparedRunSubmission } from "../upload/index.js";
+import type { TurnSettlementReport } from "../settlement/models.js";
 
 export type ProjectedPayload =
   | Omit<PreparedRunPostSubmission, "metadata">
@@ -16,6 +17,7 @@ export interface ProjectedSubmission {
 export type LifecycleTurnClosureState = "open" | "provisional" | "authoritative";
 
 export interface LifecycleTurnEvidence {
+  rootRunId?: string | undefined;
   childRunIds: string[];
   closureState: LifecycleTurnClosureState;
 }
@@ -76,8 +78,19 @@ export interface LifecycleDrainInput {
   now?: number;
 }
 
+export interface LifecycleSettlementProgress {
+  captured: number;
+  turns: TurnSettlementReport[];
+}
+
+export type LifecycleDrainResult =
+  | { status: "busy"; settlement: LifecycleSettlementProgress }
+  | (Extract<DeliveryDrainResult, { status: "drained" }> & {
+      settlement: LifecycleSettlementProgress;
+    });
+
 export interface LifecycleBridge {
   readonly accountFingerprint: string;
   capture(input: LifecycleCaptureInput): Promise<LifecycleCaptureResult>;
-  drain(input?: LifecycleDrainInput): Promise<DeliveryDrainResult>;
+  drain(input?: LifecycleDrainInput): Promise<LifecycleDrainResult>;
 }

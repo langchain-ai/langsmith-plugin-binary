@@ -18,8 +18,10 @@ import type { LifecycleCaptureInput, LifecycleTurnEvidence } from "./models.js";
 const PRIVATE_MARKER = "lifecycle-private-content-marker";
 const PARENT_ID = "11111111-1111-4111-8111-111111111111";
 const CHILD_ID = "22222222-2222-4222-8222-222222222222";
+const SIBLING_ID = "33333333-3333-4333-8333-333333333333";
 const PARENT_DOTTED_ORDER = `20261010T120000000000Z${PARENT_ID}`;
 const CHILD_DOTTED_ORDER = `${PARENT_DOTTED_ORDER}.20261010T120000001000Z${CHILD_ID}`;
+const SIBLING_DOTTED_ORDER = `${PARENT_DOTTED_ORDER}.20261010T120000002000Z${SIBLING_ID}`;
 
 let server: ReturnType<typeof createServer>;
 let endpoint: string;
@@ -78,8 +80,8 @@ function metadata(
   return { integration, threadId: "thread-1", agentType: "root", runType };
 }
 
-function scope(turnId: string, eventId: string): CaptureScope {
-  return { integration: "claude-code", sessionId: "session-1", turnId, eventId };
+function scope(turnId: string, eventId: string, sessionId = "session-1"): CaptureScope {
+  return { integration: "claude-code", sessionId, turnId, eventId };
 }
 
 async function scan(directory: string): Promise<string[]> {
@@ -402,6 +404,257 @@ describe("durable run lifecycle bridge", () => {
       metadata: { status: "completed", ls_tracing_mode: "metadata" },
     });
     expect(JSON.stringify(requests[0]?.payload)).not.toContain(PRIVATE_MARKER);
+  });
+
+  it("adds repository metadata to completed children with a sparse patch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-settlement-child-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-settlement-child",
+      writer: { destinations: [destination()], redact: false },
+    });
+    const turnId = "turn-settlement-child";
+    const rootScope = scope(turnId, "event-root", "session-settlement-child");
+    const rootSubmission = post(
+      PARENT_ID,
+      {
+        ...metadata("claude-code", "root"),
+        base: {
+          repository_name: "acme/project",
+          repository_provider: "github",
+          repository_url: "https://github.com/acme/project",
+          git_branch: "main",
+          git_commit_sha: "abc123",
+        },
+      },
+      {
+        start_time: "2026-10-10T12:00:00.000Z",
+        trace_id: PARENT_ID,
+        dotted_order: PARENT_DOTTED_ORDER,
+      },
+    );
+    const childSubmission = post(CHILD_ID, metadata("claude-code", "tool"), {
+      run_type: "tool",
+      start_time: "2026-10-10T12:00:00.001Z",
+      end_time: "2026-10-10T12:00:00.010Z",
+      outputs: { result: "done" },
+      parent_run_id: PARENT_ID,
+      trace_id: PARENT_ID,
+      dotted_order: CHILD_DOTTED_ORDER,
+    });
+
+    await bridge.capture({
+      turnId,
+      eventId: rootScope.eventId,
+      submission: rootSubmission,
+      turnEvidence: evidence({
+        rootRunId: PARENT_ID,
+        childRunIds: [CHILD_ID],
+        closureState: "authoritative",
+      }),
+    });
+    await bridge.capture({
+      turnId,
+      eventId: "event-child",
+      submission: childSubmission,
+      turnEvidence: evidence({ rootRunId: PARENT_ID, childRunIds: [CHILD_ID] }),
+      dependencies: [rootScope],
+    });
+
+    await expect(bridge.drain()).resolves.toMatchObject({
+      status: "drained",
+      delivered: 3,
+      pending: 0,
+    });
+    expect(requests.map(({ method, path }) => [method, path])).toEqual([
+      ["POST", "/api/v1/runs"],
+      ["POST", "/api/v1/runs"],
+      ["PATCH", `/api/v1/runs/${CHILD_ID}`],
+    ]);
+    expect(requests[1]?.payload["end_time"]).toBe("2026-10-10T12:00:00.010Z");
+    expect(requests[2]?.payload).not.toHaveProperty("end_time");
+    expect(requests[2]?.payload["extra"]).toMatchObject({
+      metadata: {
+        repository_name: "acme/project",
+        repository_provider: "github",
+        repository_url: "https://github.com/acme/project",
+        git_branch: "main",
+        git_commit_sha: "abc123",
+      },
+    });
+  });
+
+  it("preserves stored metadata-mode error status on generated attribution patches", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-settlement-error-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "openai-codex",
+      sessionId: "session-settlement-error",
+      writer: { destinations: [destination()], redact: false },
+    });
+    const turnId = "turn-settlement-error";
+    const rootSubmission: PreparedRunPostSubmission = {
+      ...post(
+        PARENT_ID,
+        metadata("openai-codex", "root"),
+        {
+          start_time: "2026-10-10T12:00:00.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+        },
+        "metadata",
+      ),
+      privacyContext: { status: "error" },
+    };
+    const childSubmission = post(
+      CHILD_ID,
+      {
+        ...metadata("openai-codex", "tool"),
+        base: {
+          repository_name: "acme/project",
+          repository_provider: "github",
+          repository_url: "https://github.com/acme/project",
+          git_branch: "main",
+          git_commit_sha: "abc123",
+        },
+      },
+      {
+        run_type: "tool",
+        start_time: "2026-10-10T12:00:00.001Z",
+        parent_run_id: PARENT_ID,
+        trace_id: PARENT_ID,
+        dotted_order: CHILD_DOTTED_ORDER,
+      },
+    );
+
+    await bridge.capture({
+      turnId,
+      eventId: "event-root",
+      submission: rootSubmission,
+      turnEvidence: evidence({
+        rootRunId: PARENT_ID,
+        childRunIds: [CHILD_ID],
+        closureState: "authoritative",
+      }),
+    });
+    await bridge.capture({
+      turnId,
+      eventId: "event-child",
+      submission: childSubmission,
+      turnEvidence: evidence({ rootRunId: PARENT_ID, childRunIds: [CHILD_ID] }),
+    });
+
+    await expect(bridge.drain()).resolves.toMatchObject({
+      status: "drained",
+      delivered: 3,
+      pending: 0,
+    });
+    expect(requests).toHaveLength(3);
+    expect(requests[0]?.payload["extra"]).toMatchObject({ metadata: { status: "error" } });
+    expect(requests[2]?.method).toBe("PATCH");
+    expect(requests[2]?.path).toBe(`/api/v1/runs/${PARENT_ID}`);
+    expect(requests[2]?.payload["extra"]).toMatchObject({ metadata: { status: "error" } });
+  });
+
+  it("keeps explicit Git attribution across a sparse patch and conflicting sibling", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-settlement-sparse-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-settlement-sparse",
+      writer: { destinations: [destination()], redact: false },
+    });
+    const turnId = "turn-settlement-sparse";
+    const children = [CHILD_ID, SIBLING_ID];
+    const childRunContext = {
+      id: CHILD_ID,
+      name: "test run",
+      run_type: "tool",
+      start_time: "2026-10-10T12:00:00.001Z",
+      parent_run_id: PARENT_ID,
+      trace_id: PARENT_ID,
+      dotted_order: CHILD_DOTTED_ORDER,
+    };
+    await bridge.capture({
+      turnId,
+      eventId: "event-root",
+      submission: post(PARENT_ID, metadata("claude-code", "root"), {
+        start_time: "2026-10-10T12:00:00.000Z",
+        trace_id: PARENT_ID,
+        dotted_order: PARENT_DOTTED_ORDER,
+      }),
+      turnEvidence: evidence({
+        rootRunId: PARENT_ID,
+        childRunIds: children,
+        closureState: "authoritative",
+      }),
+    });
+    await bridge.capture({
+      turnId,
+      eventId: "event-child-post",
+      submission: post(
+        CHILD_ID,
+        { ...metadata("claude-code", "tool"), base: { git_commit_sha: "A" } },
+        {
+          run_type: "tool",
+          start_time: childRunContext.start_time,
+          parent_run_id: PARENT_ID,
+          trace_id: PARENT_ID,
+          dotted_order: CHILD_DOTTED_ORDER,
+        },
+      ),
+      turnEvidence: evidence({ rootRunId: PARENT_ID, childRunIds: children }),
+      dependencies: [scope(turnId, "event-root", "session-settlement-sparse")],
+    });
+    await bridge.capture({
+      turnId,
+      eventId: "event-child-sparse-patch",
+      submission: {
+        operation: "patch",
+        integration: "claude-code",
+        privacyMode: "full",
+        metadata: metadata("claude-code", "tool"),
+        run: childRunContext,
+        privacyContext: { status: "completed" },
+        patch: { fields: ["outputs"], values: { outputs: { result: "done" } } },
+      },
+      turnEvidence: evidence({ rootRunId: PARENT_ID, childRunIds: children }),
+      dependencies: [scope(turnId, "event-child-post", "session-settlement-sparse")],
+    });
+    await bridge.capture({
+      turnId,
+      eventId: "event-sibling-post",
+      submission: post(
+        SIBLING_ID,
+        {
+          ...metadata("claude-code", "tool"),
+          base: { repository_name: "acme/project", git_commit_sha: "B" },
+        },
+        {
+          run_type: "tool",
+          start_time: "2026-10-10T12:00:00.002Z",
+          parent_run_id: PARENT_ID,
+          trace_id: PARENT_ID,
+          dotted_order: SIBLING_DOTTED_ORDER,
+        },
+      ),
+      turnEvidence: evidence({ rootRunId: PARENT_ID, childRunIds: children }),
+      dependencies: [scope(turnId, "event-root", "session-settlement-sparse")],
+    });
+
+    await expect(bridge.drain()).resolves.toMatchObject({
+      status: "drained",
+      delivered: 6,
+      pending: 0,
+    });
+    const childPatches = requests.filter(
+      ({ method, path }) => method === "PATCH" && path === `/api/v1/runs/${CHILD_ID}`,
+    );
+    expect(childPatches).toHaveLength(2);
+    expect(childPatches[1]?.payload["extra"]).toMatchObject({
+      metadata: { repository_name: "acme/project", git_commit_sha: "A" },
+    });
   });
 
   it("defers captures until native thread identity is available", async () => {

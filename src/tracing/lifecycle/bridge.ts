@@ -2,8 +2,10 @@ import { resolve } from "node:path";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import type { CaptureScope, JsonValue, StoredCapture } from "../../storage/capture/models.js";
 import { createDeliveryCoordinator } from "../delivery/index.js";
+import type { DeliveryDestination } from "../delivery/models.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import type { NormalizedRunContext, PreparedRunSubmission } from "../upload/models.js";
+import { refreshSettlementProgress, settleCapturedTurns } from "../settlement/index.js";
 import {
   canonicalJsonObject,
   canonicalJsonValue,
@@ -111,11 +113,11 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
       return result;
     },
     async drain(input: LifecycleDrainInput = {}) {
-      const result = await coordinator.drain({
+      const drainRequest = {
         writer: {
           accountFingerprint: writer.accountFingerprint,
           destinations: writer.destinations,
-          async send(record, destination, fingerprint) {
+          async send(record: StoredCapture, destination: DeliveryDestination, fingerprint: string) {
             if (fingerprint !== writer.accountFingerprint)
               throw new Error("Upload account changed");
             const submission = restoreSubmission(record, integration);
@@ -123,11 +125,40 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
           },
         },
         ...(input.now === undefined ? {} : { now: input.now }),
+      };
+      const first = await coordinator.drain(drainRequest);
+      if (first.status === "busy")
+        return { status: "busy" as const, settlement: { captured: 0, turns: [] } };
+      const readOutcome = (scope: CaptureScope, destination: string) =>
+        captureStore.readOutcome(scope, destination);
+      const work = await settleCapturedTurns({
+        captures: await captureStore.enumerate(integration, sessionId),
+        integration,
+        sessionId,
+        destinationFingerprint: writer.accountFingerprint,
+        destinations: writer.destinations,
+        capture: (capture) => coordinator.capture(capture),
+        readOutcome,
       });
+      let result = first;
+      if (work.progress.captured > 0) {
+        const second = await coordinator.drain(drainRequest);
+        if (second.status === "drained") {
+          result = {
+            status: "drained",
+            delivered: first.delivered + second.delivered,
+            dropped: first.dropped + second.dropped,
+            failed: first.failed + second.failed,
+            pending: second.pending,
+            accountMismatch: second.accountMismatch,
+          };
+        }
+      }
+      const settlement = await refreshSettlementProgress(work, writer.destinations, readOutcome);
       if (result.status === "drained" && result.delivered + result.dropped > 0) {
         await wake?.();
       }
-      return result;
+      return { ...result, settlement };
     },
   });
 }
@@ -191,6 +222,10 @@ function projectTurnEvidence(value: unknown, mode: "full" | "metadata"): JsonVal
     childRunIds,
     closureState: closureState as LifecycleTurnEvidence["closureState"],
   };
+  const rootRunId = ownDataField(source, "rootRunId");
+  if (rootRunId.present && rootRunId.value !== undefined) {
+    structural.rootRunId = requireNonBlankString(rootRunId.value, "Root run ID");
+  }
   return canonicalJsonValue(mode === "metadata" ? structural : source);
 }
 
