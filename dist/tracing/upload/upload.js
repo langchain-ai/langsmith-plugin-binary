@@ -83,7 +83,7 @@ function applyReplicaPatchUpdates(payload, destination, privacyMode) {
         return;
     const mutablePayload = payload;
     for (const [field, value] of Object.entries(destination.updates)) {
-        if (field === "inputs")
+        if (field === "inputs" || (field === "end_time" && payload.end_time === undefined))
             continue;
         if (field === "extra") {
             mutablePayload.extra = mergeReplicaExtra(mutablePayload.extra, value);

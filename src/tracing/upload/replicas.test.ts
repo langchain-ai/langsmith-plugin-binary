@@ -368,6 +368,26 @@ describe("shared replica routing", () => {
     expect(metadataPayload).not.toHaveProperty("tags");
   });
 
+  it("keeps withheld end times out of replica updates", async () => {
+    const endTime = "2025-01-01T00:01:00Z";
+    const writer = replicaWriter([
+      { projectName: "replica-project", updates: { end_time: endTime } },
+    ]);
+    const id = destinationId(writer.destinations);
+    await writer.send(
+      patchSubmission(ROOT_V7_ID, undefined, { patch: { fields: [], values: {} } }),
+      id,
+    );
+    expect(requests[0]?.payload).not.toHaveProperty("end_time");
+    await writer.send(
+      patchSubmission(ROOT_V7_ID, undefined, {
+        patch: { fields: ["end_time"], values: { end_time: endTime } },
+      }),
+      id,
+    );
+    expect(requests[1]?.payload).toHaveProperty("end_time", endTime);
+  });
+
   it("applies replica errors while preserving the generated error status", async () => {
     const writer = replicaWriter([
       {
