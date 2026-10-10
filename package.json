@@ -1,7 +1,7 @@
 {
-  "name": "@langchain/langsmith-plugin-binary",
+  "name": "@langchain/plugins-base",
   "version": "0.1.0",
-  "description": "Shared build and sign pipeline for the LangSmith plugin binaries",
+  "description": "Shared runtime and build pipeline for LangChain plugins",
   "keywords": [
     "claude-code",
     "codex",
@@ -27,19 +27,23 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./settings": {
+      "types": "./dist/settings/index.d.ts",
+      "default": "./dist/settings/index.js"
+    }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsc --build",
-    "clean": "tsc --build --clean",
+    "build": "tsc --build tsconfig.json tsconfig.settings.json",
+    "clean": "tsc --build --clean tsconfig.json tsconfig.settings.json",
     "format": "oxfmt --write",
     "lint": "npm run lint:format && npm run lint:oxlint && npm run lint:types && npm run lint:dist",
     "lint:format": "oxfmt --check",
     "lint:oxlint": "oxlint",
-    "lint:types": "tsc --noEmit -p tsconfig.check.json",
+    "lint:types": "tsc --noEmit -p tsconfig.check.json && tsc --noEmit -p tsconfig.settings-check.json",
     "lint:dist": "npm run build && git diff --exit-code -- dist",
     "test": "vitest run"
   },
@@ -52,7 +56,7 @@
     "yaml": "^2.9.1"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=20"
   },
   "packageManager": "pnpm@10.33.0"
 }
