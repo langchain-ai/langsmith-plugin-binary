@@ -14,6 +14,7 @@ import type {
   PreparedRunPatchSubmission,
   PreparedRunPostSubmission,
 } from "../upload/models.js";
+import { createLangSmithUploadWriter } from "../upload/index.js";
 import type { LocalRequest } from "../../test-support/models/lifecycle.js";
 import { createLifecycleBridge } from "./index.js";
 import { createReconstructionWorker } from "../reconstruction/index.js";
@@ -136,6 +137,25 @@ function snapshotInput(
 
 function scope(turnId: string, eventId: string, sessionId = "session-1"): CaptureScope {
   return { integration: "claude-code", sessionId, turnId, eventId };
+}
+
+function capturePost(
+  targetBridge: ReturnType<typeof createLifecycleBridge>,
+  eventScope: CaptureScope,
+  runId: string,
+  input: string,
+  output: string,
+  closureState: LifecycleTurnEvidence["closureState"] = "open",
+) {
+  return targetBridge.capture({
+    turnId: eventScope.turnId,
+    eventId: eventScope.eventId,
+    submission: post(runId, metadata("claude-code", "root"), {
+      inputs: { prompt: input },
+      outputs: { answer: output },
+    }),
+    turnEvidence: evidence({ rootRunId: runId, closureState }),
+  });
 }
 
 async function scan(directory: string): Promise<string[]> {
@@ -2106,6 +2126,16 @@ describe("durable run lifecycle bridge", () => {
     };
     const bridge = createLifecycleBridge(bridgeOptions);
     const prerequisite = scope("turn-prerequisite", "event-prerequisite", sessionId);
+    const authoritativeSnapshot = (
+      eventId: string,
+      runOverrides: Partial<PreparedRunPostSubmission["run"]> = {},
+      metadataValue: PreparedRunPostSubmission["metadata"] = metadata("claude-code", "root"),
+      privacyMode: "full" | "metadata" = "full",
+      turnId = "turn-snapshot-chain",
+    ) => ({
+      ...snapshotInput(eventId, runOverrides, metadataValue, privacyMode, turnId),
+      turnEvidence: evidence({ rootRunId: PARENT_ID, closureState: "authoritative" }),
+    });
     await bridge.capture({
       turnId: prerequisite.turnId,
       eventId: prerequisite.eventId,
@@ -2120,7 +2150,7 @@ describe("durable run lifecycle bridge", () => {
     let duplicateResult: LifecycleCaptureResult | undefined;
     try {
       firstResult = await bridge.captureSnapshot({
-        ...snapshotInput(
+        ...authoritativeSnapshot(
           "event-snapshot-post",
           { outputs: { answer: "A" } },
           metadata("claude-code", "root"),
@@ -2130,7 +2160,7 @@ describe("durable run lifecycle bridge", () => {
         dependencies: [prerequisite],
       });
       secondResult = await bridge.captureSnapshot({
-        ...snapshotInput(
+        ...authoritativeSnapshot(
           "event-snapshot-b",
           { outputs: { answer: "B" } },
           metadata("claude-code", "root"),
@@ -2140,7 +2170,7 @@ describe("durable run lifecycle bridge", () => {
         dependencies: [prerequisite],
       });
       thirdResult = await restartedBridge.captureSnapshot(
-        snapshotInput(
+        authoritativeSnapshot(
           "event-snapshot-revert",
           { outputs: { answer: "A" } },
           metadata("claude-code", "root"),
@@ -2149,7 +2179,7 @@ describe("durable run lifecycle bridge", () => {
         ),
       );
       duplicateResult = await restartedBridge.captureSnapshot(
-        snapshotInput(
+        authoritativeSnapshot(
           "event-snapshot-retry",
           { outputs: { answer: "A" } },
           metadata("claude-code", "root"),
@@ -2210,6 +2240,38 @@ describe("durable run lifecycle bridge", () => {
       ["PATCH", undefined, { answer: "B" }],
       ["PATCH", undefined, { answer: "A" }],
     ]);
+    const compactedPost = await createCaptureStore(root).read(
+      scope("turn-snapshot-chain", "event-snapshot-post", sessionId),
+    );
+    expect(compactedPost).toMatchObject({
+      version: 3,
+      normalizedPayload: { run: { id: PARENT_ID } },
+      compaction: { fields: { inputs: { state: "value" }, outputs: { state: "value" } } },
+    });
+    await expect(
+      restartedBridge.captureSnapshot(
+        authoritativeSnapshot("event-snapshot-after-compaction-unchanged", {
+          outputs: { answer: "A" },
+        }),
+      ),
+    ).resolves.toMatchObject({ status: "duplicate" });
+    const omitted = authoritativeSnapshot("event-snapshot-after-compaction-omitted");
+    delete omitted.submission.run.outputs;
+    await expect(restartedBridge.captureSnapshot(omitted)).resolves.toMatchObject({
+      status: "duplicate",
+    });
+    await expect(
+      restartedBridge.captureSnapshot(
+        authoritativeSnapshot("event-snapshot-after-compaction-changed", {
+          outputs: { answer: "C" },
+        }),
+      ),
+    ).resolves.toMatchObject({
+      status: "published",
+      record: {
+        normalizedPayload: { patch: { fields: ["outputs"], values: { outputs: { answer: "C" } } } },
+      },
+    });
     const revisionPath = eventPath(root, {
       integration: "claude-code",
       sessionId,
@@ -2647,5 +2709,227 @@ describe("durable run lifecycle bridge", () => {
     expect(initialWake).toHaveBeenCalledTimes(1);
     expect(beforeCaptureWake).not.toHaveBeenCalled();
     expect(afterCaptureWake).not.toHaveBeenCalled();
+  });
+
+  it("compacts delivered payloads and supports settlement after 25 hours", async () => {
+    const startedAt = Date.parse("2026-10-10T12:00:00.000Z");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(startedAt);
+    try {
+      const root = await mkdtemp(join(tmpdir(), "plugins-base-retention-25h-proof-"));
+      const sessionId = "session-retention-25h";
+      const parentTurnId = "turn-retention-parent";
+      const childTurnId = "turn-retention-child";
+      const bridge = createLifecycleBridge({
+        storageRoot: root,
+        integration: "claude-code",
+        sessionId,
+        writer: { destinations: [destination()], redact: false },
+      });
+      const parentScope = scope(parentTurnId, "event-retention-parent", sessionId);
+      const inputs = { prompt: "p".repeat(128_000) };
+      const outputs = { answer: "o".repeat(128_000) };
+      const parentEvidence = evidence({
+        rootRunId: PARENT_ID,
+        childRunIds: [CHILD_ID],
+        closureState: "authoritative",
+      });
+      await bridge.capture({
+        turnId: parentTurnId,
+        eventId: parentScope.eventId,
+        submission: post(PARENT_ID, metadata("claude-code", "root"), {
+          start_time: "2026-10-10T12:00:00.000Z",
+          end_time: "2026-10-10T12:00:01.000Z",
+          trace_id: PARENT_ID,
+          dotted_order: PARENT_DOTTED_ORDER,
+          inputs,
+          outputs,
+        }),
+        turnEvidence: parentEvidence,
+      });
+      const childPostScope = scope(childTurnId, "event-retention-child-post", sessionId);
+      await bridge.capture({
+        turnId: childTurnId,
+        eventId: childPostScope.eventId,
+        submission: post(
+          CHILD_ID,
+          {
+            ...metadata("claude-code", "subagent"),
+            base: { repository_name: "acme/project" },
+          },
+          {
+            run_type: "chain",
+            start_time: "2026-10-10T12:00:00.100Z",
+            end_time: "2026-10-10T12:00:00.900Z",
+            parent_run_id: PARENT_ID,
+            trace_id: PARENT_ID,
+            dotted_order: CHILD_DOTTED_ORDER,
+          },
+        ),
+        turnEvidence: evidence({
+          rootRunId: CHILD_ID,
+          closureState: "authoritative",
+        }),
+        dependencies: [parentScope],
+      });
+      const firstDrain = await bridge.drain();
+      expect(firstDrain).toMatchObject({ status: "drained", delivered: 3, pending: 0 });
+      expect(firstDrain.settlement.turns).toContainEqual(
+        expect.objectContaining({ turnId: parentTurnId, status: "settled" }),
+      );
+
+      const store = createCaptureStore(root);
+      const destinationId = createLangSmithUploadWriter({
+        destinations: [destination()],
+        redact: false,
+      }).destinations[0]!.id;
+      await expect(store.readOutcome(parentScope, destinationId)).resolves.toMatchObject({
+        status: "settled",
+        receipt: { outcome: "delivered" },
+      });
+
+      clock.mockReturnValue(startedAt + 25 * 60 * 60 * 1000);
+      await bridge.capture({
+        turnId: childTurnId,
+        eventId: "event-retention-child-update",
+        submission: {
+          operation: "patch",
+          integration: "claude-code",
+          privacyMode: "full",
+          metadata: {
+            ...metadata("claude-code", "subagent"),
+            base: { repository_name: "acme/project", ls_attribution_identifier: "author-1" },
+          },
+          run: {
+            id: CHILD_ID,
+            name: "test run",
+            run_type: "chain",
+            start_time: "2026-10-10T12:00:00.100Z",
+            parent_run_id: PARENT_ID,
+            trace_id: PARENT_ID,
+            dotted_order: CHILD_DOTTED_ORDER,
+          },
+          privacyContext: { status: "completed" },
+          patch: { fields: ["outputs"], values: { outputs: { late: true } } },
+        },
+        turnEvidence: evidence({
+          rootRunId: CHILD_ID,
+          closureState: "authoritative",
+        }),
+        dependencies: [childPostScope],
+      });
+
+      const lateDrain = await bridge.drain();
+      expect(lateDrain).toMatchObject({ status: "drained", delivered: 2, pending: 0 });
+      expect(lateDrain.settlement.turns).toContainEqual(
+        expect.objectContaining({ turnId: parentTurnId, status: "settled" }),
+      );
+      expect(requests.slice(3).map(({ method, path }) => [method, path])).toEqual([
+        ["PATCH", `/api/v1/runs/${CHILD_ID}`],
+        ["PATCH", `/api/v1/runs/${PARENT_ID}`],
+      ]);
+      expect(requests[4]?.payload["extra"]).toMatchObject({
+        metadata: { repository_name: "acme/project", ls_attribution_identifier: "author-1" },
+      });
+      expect(requests[4]?.payload["end_time"]).toBe("2026-10-10T12:00:01.000Z");
+      const retainedParent = await store.read(parentScope);
+      expect(retainedParent).toMatchObject({
+        version: 3,
+        normalizedPayload: { run: { id: PARENT_ID } },
+        compaction: {
+          originalContentDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          fields: { inputs: { state: "value" }, outputs: { state: "value" } },
+        },
+      });
+      expect(retainedParent?.normalizedPayload).not.toHaveProperty("run.inputs");
+      expect(retainedParent?.normalizedPayload).not.toHaveProperty("run.outputs");
+      expect(JSON.stringify(retainedParent)).not.toContain(inputs.prompt);
+      expect(JSON.stringify(retainedParent)).not.toContain(outputs.answer);
+      await expect(store.readOutcome(parentScope, destinationId)).resolves.toMatchObject({
+        status: "settled",
+        receipt: { outcome: "delivered" },
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("keeps pending and foreign-account payloads intact", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-retention-pending-"));
+    const sessionId = "session-retention-pending";
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId,
+      writer: { destinations: [destination()], redact: false },
+    });
+    const openScope = scope("turn-retention-open", "event-retention-open", sessionId);
+    await capturePost(bridge, openScope, SIBLING_ID, "open input", "open output");
+    const pendingScope = scope("turn-retention-pending", "event-retention-pending", sessionId);
+    await capturePost(
+      bridge,
+      pendingScope,
+      PARENT_ID,
+      "pending input",
+      "pending output",
+      "authoritative",
+    );
+    const foreignScope = scope("turn-retention-foreign", "event-retention-foreign", sessionId);
+    const store = createCaptureStore(root);
+    const foreignBridge = createLifecycleBridge({
+      sessionId,
+      storageRoot: root,
+      integration: "claude-code",
+      writer: {
+        destinations: [{ ...destination(), apiKey: "synthetic-foreign-key" }],
+        redact: false,
+      },
+    });
+    await capturePost(
+      foreignBridge,
+      foreignScope,
+      SIBLING_ID,
+      "foreign input",
+      "foreign output",
+      "authoritative",
+    );
+    const destinationId = createLangSmithUploadWriter({
+      destinations: [destination()],
+      redact: false,
+    }).destinations[0]!.id;
+    await store.recordOutcome({
+      ...foreignScope,
+      destination: destinationId,
+      outcome: "delivered",
+    });
+    failRequestIndexes = new Set([1]);
+
+    await expect(bridge.drain()).resolves.toMatchObject({
+      delivered: 1,
+      failed: 1,
+      pending: 1,
+      accountMismatch: 1,
+      settlement: {
+        turns: expect.arrayContaining([
+          expect.objectContaining({ turnId: openScope.turnId, status: "deferred" }),
+          expect.objectContaining({ turnId: pendingScope.turnId, status: "pending" }),
+        ]),
+      },
+    });
+    await expect(store.read(openScope)).resolves.toMatchObject({
+      version: 2,
+      normalizedPayload: {
+        run: { inputs: { prompt: "open input" }, outputs: { answer: "open output" } },
+      },
+    });
+    await expect(store.read(pendingScope)).resolves.toMatchObject({
+      version: 2,
+      normalizedPayload: {
+        run: { inputs: { prompt: "pending input" }, outputs: { answer: "pending output" } },
+      },
+    });
+    await expect(store.read(foreignScope)).resolves.toMatchObject({
+      version: 2,
+      normalizedPayload: { run: { inputs: { prompt: "foreign input" } } },
+    });
   });
 });

@@ -1,5 +1,5 @@
 import type { CodingAgentIntegration, CodingAgentMetadataOptions } from "../../metadata/index.js";
-import type { CaptureDependency, CaptureScope, CaptureStore, CaptureWriteResult, JsonValue, OutcomeReadResult, StoredCapture } from "../../storage/capture/models.js";
+import type { CaptureDependency, EnumeratedCapture, CaptureScope, CompactedCapturePayload, CaptureStore, CaptureWriteResult, JsonValue, OutcomeReadResult, StoredCapture } from "../../storage/capture/models.js";
 import type { DeliveryDestination, DeliveryDrainResult, DeliveryPolicy } from "../delivery/index.js";
 import type { NormalizedRunSnapshot, PreparedRunPatchSubmission, PreparedRunPostSubmission, RedactedRunField } from "../upload/models.js";
 import type { LangSmithUploadWriterOptions, PreparedRunSubmission } from "../upload/index.js";
@@ -22,6 +22,7 @@ export interface LifecycleSnapshotState {
     turnEvidence: JsonValue;
     privacyMode: PreparedRunPostSubmission["privacyMode"];
     redactedFields: readonly RedactedRunField[];
+    inputOutputStates: CompactedCapturePayload["fields"];
     privacyStatus: CodingAgentPrivacyStatus;
     revisionCount: number;
     snapshotDependencies: readonly CaptureDependency[];
@@ -34,6 +35,22 @@ export interface LifecycleSnapshotCaptureOptions {
     store: CaptureStore;
     capture: (input: LifecycleCaptureInput) => Promise<LifecycleCaptureResult>;
     wake: () => unknown | Promise<unknown>;
+}
+export interface CompactSettledCapturesOptions {
+    storageRoot: string;
+    integration: CodingAgentIntegration;
+    sessionId: string;
+    destinationFingerprint: string;
+    store: CaptureStore;
+    destinations: readonly DeliveryDestination[];
+    settledTurnIds: readonly string[];
+    eligibleCaptures: readonly EnumeratedCapture[];
+    readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
+}
+export interface RunRetentionGroup {
+    turnId: string;
+    runId: string;
+    records: StoredCapture[];
 }
 export type LifecycleTurnClosureState = "open" | "provisional" | "authoritative";
 export interface LifecycleTurnEvidence {

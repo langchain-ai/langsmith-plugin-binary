@@ -42,6 +42,7 @@ import {
 } from "./constants.js";
 import { projectSubmission, projectTurnEvidence } from "./projection.js";
 import { captureLifecycleSnapshot } from "./snapshot.js";
+import { compactSettledCaptures } from "./retention.js";
 import {
   deriveAttributionReadiness,
   indexCaptureSources,
@@ -210,8 +211,9 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
           return { status: "busy" as const, settlement: { captured: 0, turns: [] } };
         const readOutcome = (scope: CaptureScope, destination: string) =>
           captureStore.readOutcome(scope, destination);
+        const settlementCaptures = await captureStore.enumerate(integration, sessionId);
         const work = await settleCapturedTurns({
-          captures: await captureStore.enumerate(integration, sessionId),
+          captures: settlementCaptures,
           integration,
           sessionId,
           destinationFingerprint: writer.accountFingerprint,
@@ -234,6 +236,19 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
           }
         }
         const settlement = await refreshSettlementProgress(work, writer.destinations, readOutcome);
+        await compactSettledCaptures({
+          storageRoot,
+          integration,
+          sessionId,
+          destinationFingerprint: writer.accountFingerprint,
+          store: captureStore,
+          destinations: writer.destinations,
+          settledTurnIds: settlement.turns
+            .filter((entry) => entry.status === "settled")
+            .map((entry) => entry.turnId),
+          eligibleCaptures: settlementCaptures,
+          readOutcome,
+        });
         drainResult = { ...result, settlement };
       } finally {
         await settlementLock.release();
@@ -292,6 +307,8 @@ function restoreSubmission(
   record: StoredCapture,
   integration: LifecycleBridgeOptions["integration"],
 ): PreparedRunSubmission {
+  if (record.compaction !== undefined)
+    throw new TypeError("Compacted capture data cannot be restored for delivery");
   const payload = canonicalJsonObject(record.normalizedPayload, "Stored run payload");
   if (payload["integration"] !== integration)
     throw new TypeError("Stored integration does not match the lifecycle bridge");

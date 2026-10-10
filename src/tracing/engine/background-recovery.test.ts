@@ -544,7 +544,9 @@ it("reclaims a crashed scanner lock and retries after its persisted cooldown exp
     resultPath: join(storageRoot, "result-crashed"),
     delayMs: 10_000,
   });
-  await waitFor(() => existsSync(scanPath));
+  await waitFor(
+    () => existsSync(scanPath) && readFileSync(scanPath, "utf8") === "foreign-session\n",
+  );
   const marker = backgroundRecoveryPaths(storageRoot, {
     integration,
     accountFingerprint: createLangSmithUploadWriter(writer).accountFingerprint,

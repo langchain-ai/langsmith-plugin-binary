@@ -1,6 +1,8 @@
 export const CAPTURE_DIRECTORY = "capture-v1";
 export const CAPTURE_RECORD_VERSION = 2;
+export const CAPTURE_COMPACTED_RECORD_VERSION = 3;
 export const CAPTURE_RECEIPT_VERSION = 1;
+export const CAPTURE_RECORD_LOCK_DIRECTORY = "record-lock-v1";
 export const CAPTURE_DIRECTORY_MODE = 0o700;
 export const CAPTURE_FILE_MODE = 0o600;
 export const CAPTURE_INTEGRATION = /^[a-z][a-z0-9-]{0,62}$/;

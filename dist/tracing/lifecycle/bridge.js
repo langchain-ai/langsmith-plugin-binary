@@ -12,6 +12,7 @@ import { snapshotData } from "../../utils/validation/snapshot.js";
 import { LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_FILE, LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY, } from "./constants.js";
 import { projectSubmission, projectTurnEvidence } from "./projection.js";
 import { captureLifecycleSnapshot } from "./snapshot.js";
+import { compactSettledCaptures } from "./retention.js";
 import { deriveAttributionReadiness, indexCaptureSources, withholdUnresolvedEndTime, } from "./closure.js";
 export function createLifecycleBridge(options) {
     const integration = options.integration;
@@ -146,8 +147,9 @@ export function createLifecycleBridge(options) {
                 if (first.status === "busy")
                     return { status: "busy", settlement: { captured: 0, turns: [] } };
                 const readOutcome = (scope, destination) => captureStore.readOutcome(scope, destination);
+                const settlementCaptures = await captureStore.enumerate(integration, sessionId);
                 const work = await settleCapturedTurns({
-                    captures: await captureStore.enumerate(integration, sessionId),
+                    captures: settlementCaptures,
                     integration,
                     sessionId,
                     destinationFingerprint: writer.accountFingerprint,
@@ -170,6 +172,19 @@ export function createLifecycleBridge(options) {
                     }
                 }
                 const settlement = await refreshSettlementProgress(work, writer.destinations, readOutcome);
+                await compactSettledCaptures({
+                    storageRoot,
+                    integration,
+                    sessionId,
+                    destinationFingerprint: writer.accountFingerprint,
+                    store: captureStore,
+                    destinations: writer.destinations,
+                    settledTurnIds: settlement.turns
+                        .filter((entry) => entry.status === "settled")
+                        .map((entry) => entry.turnId),
+                    eligibleCaptures: settlementCaptures,
+                    readOutcome,
+                });
                 drainResult = { ...result, settlement };
             }
             finally {
@@ -224,6 +239,8 @@ function previousRunContext(record) {
     return context;
 }
 function restoreSubmission(record, integration) {
+    if (record.compaction !== undefined)
+        throw new TypeError("Compacted capture data cannot be restored for delivery");
     const payload = canonicalJsonObject(record.normalizedPayload, "Stored run payload");
     if (payload["integration"] !== integration)
         throw new TypeError("Stored integration does not match the lifecycle bridge");

@@ -48,19 +48,21 @@ export function createDeliveryCoordinator(options) {
                 await lock.release();
             }
             const captures = await captureStore.enumerate(integration, sessionId);
-            const eligible = captures.filter(({ record }) => record.destinationFingerprint === writer.accountFingerprint);
+            const accountEligible = captures.filter(({ record }) => record.destinationFingerprint === writer.accountFingerprint);
+            const eligible = accountEligible.filter(({ record }) => record.compaction === undefined);
             return {
                 status: "drained",
                 ...counts,
                 pending: await countPending(drainCache, eligible, writer.destinations),
-                accountMismatch: captures.length - eligible.length,
+                accountMismatch: captures.length - accountEligible.length,
             };
         },
     };
 }
 async function drainLocked(captureStore, attemptStore, integration, sessionId, policy, request, drainCache) {
     const captures = await captureStore.enumerate(integration, sessionId);
-    const eligible = captures.filter(({ record }) => record.destinationFingerprint === request.writer.accountFingerprint);
+    const eligible = captures.filter(({ record }) => record.destinationFingerprint === request.writer.accountFingerprint &&
+        record.compaction === undefined);
     for (const { record } of eligible)
         drainCache.rememberCapture(record);
     let dropped = 0;

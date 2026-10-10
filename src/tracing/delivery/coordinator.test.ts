@@ -309,6 +309,40 @@ describe("durable delivery coordinator", () => {
     }
   });
 
+  it("skips compacted captures instead of sending incomplete run payloads", async () => {
+    const root = temporaryRoot();
+    const coordinator = createDeliveryCoordinator({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-1",
+    });
+    const input = {
+      ...captureInput("compacted-run", "run-compact"),
+      eventKind: "run-post",
+      normalizedPayload: {
+        operation: "post",
+        integration: "claude-code",
+        privacyMode: "full",
+        run: { id: "run-compact", name: "test", run_type: "chain", inputs: { prompt: "large" } },
+      },
+    };
+    const captured = await coordinator.capture(input);
+    if (captured.status !== "published") throw new Error("Run capture was not published");
+    const store = createCaptureStore(root);
+    const recordScope = scope({ integration: "claude-code", sessionId: "session-1", ...input });
+    await expect(store.compact(recordScope, captured.record)).resolves.toMatchObject({
+      status: "compacted",
+    });
+    const send = vi.fn();
+
+    await expect(
+      coordinator.drain({
+        writer: { accountFingerprint: "account-a", destinations: [{ id: "primary" }], send },
+      }),
+    ).resolves.toMatchObject({ status: "drained", delivered: 0, pending: 0 });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("defers full-scope dependencies without consuming attempts", async () => {
     const root = temporaryRoot();
     const parent = createDeliveryCoordinator({

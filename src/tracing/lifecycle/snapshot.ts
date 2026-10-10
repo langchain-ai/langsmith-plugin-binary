@@ -1,6 +1,12 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { withFileLock } from "../../storage/index.js";
-import type { CaptureScope, StoredCapture } from "../../storage/capture/models.js";
+import type {
+  CaptureScope,
+  CompactedCapturePayload,
+  CompactedFieldDigest,
+  StoredCapture,
+} from "../../storage/capture/models.js";
 import { identifierHash, validateIdentifier } from "../../storage/capture/paths.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import {
@@ -64,18 +70,7 @@ export async function captureLifecycleSnapshot(
     `${options.integration}\0${options.sessionId}\0${turnId}\0${runId}`,
   );
   const revisionPrefix = `${LIFECYCLE_SNAPSHOT_REVISION_EVENT_ID_PREFIX}${streamHash}:`;
-  const lockDirectory = await ensurePrivateDirectory(options.storageRoot, [
-    LIFECYCLE_SNAPSHOT_LOCK_DIRECTORY,
-    "integrations",
-    options.integration,
-    "sessions",
-    identifierHash(options.sessionId),
-    "turns",
-    identifierHash(turnId),
-    "runs",
-    identifierHash(runId),
-  ]);
-  return withFileLock(join(lockDirectory, LIFECYCLE_SNAPSHOT_LOCK_FILE), async () => {
+  return withLifecycleSnapshotLock(options, turnId, runId, async () => {
     const records = (
       await options.store.enumerateTurn(options.integration, options.sessionId, turnId)
     )
@@ -120,7 +115,12 @@ export async function captureLifecycleSnapshot(
       deriveAttributionReadiness(snapshot["submission"], options.integration),
     );
     const metadata = canonicalJsonValue(projected.value.metadata);
-    const changedFields = snapshotPatchFields(state.run, candidateRun);
+    const changedFields = snapshotPatchFields(
+      state.run,
+      candidateRun,
+      state.inputOutputStates,
+      sourceRun,
+    );
     const newDependencies = (captureInput.dependencies ?? []).some(
       (dependency) =>
         !sameCanonical(dependency, captureScope(state.head)) &&
@@ -173,6 +173,28 @@ export async function captureLifecycleSnapshot(
   });
 }
 
+export async function withLifecycleSnapshotLock<T>(
+  options: Pick<LifecycleSnapshotCaptureOptions, "storageRoot" | "integration" | "sessionId">,
+  turnId: string,
+  runId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  validateIdentifier(turnId, "turn ID");
+  validateIdentifier(runId, "run ID");
+  const lockDirectory = await ensurePrivateDirectory(options.storageRoot, [
+    LIFECYCLE_SNAPSHOT_LOCK_DIRECTORY,
+    "integrations",
+    options.integration,
+    "sessions",
+    identifierHash(options.sessionId),
+    "turns",
+    identifierHash(turnId),
+    "runs",
+    identifierHash(runId),
+  ]);
+  return withFileLock(join(lockDirectory, LIFECYCLE_SNAPSHOT_LOCK_FILE), operation);
+}
+
 function readSnapshotState(
   records: readonly StoredCapture[],
   destinationFingerprint: string,
@@ -189,11 +211,15 @@ function readSnapshotState(
   const postPayload = payloadObject(post);
   const privacyMode = readPrivacyMode(postPayload);
   const run = storedRun(postPayload, post.runId);
+  const runFields = run as unknown as Record<string, unknown>;
+  const inputOutputStates = post.compaction?.fields ?? {
+    inputs: presentFieldState(runFields, "inputs"),
+    outputs: presentFieldState(runFields, "outputs"),
+  };
   const redactedFields = storedRedactedFields(postPayload);
   let metadataProvenance = canonicalJsonValue(post.metadataProvenance);
   let turnEvidence = canonicalJsonValue(post.turnEvidence);
   let privacyStatus = storedPrivacyStatus(postPayload, run, privacyMode);
-  const runFields = run as unknown as Record<string, unknown>;
   let head = post;
   const orderedRevisions = revisionCandidates.toSorted((left, right) =>
     left.eventId.localeCompare(right.eventId),
@@ -225,6 +251,15 @@ function readSnapshotState(
       if (!value.present || value.value === undefined) return "conflict";
       runFields[field] = value.value;
       seen.add(field);
+    }
+    for (const field of ["inputs", "outputs"] as const) {
+      const compactedField = revision.compaction?.fields[field];
+      if (compactedField?.state === "value") {
+        delete runFields[field];
+        inputOutputStates[field] = compactedField;
+      } else if (fields.includes(field)) {
+        inputOutputStates[field] = { state: "preserve" };
+      }
     }
     const runContextValue = requirePlainRecord(
       requireOwnDataField(payload, "run"),
@@ -258,6 +293,7 @@ function readSnapshotState(
     turnEvidence,
     privacyMode,
     redactedFields,
+    inputOutputStates,
     privacyStatus,
     revisionCount: orderedRevisions.length,
     snapshotDependencies: snapshotChain.flatMap((record) => record.dependencies ?? []),
@@ -373,15 +409,47 @@ function applySnapshotOmissions(
 function snapshotPatchFields(
   previous: NormalizedRunSnapshot,
   current: NormalizedRunSnapshot,
+  inputOutputStates: CompactedCapturePayload["fields"],
+  sourceRun: Record<string, unknown>,
 ): NormalizedRunPatchField[] {
   const previousFields = previous as unknown as Record<string, unknown>;
   const currentFields = current as unknown as Record<string, unknown>;
   return [...UPLOAD_PATCH_FIELDS].filter((field) => {
+    if (field === "inputs" || field === "outputs") {
+      const state = inputOutputStates[field];
+      const previousValue = ownDataField(previousFields, field);
+      const nextValue = ownDataField(currentFields, field);
+      if (state.state === "value") {
+        if (field === "outputs" && !ownDataField(sourceRun, field).present) return false;
+        if (!nextValue.present) return false;
+        return fieldDigest(nextValue.value) !== state.digest;
+      }
+      if (state.state === "absent") return nextValue.present;
+      if (previousValue.present !== nextValue.present) return true;
+      return (
+        previousValue.present &&
+        nextValue.present &&
+        !sameCanonical(previousValue.value, nextValue.value)
+      );
+    }
     const oldValue = ownDataField(previousFields, field);
     const nextValue = ownDataField(currentFields, field);
     if (oldValue.present !== nextValue.present) return true;
     return oldValue.present && nextValue.present && !sameCanonical(oldValue.value, nextValue.value);
   });
+}
+
+function presentFieldState(
+  value: Record<string, unknown>,
+  field: "inputs" | "outputs",
+): CompactedFieldDigest {
+  return Object.hasOwn(value, field) ? { state: "preserve" } : { state: "absent" };
+}
+
+function fieldDigest(value: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalJsonValue(value)))
+    .digest("hex");
 }
 
 function sameRunIdentity(left: NormalizedRunSnapshot, right: NormalizedRunSnapshot): boolean {
