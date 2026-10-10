@@ -40,7 +40,11 @@ export const RECONSTRUCTION_ATTRIBUTION_CONTEXT_OPTIONAL_KEYS = ["pinnedReposito
 export const RECONSTRUCTION_TOOL_ORIGIN_KEYS = ["namedAPath"];
 export const RECONSTRUCTION_TOOL_ORIGIN_OPTIONAL_KEYS = ["cwd", "path"];
 export const RECONSTRUCTION_OUTPUT_KEYS = ["eventId", "submission"];
-export const RECONSTRUCTION_OUTPUT_OPTIONAL_KEYS = ["dependencies", "sourceRef"];
+export const RECONSTRUCTION_OUTPUT_OPTIONAL_KEYS = [
+    "dependencies",
+    "sourceRef",
+    "turnEvidence",
+];
 export const RECONSTRUCTION_TURN_EVIDENCE_KEYS = ["childRunIds", "closureState"];
 export const RECONSTRUCTION_TURN_EVIDENCE_KEYS_WITH_ROOT = [
     "childRunIds",

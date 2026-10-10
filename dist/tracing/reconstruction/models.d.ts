@@ -41,6 +41,7 @@ export interface ReconstructionSourceSnapshot {
 export interface ReconstructionOutput {
     eventId: string;
     submission: PreparedRunSubmission;
+    turnEvidence?: ReconstructionTurnEvidence;
     dependencies?: CaptureDependency[];
     sourceRef?: string;
 }
@@ -99,6 +100,7 @@ export interface StoredReconstructionMapping {
         runId: string;
         dependencies?: CaptureDependency[];
         sourceRef?: string;
+        turnEvidence?: ReconstructionTurnEvidence;
     }>;
 }
 //# sourceMappingURL=models.d.ts.map

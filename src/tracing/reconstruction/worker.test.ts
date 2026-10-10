@@ -128,6 +128,69 @@ function jobStore(storageRoot: string) {
 }
 
 describe("durable reconstruction jobs", () => {
+  it("persists discovered descendants and rejects changed closure evidence after restart", async () => {
+    const storageRoot = await root();
+    const turnEvidence = {
+      rootRunId: "run-root",
+      childRunIds: ["child-1", "discovered-child"],
+      closureState: "authoritative" as const,
+    };
+    const reconstruct = async () => ({
+      status: "ready" as const,
+      outputs: [{ eventId: "event-root", submission: post("run-root"), turnEvidence }],
+    });
+    const capture = vi.fn(async (_input: LifecycleCaptureInput) => ({
+      status: "deferred" as const,
+      reason: "missing-thread-identity" as const,
+    }));
+    const first = worker(storageRoot, "account", reconstruct, capture);
+    await first.enqueue({
+      ...job("discovered-turn"),
+      turnEvidence: { rootRunId: "run-root", childRunIds: ["child-1"], closureState: "open" },
+    });
+    expect(await first.drain()).toMatchObject({ failed: 0, deferred: 1 });
+    expect(capture.mock.calls[0]?.[0].turnEvidence).toEqual(turnEvidence);
+    const replayCapture = vi.fn(async (_input: LifecycleCaptureInput) => published());
+    const restarted = worker(storageRoot, "account", reconstruct, replayCapture);
+    turnEvidence.childRunIds.push("changed-after-restart");
+    expect(await restarted.drain()).toMatchObject({ failed: 1, captured: 0 });
+    expect(replayCapture).not.toHaveBeenCalled();
+    turnEvidence.childRunIds.pop();
+    expect(await restarted.drain()).toMatchObject({ failed: 0, captured: 1, pending: 0 });
+    expect(replayCapture.mock.calls[0]?.[0].turnEvidence).toEqual(turnEvidence);
+  });
+
+  it("rejects output evidence that changes known identities or contains private fields", async () => {
+    for (const turnEvidence of [
+      { rootRunId: "other-root", childRunIds: ["child-1"], closureState: "authoritative" },
+      { rootRunId: "run-root", childRunIds: [], closureState: "authoritative" },
+      {
+        rootRunId: "run-root",
+        childRunIds: ["child-1"],
+        closureState: "authoritative",
+        prompt: "private",
+      },
+    ]) {
+      const capture = vi.fn(async (_input: LifecycleCaptureInput) => published());
+      const instance = worker(
+        await root(),
+        "account",
+        async () =>
+          ({
+            status: "ready",
+            outputs: [{ eventId: "event-root", submission: post("run-root"), turnEvidence }],
+          }) as ReconstructionResult,
+        capture,
+      );
+      await instance.enqueue({
+        ...job("invalid-evidence"),
+        turnEvidence: { rootRunId: "run-root", childRunIds: ["child-1"], closureState: "open" },
+      });
+      expect(await instance.drain()).toMatchObject({ failed: 1, captured: 0 });
+      expect(capture).not.toHaveBeenCalled();
+    }
+  });
+
   it("replays partial captures without counting duplicate outputs as progress", async () => {
     const storageRoot = await root();
     const lifecycleBridge = bridge(storageRoot);

@@ -270,12 +270,11 @@ async function processJob(
     return "complete";
   }
   for (const output of outputs) {
+    const evidence = output.turnEvidence ?? job.turnEvidence;
     const turnEvidence = {
-      ...(job.turnEvidence.rootRunId === undefined
-        ? {}
-        : { rootRunId: job.turnEvidence.rootRunId }),
-      childRunIds: [...job.turnEvidence.childRunIds],
-      closureState: job.turnEvidence.closureState,
+      ...(evidence.rootRunId === undefined ? {} : { rootRunId: evidence.rootRunId }),
+      childRunIds: [...evidence.childRunIds],
+      closureState: evidence.closureState,
     };
     const captureInput: LifecycleCaptureInput = {
       turnId: job.turnId,
@@ -469,6 +468,18 @@ function validateOutputs(
       dependencies = validateDependencies(dependenciesValue.value, job, eventId);
     }
     const sourceRefField = ownDataField(output, "sourceRef");
+    const evidenceField = ownDataField(output, "turnEvidence");
+    const turnEvidence = evidenceField.present
+      ? validateTurnEvidence(evidenceField.value)
+      : undefined;
+    if (
+      turnEvidence !== undefined &&
+      ((job.turnEvidence.rootRunId !== undefined &&
+        turnEvidence.rootRunId !== job.turnEvidence.rootRunId) ||
+        job.turnEvidence.childRunIds.some((id) => !turnEvidence.childRunIds.includes(id)))
+    ) {
+      throw new TypeError("Reconstructed turn evidence must preserve known run identities");
+    }
     let sourceRef: string | undefined;
     let sourceAgeStartedAtMs: number | undefined;
     if (sourceRefField.present) {
@@ -491,6 +502,7 @@ function validateOutputs(
       eventId,
       runId,
       submission: submissionValue as unknown as PreparedRunSubmission,
+      ...(turnEvidence === undefined ? {} : { turnEvidence }),
       ...(sourceRef === undefined ? {} : { sourceRef }),
       ...(sourceAgeStartedAtMs === undefined ? {} : { sourceAgeStartedAtMs }),
       ...(dependencies === undefined ? {} : { dependencies }),
@@ -840,9 +852,12 @@ function mappingRecord(
     normalizedPayload: {
       recordVersion: RECONSTRUCTION_RECORD_VERSION,
       jobEventId: job.eventId,
-      outputs: outputs.map(({ eventId, runId, dependencies, sourceRef }) => ({
+      outputs: outputs.map(({ eventId, runId, dependencies, sourceRef, turnEvidence }) => ({
         eventId,
         runId,
+        ...(turnEvidence === undefined
+          ? {}
+          : { turnEvidence: canonicalValue(turnEvidence, new Set<object>()) }),
         ...(sourceRef === undefined ? {} : { sourceRef }),
         ...(dependencies === undefined
           ? {}
@@ -948,6 +963,10 @@ function readMapping(record: StoredCapture): StoredReconstructionMapping {
     seen.add(eventId);
     const dependenciesField = ownDataField(output, "dependencies");
     const sourceRefField = ownDataField(output, "sourceRef");
+    const evidenceField = ownDataField(output, "turnEvidence");
+    const turnEvidence = evidenceField.present
+      ? validateTurnEvidence(evidenceField.value)
+      : undefined;
     let sourceRef: string | undefined;
     if (sourceRefField.present) {
       sourceRef = requireNonBlankString(sourceRefField.value, "Output source ref");
@@ -962,6 +981,7 @@ function readMapping(record: StoredCapture): StoredReconstructionMapping {
     return {
       eventId,
       runId,
+      ...(turnEvidence === undefined ? {} : { turnEvidence }),
       ...(sourceRef === undefined ? {} : { sourceRef }),
       ...(dependencies === undefined ? {} : { dependencies }),
     };
@@ -976,9 +996,10 @@ function sameOutputMapping(
   return (
     canonicalJson(mapping.outputs) ===
     canonicalJson(
-      outputs.map(({ eventId, runId, dependencies, sourceRef }) => ({
+      outputs.map(({ eventId, runId, dependencies, sourceRef, turnEvidence }) => ({
         eventId,
         runId,
+        ...(turnEvidence === undefined ? {} : { turnEvidence }),
         ...(sourceRef === undefined ? {} : { sourceRef }),
         ...(dependencies === undefined ? {} : { dependencies }),
       })),

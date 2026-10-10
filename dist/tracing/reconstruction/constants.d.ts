@@ -20,7 +20,7 @@ export declare const RECONSTRUCTION_ATTRIBUTION_CONTEXT_OPTIONAL_KEYS: readonly 
 export declare const RECONSTRUCTION_TOOL_ORIGIN_KEYS: readonly ["namedAPath"];
 export declare const RECONSTRUCTION_TOOL_ORIGIN_OPTIONAL_KEYS: readonly ["cwd", "path"];
 export declare const RECONSTRUCTION_OUTPUT_KEYS: readonly ["eventId", "submission"];
-export declare const RECONSTRUCTION_OUTPUT_OPTIONAL_KEYS: readonly ["dependencies", "sourceRef"];
+export declare const RECONSTRUCTION_OUTPUT_OPTIONAL_KEYS: readonly ["dependencies", "sourceRef", "turnEvidence"];
 export declare const RECONSTRUCTION_TURN_EVIDENCE_KEYS: readonly ["childRunIds", "closureState"];
 export declare const RECONSTRUCTION_TURN_EVIDENCE_KEYS_WITH_ROOT: readonly ["childRunIds", "closureState", "rootRunId"];
 export declare const RECONSTRUCTION_DEPENDENCY_KEYS: readonly ["eventId", "integration", "sessionId", "turnId"];
