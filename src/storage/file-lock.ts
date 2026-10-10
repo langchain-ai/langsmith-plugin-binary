@@ -39,7 +39,6 @@ import {
   FILE_LOCK_TEMP_PREFIX,
   FILE_LOCK_TEMP_SUFFIX,
   FILE_LOCK_TICKET_LIMIT_MESSAGE,
-  FILE_LOCK_TIMEOUT_MESSAGE,
   FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE,
   FILE_LOCK_UNSELECTED_TICKET,
   FILE_LOCK_LEGACY_DIRECTORY_SUFFIX,
@@ -54,6 +53,7 @@ import type {
   BegunFileLock,
   LegacyDirectoryFileLockGate,
 } from "./models.js";
+import { FileLockTimeoutError } from "./errors.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -434,7 +434,7 @@ function precedes(left: FileLockClaim, right: FileLockClaim): boolean {
 }
 
 function timeoutError(filePath: string): Error {
-  return new Error(`${FILE_LOCK_TIMEOUT_MESSAGE}: ${resolve(filePath)}`);
+  return new FileLockTimeoutError(filePath);
 }
 
 function timeoutMs(options: FileLockOptions | undefined): number {

@@ -2,6 +2,7 @@ export const FILE_LOCK_CLAIM_VERSION = 1;
 export const FILE_LOCK_CLAIM_EXTENSION = ".json";
 export const FILE_LOCK_DIRECTORY_SUFFIX = ".claims";
 export const FILE_LOCK_LEGACY_DIRECTORY_SUFFIX = ".lock";
+export const FILE_LOCK_TIMEOUT_ERROR_NAME = "FileLockTimeoutError";
 export const FILE_LOCK_TEMP_PREFIX = ".";
 export const FILE_LOCK_TEMP_SUFFIX = ".tmp";
 export const FILE_LOCK_EXCLUSIVE_FLAG = "wx";

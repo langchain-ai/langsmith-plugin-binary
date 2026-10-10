@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { beforeEach, expect, it, vi } from "vitest";
+import { FileLockTimeoutError } from "./index.js";
 
 const faults = vi.hoisted(() => ({
   gatePath: "",
@@ -234,9 +235,9 @@ it("leaves an unknown legacy directory in place after timing out", async () => {
   const area = createArea();
   mkdirSync(area.gatePath, { mode: 0o700 });
   try {
-    await expect(
-      acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 60 }),
-    ).rejects.toThrow("Timed out waiting for file lock");
+    const acquisition = acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 60 });
+    await expect(acquisition).rejects.toBeInstanceOf(FileLockTimeoutError);
+    await expect(acquisition).rejects.toThrow("Timed out waiting for file lock");
     expect(lstatSync(area.gatePath).isDirectory()).toBe(true);
     expect(readdirSync(area.gatePath)).toEqual([]);
     expect(existsSync(area.claimsPath)).toBe(false);
