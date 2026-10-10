@@ -19,7 +19,8 @@ export async function wakeCapturedWork(captureResult, wake) {
 export async function readSavedCaptureWake(error, options) {
     if (!(error instanceof CaptureWakeError))
         return undefined;
-    const { record } = error.captureResult;
+    const result = structuredClone(error.captureResult);
+    const { record } = result;
     if (record.integration !== options.integration ||
         record.sessionId !== options.sessionId ||
         record.turnId !== options.turnId ||
@@ -33,8 +34,6 @@ export async function readSavedCaptureWake(error, options) {
         turnId: record.turnId,
         eventId: record.eventId,
     });
-    return saved !== undefined && canonicalJson(saved) === canonicalJson(record)
-        ? error.captureResult
-        : undefined;
+    return saved !== undefined && canonicalJson(saved) === canonicalJson(record) ? result : undefined;
 }
 //# sourceMappingURL=capture-wake.js.map

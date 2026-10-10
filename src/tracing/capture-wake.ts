@@ -31,7 +31,8 @@ export async function readSavedCaptureWake(
   options: SavedCaptureWakeOptions,
 ): Promise<SavedCaptureResult | undefined> {
   if (!(error instanceof CaptureWakeError)) return undefined;
-  const { record } = error.captureResult;
+  const result = structuredClone(error.captureResult);
+  const { record } = result;
   if (
     record.integration !== options.integration ||
     record.sessionId !== options.sessionId ||
@@ -47,7 +48,5 @@ export async function readSavedCaptureWake(
     turnId: record.turnId,
     eventId: record.eventId,
   });
-  return saved !== undefined && canonicalJson(saved) === canonicalJson(record)
-    ? error.captureResult
-    : undefined;
+  return saved !== undefined && canonicalJson(saved) === canonicalJson(record) ? result : undefined;
 }

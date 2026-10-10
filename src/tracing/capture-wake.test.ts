@@ -60,4 +60,17 @@ it("accepts only matching durable captures after a worker wake fails", async () 
       },
     }),
   ).rejects.toThrow("Unreadable capture");
+  const verified = structuredClone(result);
+  await expect(
+    readSavedCaptureWake(error, {
+      ...options,
+      store: {
+        read: async (scope) => {
+          result.record.normalizedPayload = { input: "changed while reading" };
+          result.record = { ...result.record, runId: "replacement" };
+          return store.read(scope);
+        },
+      },
+    }),
+  ).resolves.toEqual(verified);
 });
