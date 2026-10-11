@@ -1,3 +1,4 @@
+export { buildCodingAgentMetadata, trustedCodingAgentMetadata } from "./builder.js";
 export {
   CODING_AGENT_AGENT_TYPES,
   CODING_AGENT_INTEGRATION_POLICIES,
