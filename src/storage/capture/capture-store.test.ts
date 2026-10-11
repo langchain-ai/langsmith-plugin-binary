@@ -32,6 +32,42 @@ function captureInput(eventId = "native-event-1"): CaptureInput {
   };
 }
 
+function compactableRunInput(
+  eventId: string,
+  eventKind: "run-post" | "run-patch" = "run-post",
+): CaptureInput {
+  return {
+    ...captureInput(eventId),
+    runId: "run-compactable",
+    eventKind,
+    normalizedPayload:
+      eventKind === "run-post"
+        ? {
+            operation: "post",
+            integration: "claude-code",
+            privacyMode: "full",
+            run: {
+              id: "run-compactable",
+              name: "compactable",
+              run_type: "chain",
+              inputs: { prompt: "i".repeat(40_000) },
+              outputs: { answer: "o".repeat(40_000) },
+            },
+          }
+        : {
+            operation: "patch",
+            integration: "claude-code",
+            privacyMode: "full",
+            run: { id: "run-compactable", name: "compactable", run_type: "chain" },
+            privacyContext: { status: "completed" },
+            patch: {
+              fields: ["outputs", "end_time"],
+              values: { outputs: { answer: "o".repeat(40_000) }, end_time: 123 },
+            },
+          },
+  };
+}
+
 function childEnvironment(): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH,
@@ -104,6 +140,111 @@ describe("immutable capture storage", () => {
     await expect(store.read(input)).resolves.toMatchObject({
       normalizedPayload: input.normalizedPayload,
     });
+  });
+
+  it("compacts run payload values while retaining immutable replay identity", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input = compactableRunInput("compact-post");
+    await expect(store.capture(input)).resolves.toMatchObject({ status: "published" });
+    const original = (await store.read(input))!;
+    const path = eventPath(root, input);
+    const originalSize = readFileSync(path).byteLength;
+
+    await expect(store.compact(input, original)).resolves.toMatchObject({
+      status: "compacted",
+      record: {
+        version: 3,
+        compaction: {
+          version: 1,
+          originalContentDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          fields: {
+            inputs: { state: "value", digest: expect.stringMatching(/^[0-9a-f]{64}$/u) },
+            outputs: { state: "value", digest: expect.stringMatching(/^[0-9a-f]{64}$/u) },
+          },
+        },
+      },
+    });
+    await expect(store.compact(input, original)).resolves.toMatchObject({
+      status: "already-compacted",
+    });
+    const compacted = (await store.read(input))!;
+    expect(compacted.normalizedPayload).not.toHaveProperty("run.inputs");
+    expect(compacted.normalizedPayload).not.toHaveProperty("run.outputs");
+    expect(readFileSync(path).byteLength).toBeLessThan(originalSize);
+    await expect(store.capture(input)).resolves.toMatchObject({
+      status: "duplicate",
+      record: {
+        compaction: { originalContentDigest: compacted.compaction?.originalContentDigest },
+      },
+    });
+    await expect(
+      store.capture({ ...input, normalizedPayload: { operation: "post", changed: true } }),
+    ).resolves.toEqual({ status: "conflict" });
+  });
+
+  it("compacts only present patch values and preserves non-payload patch fields", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input = compactableRunInput("compact-patch", "run-patch");
+    await store.capture(input);
+    const original = (await store.read(input))!;
+    const compacted = await store.compact(input, original);
+    expect(compacted).toMatchObject({
+      status: "compacted",
+      record: {
+        normalizedPayload: { patch: { fields: ["end_time"], values: { end_time: 123 } } },
+        compaction: {
+          fields: {
+            inputs: { state: "absent" },
+            outputs: { state: "value" },
+          },
+        },
+      },
+    });
+    if (compacted.status === "compacted")
+      expect(compacted.record.normalizedPayload).not.toHaveProperty("patch.values.outputs");
+  });
+
+  it("rejects malformed compacted field markers and leaves unrelated records unchanged", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input = compactableRunInput("compact-malformed");
+    await store.capture(input);
+    const original = (await store.read(input))!;
+    await store.compact(input, original);
+    const path = eventPath(root, input);
+    const compacted = JSON.parse(readFileSync(path, "utf8"));
+    compacted.compaction.fields.inputs.digest = "bad";
+    writeFileSync(path, JSON.stringify(compacted));
+    await expect(store.read(input)).rejects.toThrow("Invalid compacted capture field");
+
+    const unrelated = captureInput("unrelated-kind");
+    await store.capture(unrelated);
+    const record = (await store.read(unrelated))!;
+    await expect(store.compact(unrelated, record)).resolves.toEqual({ status: "changed" });
+    await expect(store.read(unrelated)).resolves.toMatchObject({ version: 2 });
+  });
+
+  it("lets reads observe either side of an atomic compaction and keeps one receipt per record", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input = compactableRunInput("compact-race");
+    await store.capture(input);
+    const original = (await store.read(input))!;
+    const reads = Array.from({ length: 24 }, () => store.read(input));
+    const [compaction, ...observed] = await Promise.all([store.compact(input, original), ...reads]);
+    expect(compaction.status).toBe("compacted");
+    expect(observed).toHaveLength(24);
+    expect(observed.every((record) => record?.version === 2 || record?.version === 3)).toBe(true);
+    const receipts = await Promise.all([
+      store.recordOutcome({ ...input, destination: "project-a", outcome: "delivered" }),
+      store.recordOutcome({ ...input, destination: "project-a", outcome: "delivered" }),
+    ]);
+    expect(receipts).toHaveLength(2);
+    expect(receipts.map(({ status }) => status)).toEqual(
+      expect.arrayContaining(["duplicate", "recorded"]),
+    );
   });
 
   it("rejects an invalid destination fingerprint", async () => {
