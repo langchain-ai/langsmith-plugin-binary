@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildCodingAgentMetadata, metadataForMode } from "./index.js";
+import {
+  buildCodingAgentMetadata,
+  metadataForMode,
+  normalizeProviderMetadata,
+  validateCodingAgentMetadata,
+  validateProviderMetadata,
+} from "./index.js";
+import type { CodingAgentRunType } from "./index.js";
 
 describe("coding-agent-v1 metadata contract", () => {
   it.each(["subagent", "interrupted"] as const)(
@@ -33,6 +40,30 @@ describe("coding-agent-v1 metadata contract", () => {
     expect(metadataForMode(metadata, "cursor", "metadata")).toMatchObject({
       ls_tool_name: "ReadFile",
     });
+  });
+
+  it("keeps integration identity and versions explicit", () => {
+    const metadata = buildCodingAgentMetadata({
+      integration: "claude-code",
+      integrationVersion: "0.1.3",
+      runtimeVersion: "2.1.181",
+      threadId: "session",
+      turnId: "turn",
+      turnNumber: 3,
+      agentType: "root",
+      runType: "root",
+    });
+    expect(metadata).toMatchObject({
+      ls_integration: "claude-code",
+      ls_agent_runtime: "Claude Code",
+      ls_integration_version: "0.1.3",
+      ls_agent_runtime_version: "2.1.181",
+      ls_trace_schema_version: "coding-agent-v1",
+      thread_id: "session",
+      turn_id: "turn",
+      turn_number: 3,
+    });
+    expect(metadata.ls_integration_version).not.toBe(metadata.ls_agent_runtime_version);
   });
 
   it.each(["claude-code", "cursor"] as const)(
@@ -81,6 +112,51 @@ describe("coding-agent-v1 metadata contract", () => {
       ls_model_type: "chat",
     });
     expect(metadataForMode(metadata, "openai-codex", "metadata")).not.toHaveProperty("private");
+  });
+
+  it("validates and filters provider metadata from the shared contract", () => {
+    const candidate = {
+      ls_provider: "openai",
+      ls_model_type: 7,
+      ls_message_format: "anthropic",
+      thread_id: "spoofed",
+    };
+    expect(validateProviderMetadata(candidate, "openai-codex", "llm")).toEqual([
+      { key: "ls_model_type", reason: "type" },
+      { key: "thread_id", reason: "scope" },
+    ]);
+    const rootOnlyUsage = { ls_raw_aggregated_usage: { input_tokens: 1 } };
+    expect(validateProviderMetadata(rootOnlyUsage, "openai-codex", "llm")).toEqual([
+      { key: "ls_raw_aggregated_usage", reason: "scope" },
+    ]);
+    expect(normalizeProviderMetadata(rootOnlyUsage, "openai-codex", "llm")).toEqual({});
+    expect(
+      buildCodingAgentMetadata({
+        integration: "openai-codex",
+        threadId: "session",
+        agentType: "root",
+        runType: "llm",
+        providerMetadata: candidate,
+      }),
+    ).toMatchObject({ ls_provider: "openai", ls_message_format: "anthropic" });
+    expect(
+      buildCodingAgentMetadata({
+        integration: "cursor",
+        threadId: "session",
+        agentType: "root",
+        runType: "root",
+        providerMetadata: { ls_model_type: "chat" },
+      }),
+    ).not.toHaveProperty("ls_model_type");
+  });
+
+  it("rejects scoped provider metadata when its runtime run type is missing", () => {
+    const providerMetadata = { ls_provider: "openai" };
+    const missingRunType = undefined as unknown as CodingAgentRunType;
+    expect(validateProviderMetadata(providerMetadata, "openai-codex", missingRunType)).toEqual([
+      { key: "ls_provider", reason: "scope" },
+    ]);
+    expect(normalizeProviderMetadata(providerMetadata, "openai-codex", missingRunType)).toEqual({});
   });
 
   it("keeps the complete trusted Codex usage objects in metadata mode", () => {
@@ -151,5 +227,33 @@ describe("coding-agent-v1 metadata contract", () => {
       thread_id: "session",
     };
     expect(metadataForMode(redacted, "claude-code", "metadata")).toMatchObject(redacted);
+  });
+
+  it("rejects metadata with missing identity, wrong scope, or wrong field types", () => {
+    const valid = buildCodingAgentMetadata({
+      integration: "cursor",
+      threadId: "session",
+      agentType: "root",
+      runType: "root",
+    });
+    expect(validateCodingAgentMetadata(valid, "root", "cursor")).toEqual([]);
+    expect(
+      validateCodingAgentMetadata(
+        { ...valid, ls_attribution_identifier: "person@example.com" },
+        "root",
+        "cursor",
+      ),
+    ).toEqual([]);
+    expect(
+      validateCodingAgentMetadata(
+        { ...valid, thread_id: undefined, turn_number: "3", ls_tool_name: "Bash" },
+        "root",
+        "cursor",
+      ),
+    ).toEqual([
+      { key: "thread_id", reason: "missing" },
+      { key: "turn_number", reason: "type" },
+      { key: "ls_tool_name", reason: "scope" },
+    ]);
   });
 });

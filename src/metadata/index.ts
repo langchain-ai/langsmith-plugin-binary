@@ -10,6 +10,7 @@ export {
   METADATA_MODE_STATUS_VALUES,
 } from "./constants.js";
 export { CODING_AGENT_V1_CONTRACT } from "./contract.js";
+export { prepareCodingAgentMetadataProvenance } from "./provenance.js";
 export { metadataForMode, projectCodingAgentMetadata } from "./privacy.js";
 export {
   normalizeProviderMetadata,
@@ -26,7 +27,7 @@ export type {
   CodingAgentMetadataProvenanceResult,
   CodingAgentRunType,
   CodingAgentSchemaIntegration,
-  CodingAgentV1Contract,
   MetadataValidationIssue,
   ProviderMetadata,
+  CodingAgentV1Contract,
 } from "./models.js";
