@@ -240,7 +240,12 @@ it("does not remove a replacement legacy gate during release", async () => {
   const pending = acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 1_000 });
   const originalGatePath = `${area.gatePath}.owned`;
   try {
-    await waitFor(() => existsSync(area.gatePath));
+    await waitFor(
+      () =>
+        existsSync(area.gatePath) &&
+        existsSync(area.claimsPath) &&
+        readdirSync(area.claimsPath).filter((name) => name.endsWith(CLAIM_EXTENSION)).length === 2,
+    );
     renameSync(area.gatePath, originalGatePath);
     mkdirSync(area.gatePath, { mode: 0o700 });
     holder.finish();
