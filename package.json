@@ -35,6 +35,14 @@
     "./git": {
       "types": "./dist/git/index.d.ts",
       "default": "./dist/git/index.js"
+    },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "default": "./dist/storage/index.js"
+    },
+    "./storage/capture": {
+      "types": "./dist/storage/capture/index.d.ts",
+      "default": "./dist/storage/capture/index.js"
     }
   },
   "publishConfig": {
