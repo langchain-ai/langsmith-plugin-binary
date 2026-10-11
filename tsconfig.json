@@ -22,5 +22,10 @@
     "composite": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/test-support.ts", "src/settings/**/*.ts"]
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/test-support.ts",
+    "src/test-support/**/*.ts",
+    "src/settings/**/*.ts"
+  ]
 }
