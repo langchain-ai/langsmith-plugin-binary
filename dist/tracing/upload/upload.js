@@ -4,6 +4,8 @@ import { resolveUploadDestinations } from "./destinations.js";
 import { UPLOAD_PATCH_FIELDS } from "./constants.js";
 import { createUploadClient } from "./client.js";
 import { normalizedRedactedFields, redactSdkOmittedFields } from "./redaction.js";
+import { contextForDestination, runIdForDestination } from "./replica-identifiers.js";
+import { applyReplicaPatchUpdates } from "./replica-updates.js";
 export function createLangSmithUploadWriter(options) {
     const resolved = resolveUploadDestinations(options);
     const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
@@ -17,8 +19,10 @@ export function createLangSmithUploadWriter(options) {
             if (!destination)
                 throw new TypeError("Unknown upload destination");
             validateSubmission(submission);
-            const normalizedFields = normalizedRedactedFields(submission.redactedFields);
-            const redactedFields = submission.privacyMode === "full" ? normalizedFields : [];
+            const redactedFields = normalizedRedactedFields(submission.redactedFields).filter((field) => submission.privacyMode === "full" &&
+                !(submission.operation === "patch" &&
+                    field === "outputs" &&
+                    Object.hasOwn(destination.updates ?? {}, "outputs")));
             let client = destination.client;
             if (redactedFields.length > 0) {
                 const key = JSON.stringify([destinationId, redactedFields]);
@@ -30,6 +34,9 @@ export function createLangSmithUploadWriter(options) {
             const payload = submission.operation === "post"
                 ? preparePostRunPayload(submission, destination)
                 : preparePatchRunPayload(submission, destination);
+            if (submission.operation === "patch") {
+                applyReplicaPatchUpdates(payload, destination, submission.privacyMode);
+            }
             redactSdkOmittedFields(payload, destination.anonymizer);
             const clientOptions = {
                 apiKey: destination.apiKey,
@@ -41,7 +48,7 @@ export function createLangSmithUploadWriter(options) {
                     await client.createRun({ ...payload, project_name: destination.projectName }, clientOptions);
                     return { destinationId, runId: submission.run.id, operation: "posted" };
                 }
-                await client.updateRun(submission.run.id, payload, clientOptions);
+                await client.updateRun(runIdForDestination(submission.run.id, destination), payload, clientOptions);
                 return { destinationId, runId: submission.run.id, operation: "patched" };
             }
             catch {
@@ -52,18 +59,25 @@ export function createLangSmithUploadWriter(options) {
 }
 function runConfig(context, submission, destination) {
     const metadata = buildCodingAgentMetadata(submission.metadata);
+    const destinationContext = contextForDestination(context, destination);
     return {
-        id: context.id,
-        name: context.name,
-        run_type: context.run_type,
+        id: destinationContext.id,
+        name: destinationContext.name,
+        run_type: destinationContext.run_type,
         project_name: destination.projectName,
         inputs: {},
         extra: { metadata },
         client: destination.client,
-        ...(context.start_time === undefined ? {} : { start_time: context.start_time }),
-        ...(context.parent_run_id === undefined ? {} : { parent_run_id: context.parent_run_id }),
-        ...(context.trace_id === undefined ? {} : { trace_id: context.trace_id }),
-        ...(context.dotted_order === undefined ? {} : { dotted_order: context.dotted_order }),
+        ...(destinationContext.start_time === undefined
+            ? {}
+            : { start_time: destinationContext.start_time }),
+        ...(destinationContext.parent_run_id === undefined
+            ? {}
+            : { parent_run_id: destinationContext.parent_run_id }),
+        ...(destinationContext.trace_id === undefined ? {} : { trace_id: destinationContext.trace_id }),
+        ...(destinationContext.dotted_order === undefined
+            ? {}
+            : { dotted_order: destinationContext.dotted_order }),
     };
 }
 function preparePostRunPayload(submission, destination) {
