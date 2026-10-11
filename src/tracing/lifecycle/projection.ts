@@ -1,0 +1,423 @@
+import {
+  buildCodingAgentMetadata,
+  prepareCodingAgentMetadataProvenance,
+  type CodingAgentIntegration,
+  type CodingAgentMetadataOptions,
+} from "../../metadata/index.js";
+import {
+  createCodingAgentRunTree,
+  survivingCodingAgentPatchFields,
+  type CodingAgentPrivacyContext,
+  type CodingAgentPrivacyStatus,
+} from "../../privacy/index.js";
+import type { JsonValue } from "../../storage/capture/models.js";
+import {
+  canonicalJsonArray,
+  canonicalJsonObject,
+  canonicalJsonValue,
+  ownDataField,
+  requireNonBlankString,
+  requireOwnDataField,
+  requirePlainRecord,
+  requireString,
+  requireStringArray,
+  requireTimestamp,
+} from "../../utils/validation/objects.js";
+import { normalizedRedactedFields } from "../upload/redaction.js";
+import { UPLOAD_PATCH_FIELDS } from "../upload/constants.js";
+import type {
+  NormalizedRunContext,
+  NormalizedRunPatch,
+  NormalizedRunPatchField,
+  NormalizedRunPatchValues,
+  NormalizedRunSnapshot,
+} from "../upload/models.js";
+import { createRunIdentity } from "./identity.js";
+import type {
+  LifecycleTurnEvidence,
+  ProjectedSubmission,
+  RunIdentity,
+  SubmissionProjectionResult,
+} from "./models.js";
+import { LIFECYCLE_ATTRIBUTION_READY_FIELD, LIFECYCLE_TURN_CLOSURE_STATES } from "./constants.js";
+
+export function projectSubmission(
+  value: unknown,
+  integration: CodingAgentIntegration,
+  priorIdentity?: NormalizedRunContext,
+): SubmissionProjectionResult {
+  const source = requirePlainRecord(value, "Prepared run submission");
+  if (requireOwnDataField(source, "integration") !== integration) {
+    throw new TypeError("Run integration does not match the lifecycle bridge");
+  }
+  const privacyMode = requireOwnDataField(source, "privacyMode");
+  if (privacyMode !== "full" && privacyMode !== "metadata")
+    throw new TypeError("Invalid privacy mode");
+  const redactedField = ownDataField(source, "redactedFields");
+  const redactedFields = normalizedRedactedFields(
+    redactedField.present ? redactedField.value : undefined,
+  );
+  const redaction = privacyMode === "full" && redactedFields.length > 0 ? { redactedFields } : {};
+  const operation = requireOwnDataField(source, "operation");
+  if (operation !== "post" && operation !== "patch") throw new TypeError("Invalid run operation");
+
+  if (operation === "post") {
+    const run = canonicalIdentity(
+      normalizedRunSnapshot(requireOwnDataField(source, "run")),
+      priorIdentity,
+    );
+    const suppliedPrivacyContext = ownDataField(source, "privacyContext");
+    const status =
+      run.error !== undefined
+        ? "error"
+        : suppliedPrivacyContext.present
+          ? privacyStatus(suppliedPrivacyContext.value).status
+          : statusForPost(run);
+    const metadata = prepareCodingAgentMetadataProvenance(
+      requireOwnDataField(source, "metadata"),
+      integration,
+      privacyMode,
+      status,
+    );
+    if (metadata.status === "deferred") return metadata;
+    const projected: ProjectedSubmission = {
+      payload: {
+        operation,
+        integration,
+        privacyMode,
+        ...redaction,
+        ...(privacyMode === "metadata" ? { privacyContext: { status } } : {}),
+        run: privacyMode === "metadata" ? projectPost(run, metadata.value, status) : run,
+      },
+      metadata: metadata.value,
+      privacyStatus: status,
+    };
+    return { status: "ready", value: projected };
+  }
+
+  const run = canonicalIdentity(
+    normalizedRunContext(requireOwnDataField(source, "run")),
+    priorIdentity,
+    true,
+  );
+  const patch = normalizedPatch(requireOwnDataField(source, "patch"));
+  const privacyContext = privacyStatus(requireOwnDataField(source, "privacyContext"));
+  const metadata = prepareCodingAgentMetadataProvenance(
+    requireOwnDataField(source, "metadata"),
+    integration,
+    privacyMode,
+    privacyContext.status,
+  );
+  if (metadata.status === "deferred") return metadata;
+  const projected: ProjectedSubmission = {
+    payload: {
+      operation,
+      integration,
+      privacyMode,
+      ...redaction,
+      run,
+      privacyContext,
+      patch:
+        privacyMode === "metadata"
+          ? projectPatch(run, patch, integration, metadata.value, privacyContext)
+          : patch,
+    },
+    metadata: metadata.value,
+    privacyStatus: privacyContext.status,
+  };
+  return { status: "ready", value: projected };
+}
+
+export function projectTurnEvidence(
+  value: unknown,
+  mode: "full" | "metadata",
+  attributionReady: boolean,
+): JsonValue {
+  const source = requirePlainRecord(value, "Lifecycle turn evidence");
+  const childRunIds = requireStringArray(
+    requireOwnDataField(source, "childRunIds"),
+    "Child run IDs",
+  ).map((runId) => requireNonBlankString(runId, "Child run ID"));
+  const closureState = requireOwnDataField(source, "closureState");
+  if (
+    typeof closureState !== "string" ||
+    !LIFECYCLE_TURN_CLOSURE_STATES.includes(closureState as LifecycleTurnEvidence["closureState"])
+  ) {
+    throw new TypeError("Lifecycle turn evidence has an invalid closure state");
+  }
+  const structural: LifecycleTurnEvidence = {
+    childRunIds,
+    closureState: closureState as LifecycleTurnEvidence["closureState"],
+  };
+  const persisted = { ...structural, [LIFECYCLE_ATTRIBUTION_READY_FIELD]: attributionReady };
+  const rootRunId = ownDataField(source, "rootRunId");
+  if (rootRunId.present && rootRunId.value !== undefined) {
+    persisted.rootRunId = requireNonBlankString(rootRunId.value, "Root run ID");
+  }
+  return canonicalJsonValue(mode === "metadata" ? persisted : { ...source, ...persisted });
+}
+
+function projectPost(
+  run: NormalizedRunSnapshot,
+  metadata: CodingAgentMetadataOptions,
+  status: CodingAgentPrivacyStatus,
+): NormalizedRunSnapshot {
+  const tree = createCodingAgentRunTree(
+    {
+      id: run.id,
+      name: run.name,
+      run_type: run.run_type,
+      ...(run.start_time === undefined ? {} : { start_time: run.start_time }),
+      inputs: run.inputs,
+      extra: { metadata: buildCodingAgentMetadata(metadata) },
+      ...(run.end_time === undefined ? {} : { end_time: run.end_time }),
+      ...(run.outputs === undefined ? {} : { outputs: run.outputs }),
+      ...(run.parent_run_id === undefined ? {} : { parent_run_id: run.parent_run_id }),
+      ...(run.trace_id === undefined ? {} : { trace_id: run.trace_id }),
+      ...(run.dotted_order === undefined ? {} : { dotted_order: run.dotted_order }),
+      ...(run.error === undefined ? {} : { error: run.error }),
+      ...(run.tags === undefined ? {} : { tags: run.tags }),
+      ...(run.serialized === undefined ? {} : { serialized: run.serialized }),
+      ...(run.reference_example_id === undefined
+        ? {}
+        : { reference_example_id: run.reference_example_id }),
+    },
+    metadata.integration,
+    "metadata",
+    { status },
+  );
+  if (run.events !== undefined) tree.events = run.events;
+  const projected = tree.toJSON() as unknown as Record<string, unknown>;
+  return {
+    id: run.id,
+    name: run.name,
+    run_type: run.run_type,
+    start_time: requireTimestamp(run.start_time),
+    inputs: canonicalJsonObject(projected["inputs"], "Projected run inputs"),
+    outputs: canonicalJsonObject(projected["outputs"], "Projected run outputs"),
+    ...(run.end_time === undefined ? {} : { end_time: run.end_time }),
+    ...(run.parent_run_id === undefined ? {} : { parent_run_id: run.parent_run_id }),
+    ...(run.trace_id === undefined ? {} : { trace_id: run.trace_id }),
+    ...(run.dotted_order === undefined ? {} : { dotted_order: run.dotted_order }),
+  };
+}
+
+function projectPatch(
+  context: NormalizedRunContext,
+  patch: NormalizedRunPatch,
+  integration: CodingAgentIntegration,
+  metadata: CodingAgentMetadataOptions,
+  privacyContext: CodingAgentPrivacyContext,
+): NormalizedRunPatch {
+  const tree = createCodingAgentRunTree(
+    {
+      id: context.id,
+      name: context.name,
+      run_type: context.run_type,
+      ...(context.start_time === undefined ? {} : { start_time: context.start_time }),
+      inputs: patch.values.inputs ?? {},
+      outputs: patch.values.outputs ?? {},
+      extra: { metadata: buildCodingAgentMetadata(metadata) },
+      ...(context.parent_run_id === undefined ? {} : { parent_run_id: context.parent_run_id }),
+      ...(context.trace_id === undefined ? {} : { trace_id: context.trace_id }),
+      ...(context.dotted_order === undefined ? {} : { dotted_order: context.dotted_order }),
+      ...(patch.values.end_time === undefined ? {} : { end_time: patch.values.end_time }),
+      ...(patch.values.error === undefined ? {} : { error: patch.values.error }),
+      ...(patch.values.tags === undefined ? {} : { tags: patch.values.tags }),
+      ...(patch.values.serialized === undefined ? {} : { serialized: patch.values.serialized }),
+      ...(patch.values.reference_example_id === undefined
+        ? {}
+        : { reference_example_id: patch.values.reference_example_id }),
+    },
+    integration,
+    "metadata",
+    privacyContext,
+  );
+  if (patch.values.events !== undefined) tree.events = patch.values.events;
+  const projected = tree.toJSON() as unknown as Record<string, unknown>;
+  const fields = survivingCodingAgentPatchFields(
+    projected,
+    patch.fields,
+  ) as NormalizedRunPatchField[];
+  const values: NormalizedRunPatchValues = {};
+  for (const field of fields) {
+    const value = ownDataField(projected, field);
+    if (!value.present) continue;
+    (values as Record<string, unknown>)[field] =
+      field === "inputs" || field === "outputs"
+        ? canonicalJsonObject(value.value, `Projected patch ${field}`)
+        : field === "tags"
+          ? requireStringArray(value.value, `Projected patch ${field}`)
+          : field === "events"
+            ? canonicalJsonArray(value.value, `Projected patch ${field}`)
+            : field === "error" || field === "reference_example_id"
+              ? requireString(value.value, `Projected patch ${field}`)
+              : field === "end_time"
+                ? requireTimestamp(value.value)
+                : canonicalJsonObject(value.value, `Projected patch ${field}`);
+  }
+  return { fields: fields.filter((field) => Object.hasOwn(values, field)), values };
+}
+
+function normalizedRunSnapshot(value: unknown): NormalizedRunSnapshot {
+  const source = requirePlainRecord(value, "Normalized run snapshot");
+  const run: NormalizedRunSnapshot = {
+    id: requiredText(source, "id", "Run ID"),
+    name: requiredText(source, "name", "Run name"),
+    run_type: requiredText(source, "run_type", "Run type"),
+    inputs: canonicalJsonObject(requireOwnDataField(source, "inputs"), "Run inputs"),
+  };
+  copyRunContext(source, run);
+  const endTime = ownDataField(source, "end_time");
+  if (endTime.present && endTime.value !== undefined)
+    run.end_time = requireTimestamp(endTime.value);
+  const outputs = ownDataField(source, "outputs");
+  if (outputs.present && outputs.value !== undefined)
+    run.outputs = canonicalJsonObject(outputs.value, "Run outputs");
+  const tags = ownDataField(source, "tags");
+  if (tags.present && tags.value !== undefined)
+    run.tags = requireStringArray(tags.value, "Run tags");
+  const error = ownDataField(source, "error");
+  if (error.present && error.value !== undefined)
+    run.error = requireString(error.value, "Run error");
+  const serialized = ownDataField(source, "serialized");
+  if (serialized.present && serialized.value !== undefined)
+    run.serialized = canonicalJsonObject(serialized.value, "Serialized run data");
+  const events = ownDataField(source, "events");
+  if (events.present && events.value !== undefined)
+    run.events = canonicalJsonArray(events.value, "Run events") as NormalizedRunSnapshot["events"];
+  const example = ownDataField(source, "reference_example_id");
+  if (example.present && example.value !== undefined) {
+    run.reference_example_id = requireNonBlankString(example.value, "Reference example ID");
+  }
+  return run;
+}
+
+function normalizedRunContext(value: unknown): NormalizedRunContext {
+  const source = requirePlainRecord(value, "Normalized run context");
+  const run: NormalizedRunContext = {
+    id: requiredText(source, "id", "Run ID"),
+    name: requiredText(source, "name", "Run name"),
+    run_type: requiredText(source, "run_type", "Run type"),
+  };
+  copyRunContext(source, run);
+  return run;
+}
+
+function copyRunContext(
+  source: Record<string, unknown>,
+  run: NormalizedRunContext | NormalizedRunSnapshot,
+): void {
+  const start = ownDataField(source, "start_time");
+  if (start.present && start.value !== undefined) run.start_time = requireTimestamp(start.value);
+  for (const [key, name] of [
+    ["parent_run_id", "Parent run ID"],
+    ["trace_id", "Trace ID"],
+    ["dotted_order", "Dotted order"],
+  ] as const) {
+    const field = ownDataField(source, key);
+    if (field.present && field.value !== undefined)
+      run[key] = requireNonBlankString(field.value, name);
+  }
+}
+
+function canonicalIdentity<T extends NormalizedRunContext>(
+  run: T,
+  prior?: NormalizedRunContext,
+  requireStableIdentity = false,
+): T & RunIdentity {
+  const reusable =
+    prior?.id === run.id && prior.parent_run_id === run.parent_run_id ? prior : undefined;
+  if (
+    reusable !== undefined &&
+    ((run.start_time !== undefined && run.start_time !== reusable.start_time) ||
+      (run.trace_id !== undefined && run.trace_id !== reusable.trace_id) ||
+      (run.dotted_order !== undefined && run.dotted_order !== reusable.dotted_order))
+  ) {
+    throw new TypeError("Run identity changed for a persisted capture");
+  }
+  const knownStartTime = run.start_time ?? reusable?.start_time;
+  if (knownStartTime === undefined && requireStableIdentity) {
+    throw new TypeError("Patch run context must preserve its canonical start time");
+  }
+  const startTime = knownStartTime ?? Date.now();
+  const result: T = { ...run, start_time: startTime };
+  const canGenerateRootIdentity = !requireStableIdentity && result.parent_run_id === undefined;
+  const generatedOrder =
+    canGenerateRootIdentity &&
+    result.dotted_order === undefined &&
+    reusable?.dotted_order === undefined
+      ? createRunIdentity({ id: result.id, start_time: startTime }).dotted_order
+      : undefined;
+  const traceId =
+    result.trace_id ?? reusable?.trace_id ?? (canGenerateRootIdentity ? result.id : undefined);
+  const order = result.dotted_order ?? reusable?.dotted_order ?? generatedOrder;
+  if (traceId === undefined || order === undefined) {
+    throw new TypeError("Run context must preserve its canonical trace ID and dotted order");
+  }
+  result.trace_id = traceId;
+  result.dotted_order = order;
+  return result as T & RunIdentity;
+}
+
+function normalizedPatch(value: unknown): NormalizedRunPatch {
+  const source = requirePlainRecord(value, "Normalized run patch");
+  const candidates = canonicalJsonArray(requireOwnDataField(source, "fields"), "Patch field mask");
+  const sourceValues = requirePlainRecord(requireOwnDataField(source, "values"), "Patch values");
+  const seen = new Set<NormalizedRunPatchField>();
+  const fields: NormalizedRunPatchField[] = [];
+  const values: NormalizedRunPatchValues = {};
+  for (const candidate of candidates) {
+    if (
+      typeof candidate !== "string" ||
+      !UPLOAD_PATCH_FIELDS.has(candidate as NormalizedRunPatchField)
+    ) {
+      throw new TypeError("Invalid patch field");
+    }
+    const field = candidate as NormalizedRunPatchField;
+    if (seen.has(field)) throw new TypeError("Patch fields must be unique");
+    const selected = ownDataField(sourceValues, field);
+    if (!selected.present || selected.value === undefined) {
+      throw new TypeError("Every selected patch field must have a value");
+    }
+    seen.add(field);
+    fields.push(field);
+    (values as Record<string, unknown>)[field] =
+      field === "inputs" || field === "outputs"
+        ? canonicalJsonObject(selected.value, `Patch ${field}`)
+        : field === "end_time"
+          ? requireTimestamp(selected.value)
+          : field === "error"
+            ? requireString(selected.value, "Patch error")
+            : field === "reference_example_id"
+              ? requireNonBlankString(selected.value, "Patch reference example ID")
+              : field === "tags"
+                ? requireStringArray(selected.value, "Patch tags")
+                : field === "events"
+                  ? (canonicalJsonArray(
+                      selected.value,
+                      "Patch events",
+                    ) as NormalizedRunPatchValues["events"])
+                  : canonicalJsonObject(selected.value, `Patch ${field}`);
+  }
+  return { fields, values };
+}
+
+function privacyStatus(value: unknown): CodingAgentPrivacyContext {
+  const source = requirePlainRecord(value, "Patch privacy context");
+  const status = requireOwnDataField(source, "status");
+  if (status !== "running" && status !== "completed" && status !== "error") {
+    throw new TypeError("Invalid patch privacy status");
+  }
+  return { status };
+}
+
+function statusForPost(run: NormalizedRunSnapshot): CodingAgentPrivacyStatus {
+  if (run.error !== undefined) return "error";
+  if (run.end_time !== undefined) return "completed";
+  return "running";
+}
+
+function requiredText(source: Record<string, unknown>, key: string, name: string): string {
+  return requireNonBlankString(requireOwnDataField(source, key), name);
+}
