@@ -13,6 +13,12 @@ export interface BegunFileLock {
     claimDirectory: string;
     claim: FileLockClaim;
 }
+export interface LegacyDirectoryFileLockGate {
+    path: string;
+    dev: number;
+    ino: number;
+    birthtimeMs: number;
+}
 export interface FileLockHandle {
     release(): Promise<void>;
 }
