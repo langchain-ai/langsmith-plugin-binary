@@ -4,13 +4,13 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmdirSync,
   statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -64,7 +64,8 @@ if (mode === "hold") {
       writeFileSync(marker + ".complete", "complete");
     }, { timeoutMs: Number(timeout) });
     writeFileSync(marker + ".released", "released");
-  } catch {
+  } catch (error) {
+    writeFileSync(marker + ".failed", String(error.stack ?? error));
     process.exitCode = 4;
   }
 } else if (mode === "die") {
@@ -87,7 +88,14 @@ function spawnWorker(
 ): ChildProcess {
   const moduleUrl = pathToFileURL(resolve("dist/storage/file-lock.js")).href;
   return spawn(process.execPath, ["-e", childProgram, moduleUrl, mode, area.lockPath, ...args], {
-    env: { HOME: area.directory, TMPDIR: area.directory, CI: "1" },
+    env: {
+      HOME: area.directory,
+      USERPROFILE: area.directory,
+      TMPDIR: area.directory,
+      TEMP: area.directory,
+      TMP: area.directory,
+      CI: "1",
+    },
     stdio: "ignore",
   });
 }
@@ -130,9 +138,34 @@ function filesWithPrefix(area: ReturnType<typeof createArea>, prefix: string): s
 
 function readClaims(area: ReturnType<typeof createArea>): FileLockClaim[] {
   const directory = `${area.lockPath}${FILE_LOCK_DIRECTORY_SUFFIX}`;
+  const failed = filesWithPrefix(area, "worker-").find((name) => name.endsWith(".failed"));
+  if (failed) throw new Error(readFileSync(join(area.directory, failed), "utf-8"));
   return readdirSync(directory)
     .filter((name) => name.endsWith(FILE_LOCK_CLAIM_EXTENSION))
-    .map((name) => JSON.parse(readFileSync(join(directory, name), "utf-8")));
+    .flatMap((name) => {
+      try {
+        return [JSON.parse(readFileSync(join(directory, name), "utf-8")) as FileLockClaim];
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
+    });
+}
+
+async function replaceClaim(
+  sourcePath: string,
+  targetPath: string,
+  renameFile = rename,
+): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await renameFile(sourcePath, targetPath);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EPERM" || attempt === 7) throw error;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    }
+  }
 }
 
 it("rejects a zero timeout before creating lock state", async () => {
@@ -142,6 +175,29 @@ it("rejects a zero timeout before creating lock state", async () => {
       "timeoutMs must be a finite positive number",
     );
     expect(filesWithPrefix(area, "state.lock.claims")).toHaveLength(0);
+  } finally {
+    cleanupArea(area);
+  }
+});
+
+it("retries a sharing violation without removing the current claim", async () => {
+  const area = createArea();
+  const sourcePath = join(area.directory, "claim.next");
+  const targetPath = join(area.directory, "claim");
+  writeFileSync(sourcePath, "next");
+  writeFileSync(targetPath, "current");
+  let attempts = 0;
+  try {
+    await replaceClaim(sourcePath, targetPath, async (source, target) => {
+      attempts += 1;
+      if (attempts === 1) {
+        expect(readFileSync(target, "utf-8")).toBe("current");
+        throw Object.assign(new Error("transient sharing violation"), { code: "EPERM" });
+      }
+      await rename(source, target);
+    });
+    expect(attempts).toBe(2);
+    expect(readFileSync(targetPath, "utf-8")).toBe("next");
   } finally {
     cleanupArea(area);
   }
@@ -336,7 +392,7 @@ it("waits through a live choosing peer and serializes separate contenders", asyn
       }),
       { mode: FILE_LOCK_FILE_MODE },
     );
-    renameSync(nextChoosingPath, choosingPath);
+    await replaceClaim(nextChoosingPath, choosingPath);
     await releaseQueue(area, workers, ids);
   } finally {
     await stopChildren(children);
