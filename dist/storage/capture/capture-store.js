@@ -1,9 +1,9 @@
 import { join, resolve } from "node:path";
 import { withFileLock } from "../index.js";
-import { CAPTURE_COMPACTED_RECORD_VERSION, CAPTURE_DIRECTORY, CAPTURE_HASH, CAPTURE_RECORD_LOCK_DIRECTORY, CAPTURE_RECORD_VERSION, CAPTURE_RECEIPT_VERSION, } from "./constants.js";
+import { CAPTURE_COMPACTED_RECORD_VERSION, CAPTURE_DIRECTORY, CAPTURE_HASH, CAPTURE_RECORD_LOCK_DIRECTORY, CAPTURE_RECORD_VERSION, CAPTURE_RECONSTRUCTION_JOB_KIND, CAPTURE_RECEIPT_VERSION, } from "./constants.js";
 import { eventPath, identifierHash, receiptPath, validateIdentifier, validateIntegration, } from "./paths.js";
 import { ensurePrivateDirectory, publishExclusive, readPrivateFile, replacePrivateFile, } from "./utils/atomic-file.js";
-import { captureContentDigest, compactCaptureRecord, validateCompactionMarker, } from "./compaction.js";
+import { captureContentDigest, compactCaptureRecord, compactReconstructionJobRecord, validateCompactionMarker, validateSourceSnapshotCleanup, } from "./compaction.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
 export function createCaptureStore(root) {
     const storageRoot = resolve(root);
@@ -91,6 +91,51 @@ export function createCaptureStore(root) {
                         return { status: "changed" };
                     await replacePrivateFile(storageRoot, path, canonicalJson(record));
                     return { status: "compacted", record };
+                });
+            }
+            catch (error) {
+                return failure("STORAGE_FAILED", error);
+            }
+        },
+        async compactReconstructionJob(scope, expected, destination) {
+            try {
+                validateScope(scope);
+                validateIdentifier(destination, "destination");
+                if (!sameScope(expected, scope) || expected.eventKind !== CAPTURE_RECONSTRUCTION_JOB_KIND)
+                    throw new TypeError("Capture is not the expected reconstruction job");
+                if (destination !== expected.destinationFingerprint)
+                    throw new TypeError("Reconstruction job destination does not match");
+                const expectedOriginalContentDigest = captureContentDigest(expected);
+                if (!CAPTURE_HASH.test(expectedOriginalContentDigest))
+                    throw new TypeError("Invalid original reconstruction job digest");
+                return await withRecordLock(storageRoot, scope, async () => {
+                    const path = eventPath(storageRoot, scope);
+                    const previous = await readRecord(storageRoot, path);
+                    if (previous === undefined)
+                        return { status: "missing-capture" };
+                    if (!sameScope(previous, scope))
+                        throw new Error("Capture namespace does not match");
+                    if (captureContentDigest(previous) !== expectedOriginalContentDigest)
+                        return { status: "changed" };
+                    const payload = previous.normalizedPayload;
+                    const hasSourceSnapshots = payload !== null &&
+                        typeof payload === "object" &&
+                        !Array.isArray(payload) &&
+                        Object.hasOwn(payload, "sourceSnapshots");
+                    if (!hasSourceSnapshots && previous.sourceSnapshotCleanup === undefined)
+                        return { status: "unchanged" };
+                    const receipt = await readReceipt(storageRoot, receiptPath(storageRoot, scope, destination));
+                    if (receipt?.outcome !== "delivered" ||
+                        receipt.destination !== destination ||
+                        !sameScope(receipt, scope))
+                        return { status: "not-delivered" };
+                    if (previous.sourceSnapshotCleanup !== undefined)
+                        return { status: "already-compacted", record: previous };
+                    const compacted = compactReconstructionJobRecord(previous, expectedOriginalContentDigest);
+                    if (compacted === undefined)
+                        return { status: "changed" };
+                    await replacePrivateFile(storageRoot, path, canonicalJson(compacted));
+                    return { status: "compacted", record: compacted };
                 });
             }
             catch (error) {
@@ -246,10 +291,16 @@ async function readRecord(root, path) {
         : undefined;
     if (value.version === CAPTURE_RECORD_VERSION && "compaction" in value)
         throw new Error("Invalid compacted capture marker");
+    if (value.version === CAPTURE_COMPACTED_RECORD_VERSION && "sourceSnapshotCleanup" in value)
+        throw new Error("Invalid reconstruction source snapshot cleanup marker");
+    const sourceSnapshotCleanup = "sourceSnapshotCleanup" in value
+        ? validateSourceSnapshotCleanup(value.sourceSnapshotCleanup, value.eventKind, normalizedPayload)
+        : undefined;
     return {
         ...value,
         normalizedPayload,
         ...(compaction === undefined ? {} : { compaction }),
+        ...(sourceSnapshotCleanup === undefined ? {} : { sourceSnapshotCleanup }),
     };
 }
 async function readReceipt(root, path) {

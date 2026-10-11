@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { lstatSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -7,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { createCaptureStore } from "./capture-store.js";
+import { CAPTURE_RECONSTRUCTION_JOB_KIND } from "./constants.js";
 import type { CaptureInput } from "./models.js";
 import { eventPath, identifierHash, receiptPath } from "./paths.js";
 import { ensurePrivateDirectory } from "./utils/atomic-file.js";
@@ -181,6 +189,182 @@ describe("immutable capture storage", () => {
     await expect(
       store.capture({ ...input, normalizedPayload: { operation: "post", changed: true } }),
     ).resolves.toEqual({ status: "conflict" });
+  });
+
+  it("cleans reconstruction snapshots after delivery and preserves capture identity", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input: CaptureInput = {
+      ...captureInput("reconstruction-cleanup"),
+      runId: "reconstruction:job-1",
+      eventKind: CAPTURE_RECONSTRUCTION_JOB_KIND,
+      normalizedPayload: {
+        jobId: "job-1",
+        sourceSnapshots: [{ sourceRef: "source-1", submission: { run: { id: "run-1" } } }],
+      },
+    };
+    await store.capture(input);
+    const original = (await store.read(input))!;
+    const destination = input.destinationFingerprint;
+
+    await expect(store.compactReconstructionJob(input, original, destination)).resolves.toEqual({
+      status: "not-delivered",
+    });
+    await store.recordOutcome({ ...input, destination, outcome: "delivered" });
+    await expect(
+      store.compactReconstructionJob(input, original, destination),
+    ).resolves.toMatchObject({
+      status: "compacted",
+      record: {
+        version: 2,
+        normalizedPayload: { jobId: "job-1" },
+        sourceSnapshotCleanup: {
+          version: 1,
+          originalContentDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        },
+      },
+    });
+    await expect(store.capture(input)).resolves.toMatchObject({
+      status: "duplicate",
+      record: { sourceSnapshotCleanup: { version: 1 } },
+    });
+    await expect(
+      store.capture({ ...input, normalizedPayload: { jobId: "job-1", sourceSnapshots: [] } }),
+    ).resolves.toEqual({ status: "conflict" });
+    await expect(
+      store.compactReconstructionJob(input, original, destination),
+    ).resolves.toMatchObject({ status: "already-compacted" });
+
+    unlinkSync(receiptPath(root, input, destination));
+    await expect(store.compactReconstructionJob(input, original, destination)).resolves.toEqual({
+      status: "not-delivered",
+    });
+  });
+
+  it("keeps reconstruction snapshots for dropped or wrong-scope receipts", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input: CaptureInput = {
+      ...captureInput("reconstruction-wrong-scope"),
+      runId: "reconstruction:wrong-scope",
+      eventKind: CAPTURE_RECONSTRUCTION_JOB_KIND,
+      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
+    };
+    await store.capture(input);
+    const original = (await store.read(input))!;
+    const destination = input.destinationFingerprint;
+    await store.recordOutcome({ ...input, destination, outcome: "delivered" });
+    const path = receiptPath(root, input, destination);
+    const receipt = JSON.parse(readFileSync(path, "utf8"));
+    receipt.sessionId = "another-session";
+    writeFileSync(path, JSON.stringify(receipt));
+
+    await expect(store.compactReconstructionJob(input, original, destination)).resolves.toEqual({
+      status: "not-delivered",
+    });
+    await expect(store.read(input)).resolves.toMatchObject({
+      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
+    });
+
+    const droppedInput: CaptureInput = {
+      ...input,
+      eventId: "reconstruction-dropped",
+    };
+    await store.capture(droppedInput);
+    const droppedOriginal = (await store.read(droppedInput))!;
+    await store.recordOutcome({
+      ...droppedInput,
+      destination,
+      outcome: "dropped",
+      reason: "expired",
+    });
+    await expect(
+      store.compactReconstructionJob(droppedInput, droppedOriginal, destination),
+    ).resolves.toEqual({ status: "not-delivered" });
+    await expect(store.read(droppedInput)).resolves.toMatchObject({
+      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
+    });
+  });
+
+  it("rejects malformed reconstruction cleanup markers", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input: CaptureInput = {
+      ...captureInput("reconstruction-invalid-marker"),
+      runId: "reconstruction:invalid-marker",
+      eventKind: CAPTURE_RECONSTRUCTION_JOB_KIND,
+      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
+    };
+    await store.capture(input);
+    const original = (await store.read(input))!;
+    const destination = input.destinationFingerprint;
+    await store.recordOutcome({ ...input, destination, outcome: "delivered" });
+    await store.compactReconstructionJob(input, original, destination);
+    const path = eventPath(root, input);
+    const compacted = JSON.parse(readFileSync(path, "utf8"));
+
+    for (const invalid of [
+      {
+        ...compacted,
+        sourceSnapshotCleanup: { ...compacted.sourceSnapshotCleanup, originalContentDigest: "bad" },
+      },
+      {
+        ...compacted,
+        normalizedPayload: { ...compacted.normalizedPayload, sourceSnapshots: [] },
+      },
+      { ...compacted, eventKind: "tool-result" },
+    ]) {
+      writeFileSync(path, JSON.stringify(invalid));
+      await expect(store.read(input)).rejects.toThrow(
+        "Invalid reconstruction source snapshot cleanup marker",
+      );
+    }
+  });
+
+  it("limits reconstruction cleanup to the capture destination and job kind", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const reconstructionInput: CaptureInput = {
+      ...captureInput("reconstruction-wrong-destination"),
+      runId: "reconstruction:wrong-destination",
+      eventKind: CAPTURE_RECONSTRUCTION_JOB_KIND,
+      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
+    };
+    await store.capture(reconstructionInput);
+    const originalReconstruction = (await store.read(reconstructionInput))!;
+    await store.recordOutcome({
+      ...reconstructionInput,
+      destination: "destination-b",
+      outcome: "delivered",
+    });
+    await expect(
+      store.compactReconstructionJob(reconstructionInput, originalReconstruction, "destination-b"),
+    ).resolves.toMatchObject({ status: "failed" });
+
+    const ordinaryInput = {
+      ...captureInput("ordinary-source-snapshots"),
+      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
+    };
+    await store.capture(ordinaryInput);
+    const originalOrdinary = (await store.read(ordinaryInput))!;
+    await store.recordOutcome({
+      ...ordinaryInput,
+      destination: ordinaryInput.destinationFingerprint,
+      outcome: "delivered",
+    });
+    await expect(
+      store.compactReconstructionJob(
+        ordinaryInput,
+        originalOrdinary,
+        ordinaryInput.destinationFingerprint,
+      ),
+    ).resolves.toMatchObject({ status: "failed" });
+    await expect(store.read(reconstructionInput)).resolves.toMatchObject({
+      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
+    });
+    await expect(store.read(ordinaryInput)).resolves.toMatchObject({
+      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
+    });
   });
 
   it("compacts only present patch values and preserves non-payload patch fields", async () => {
