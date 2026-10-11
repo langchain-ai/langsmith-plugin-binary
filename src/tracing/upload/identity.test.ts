@@ -1,9 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const clients = vi.hoisted(() => ({ createUploadClient: vi.fn(() => ({})) }));
+
+vi.mock("./client.js", () => ({ createUploadClient: clients.createUploadClient }));
 
 import { resolveUploadDestinationFingerprint } from "./identity.js";
+import { createLangSmithUploadWriter } from "./upload.js";
+
+beforeEach(() => clients.createUploadClient.mockClear());
 
 describe("upload destination identity", () => {
-  it("derives a stable account fingerprint from the bound destination identity", () => {
+  it("derives the writer fingerprint without creating upload clients", () => {
     const options = {
       destinations: [
         {
@@ -28,5 +35,15 @@ describe("upload destination identity", () => {
 
     expect(fingerprint).toMatch(/^account_[0-9a-f]{32}$/);
     expect(resolveUploadDestinationFingerprint(options)).toBe(fingerprint);
+    expect(clients.createUploadClient).not.toHaveBeenCalled();
+    const writerOptions = {
+      destinations: options.destinations,
+      redact: options.redact,
+      redactExtraRules: options.redactExtraRules,
+    };
+    expect(createLangSmithUploadWriter(writerOptions).accountFingerprint).toBe(
+      resolveUploadDestinationFingerprint(writerOptions),
+    );
+    expect(clients.createUploadClient).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,0 +1,1 @@
+{"version":3,"file":"upload.d.ts","sourceRoot":"","sources":["../../../src/test-support/models/upload.ts"],"names":[],"mappings":"AAAA,MAAM,WAAW,YAAY;IAC3B,MAAM,EAAE,MAAM,CAAC;IACf,IAAI,EAAE,MAAM,CAAC;IACb,MAAM,EAAE,MAAM,GAAG,SAAS,CAAC;IAC3B,WAAW,EAAE,MAAM,GAAG,SAAS,CAAC;IAChC,OAAO,EAAE,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,CAAC;CAClC"}
