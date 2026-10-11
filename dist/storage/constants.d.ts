@@ -21,4 +21,6 @@ export declare const FILE_LOCK_EXISTS_CODE = "EEXIST";
 export declare const FILE_LOCK_MISSING_CODE = "ENOENT";
 export declare const FILE_LOCK_PROCESS_MISSING_CODE = "ESRCH";
 export declare const FILE_LOCK_PROCESS_CHECK_SIGNAL = 0;
+export declare const FILE_LOCK_RENAME_RETRY_TIMEOUT_MS = 100;
+export declare const FILE_LOCK_RENAME_BUSY_CODE = "EPERM";
 //# sourceMappingURL=constants.d.ts.map
