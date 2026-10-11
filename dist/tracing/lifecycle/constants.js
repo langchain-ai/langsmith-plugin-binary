@@ -1,0 +1,27 @@
+export const ROOT_RUN_EXECUTION_ORDER = 1;
+export const DOTTED_ORDER_TIME_PREFIX_LENGTH = 18;
+export const DOTTED_ORDER_SEGMENT_PATTERN = /^(\d{8}T\d{12}Z)([^.]+)$/u;
+export const DOTTED_ORDER_STRIP_PATTERN = /[-:.]/gu;
+export const LIFECYCLE_POST_EVENT_KIND = "run-post";
+export const LIFECYCLE_PATCH_EVENT_KIND = "run-patch";
+export const LIFECYCLE_SETTLEMENT_EVENT_KIND = "run-settlement-patch";
+export const LIFECYCLE_ATTRIBUTION_READY_FIELD = "attributionReady";
+export const LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY = "lifecycle-settlement-v1";
+export const LIFECYCLE_SETTLEMENT_LOCK_FILE = "drain";
+export const LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY = "integrations";
+export const LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY = "sessions";
+export const LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY = "accounts";
+export const LIFECYCLE_SNAPSHOT_LOCK_DIRECTORY = "lifecycle-snapshot-v1";
+export const LIFECYCLE_SNAPSHOT_LOCK_FILE = "capture";
+export const LIFECYCLE_SNAPSHOT_REVISION_EVENT_ID_PREFIX = "run-snapshot-v1:";
+export const LIFECYCLE_SNAPSHOT_OPTIONAL_RUN_FIELDS = [
+    "outputs",
+    "end_time",
+    "error",
+    "tags",
+    "serialized",
+    "events",
+    "reference_example_id",
+];
+export const LIFECYCLE_TURN_CLOSURE_STATES = ["open", "provisional", "authoritative"];
+//# sourceMappingURL=constants.js.map
