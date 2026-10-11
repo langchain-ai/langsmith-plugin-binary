@@ -52,6 +52,10 @@
       "types": "./dist/storage/capture/index.d.ts",
       "default": "./dist/storage/capture/index.js"
     },
+    "./tracing/upload": {
+      "types": "./dist/tracing/upload/index.d.ts",
+      "default": "./dist/tracing/upload/index.js"
+    },
     "./tracing/upload-identity": {
       "types": "./dist/tracing/upload/identity.d.ts",
       "default": "./dist/tracing/upload/identity.js"
