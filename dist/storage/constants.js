@@ -1,6 +1,8 @@
 export const FILE_LOCK_CLAIM_VERSION = 1;
 export const FILE_LOCK_CLAIM_EXTENSION = ".json";
 export const FILE_LOCK_DIRECTORY_SUFFIX = ".claims";
+export const FILE_LOCK_LEGACY_DIRECTORY_SUFFIX = ".lock";
+export const FILE_LOCK_TIMEOUT_ERROR_NAME = "FileLockTimeoutError";
 export const FILE_LOCK_TEMP_PREFIX = ".";
 export const FILE_LOCK_TEMP_SUFFIX = ".tmp";
 export const FILE_LOCK_EXCLUSIVE_FLAG = "wx";
@@ -23,4 +25,8 @@ export const FILE_LOCK_PROCESS_MISSING_CODE = "ESRCH";
 export const FILE_LOCK_PROCESS_CHECK_SIGNAL = 0;
 export const FILE_LOCK_RENAME_RETRY_TIMEOUT_MS = 100;
 export const FILE_LOCK_RENAME_BUSY_CODE = "EPERM";
+export const FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES = ["EPERM", "EACCES"];
+export const FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE = "Could not release the legacy lock gate after shared lock acquisition failed";
+export const FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE = "Could not release compatible file lock";
+export const FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE = "Legacy file lock gate changed before release";
 //# sourceMappingURL=constants.js.map
