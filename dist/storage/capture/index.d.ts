@@ -1,3 +1,3 @@
 export { createCaptureStore } from "./capture-store.js";
-export type { CaptureCompactionResult, CaptureInput, ReconstructionJobCleanupResult, CaptureScope, CaptureStore, CaptureWriteResult, JsonValue, OutcomeInput, OutcomeReadResult, OutcomeReceipt, OutcomeWriteResult, StorageFailure, SourceSnapshotCleanup, StoredCapture, } from "./models.js";
+export type { CaptureCompactionResult, CaptureDependency, CaptureInput, CaptureScope, CaptureStore, CaptureWriteResult, EnumeratedCapture, EnumeratedCaptureSession, JsonValue, OutcomeInput, OutcomeReadResult, OutcomeReceipt, OutcomeWriteResult, ReconstructionJobCleanupResult, SourceSnapshotCleanup, StorageFailure, StoredCapture, } from "./models.js";
 //# sourceMappingURL=index.d.ts.map

@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   symlinkSync,
+  utimesSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -109,6 +110,38 @@ async function runCaptureChild(root: string, input: CaptureInput): Promise<strin
 }
 
 describe("immutable capture storage", () => {
+  it("rejects invalid imported timing and delivery counts before writing and after reload", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input = {
+      ...captureInput(),
+      sourceAgeStartedAtMs: 123,
+      priorDeliveryAttempts: 2,
+    };
+    for (const priorDeliveryAttempts of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, null, "2"]) {
+      await expect(
+        store.capture({ ...input, priorDeliveryAttempts } as CaptureInput),
+      ).resolves.toMatchObject({ status: "failed", code: "SERIALIZATION_FAILED" });
+    }
+    for (const sourceAgeStartedAtMs of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, null, "123"]) {
+      await expect(
+        store.capture({ ...input, sourceAgeStartedAtMs } as CaptureInput),
+      ).resolves.toMatchObject({ status: "failed", code: "SERIALIZATION_FAILED" });
+    }
+    await expect(store.enumerate(input.integration, input.sessionId)).resolves.toEqual([]);
+    await expect(store.capture(input)).resolves.toMatchObject({ status: "published" });
+    const path = eventPath(root, input);
+    const saved = JSON.parse(readFileSync(path, "utf8"));
+    await expect(store.read(input)).resolves.toMatchObject({
+      sourceAgeStartedAtMs: 123,
+      priorDeliveryAttempts: 2,
+    });
+    writeFileSync(path, JSON.stringify({ ...saved, sourceAgeStartedAtMs: -1 }));
+    await expect(store.read(input)).rejects.toThrow("Stored source age");
+    writeFileSync(path, JSON.stringify({ ...saved, priorDeliveryAttempts: -1 }));
+    await expect(store.read(input)).rejects.toThrow("prior delivery attempts");
+  });
+
   it("keeps event payload and turn evidence together and distinguishes revisions of one run", async () => {
     const store = createCaptureStore(temporaryRoot());
     const first = captureInput("native-start");
@@ -127,6 +160,77 @@ describe("immutable capture storage", () => {
       eventId: "native-stop",
       runId: "run-1",
     });
+  });
+
+  it("persists optional full-scope dependencies", async () => {
+    const store = createCaptureStore(temporaryRoot());
+    const input = {
+      ...captureInput("child-event"),
+      dependencies: [
+        {
+          integration: "claude-code",
+          sessionId: "parent-session",
+          turnId: "parent-turn",
+          eventId: "parent-event",
+        },
+      ],
+    };
+    await expect(store.capture(input)).resolves.toMatchObject({ status: "published" });
+    await expect(store.read(input)).resolves.toMatchObject({ dependencies: input.dependencies });
+    const legacy = captureInput("legacy-event");
+    await expect(store.capture(legacy)).resolves.toMatchObject({ status: "published" });
+    await expect(store.read(legacy)).resolves.toMatchObject({ eventId: "legacy-event" });
+  });
+
+  it("rejects invalid capture dependencies", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const duplicate = {
+      integration: "claude-code",
+      sessionId: "parent-session",
+      turnId: "parent-turn",
+      eventId: "parent-event",
+    };
+    const invalidInputs = [
+      {
+        ...captureInput("self-event"),
+        dependencies: [
+          {
+            integration: "claude-code",
+            sessionId: "session-1",
+            turnId: "turn-1",
+            eventId: "self-event",
+          },
+        ],
+      },
+      { ...captureInput("duplicate-event"), dependencies: [duplicate, duplicate] },
+      {
+        ...captureInput("integration-event"),
+        dependencies: [{ ...duplicate, integration: "codex" }],
+      },
+      {
+        ...captureInput("identifier-event"),
+        dependencies: [{ ...duplicate, eventId: "" }],
+      },
+      { ...captureInput("shape-event"), dependencies: null as never },
+    ];
+    for (const input of invalidInputs) {
+      await expect(store.capture(input)).resolves.toMatchObject({
+        status: "failed",
+        code: "SERIALIZATION_FAILED",
+      });
+    }
+    const valid = { ...captureInput("persisted-dependency"), dependencies: [duplicate] };
+    await store.capture(valid);
+    const path = eventPath(root, valid);
+    const saved = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(
+      path,
+      JSON.stringify({ ...saved, dependencies: [{ ...duplicate, integration: "codex" }] }),
+    );
+    await expect(store.read(valid)).rejects.toThrow(
+      "Capture dependencies must use the same integration",
+    );
   });
 
   it("treats stable replay as duplicate and refuses conflicting content", async () => {
@@ -429,6 +533,171 @@ describe("immutable capture storage", () => {
     expect(receipts.map(({ status }) => status)).toEqual(
       expect.arrayContaining(["duplicate", "recorded"]),
     );
+  });
+
+  it("enumerates committed events with their persisted capture times", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const first = captureInput("native-a");
+    const second = { ...captureInput("native-b"), turnId: "turn-2" };
+    await store.capture(first);
+    await store.capture(second);
+    const persisted = (await store.read(first))!;
+    utimesSync(eventPath(root, first), new Date(0), new Date(0));
+    const entries = await store.enumerate(first.integration, first.sessionId);
+    expect(entries.map(({ record }) => record.eventId).toSorted()).toEqual([
+      "native-a",
+      "native-b",
+    ]);
+    expect(entries.find(({ record }) => record.eventId === first.eventId)?.capturedAtMs).toBe(
+      persisted.capturedAtMs,
+    );
+    await expect(store.capture(first)).resolves.toMatchObject({
+      status: "duplicate",
+      record: { capturedAtMs: persisted.capturedAtMs },
+    });
+  });
+
+  it("enumerates only the requested turn and validates its live event files", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const first = captureInput("turn-one-event");
+    const otherTurn = { ...captureInput("turn-two-event"), turnId: "turn-2" };
+    await store.capture(first);
+    await store.capture(otherTurn);
+    writeFileSync(eventPath(root, otherTurn), "invalid record");
+
+    await expect(
+      store.enumerateTurn(first.integration, first.sessionId, first.turnId),
+    ).resolves.toMatchObject([{ record: { eventId: first.eventId, runId: first.runId } }]);
+    await expect(store.enumerate(first.integration, first.sessionId)).rejects.toThrow();
+  });
+
+  it("discovers session IDs from validated records instead of directory hashes", async () => {
+    const store = createCaptureStore(temporaryRoot());
+    await store.capture({ ...captureInput("event-a"), sessionId: "actual-session-a" });
+    await store.capture({ ...captureInput("event-b"), sessionId: "actual-session-b" });
+
+    const sessions = await store.enumerateSessions("claude-code");
+
+    expect(sessions.map(({ sessionId }) => sessionId)).toEqual([
+      "actual-session-a",
+      "actual-session-b",
+    ]);
+    expect(sessions.map(({ captures }) => captures[0]?.record.sessionId)).toEqual([
+      "actual-session-a",
+      "actual-session-b",
+    ]);
+  });
+
+  it("skips an empty session directory", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    await mkdir(
+      join(
+        root,
+        "capture-v1",
+        "integrations",
+        "claude-code",
+        "sessions",
+        identifierHash("empty-session"),
+      ),
+      { recursive: true },
+    );
+
+    await expect(store.enumerateSessions("claude-code")).resolves.toEqual([]);
+  });
+
+  it("skips a session directory while a capture is still being published", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    await store.capture({ ...captureInput("event-a"), sessionId: "saved-session" });
+    const stagingDirectory = await ensurePrivateDirectory(root, [
+      "capture-v1",
+      "integrations",
+      "claude-code",
+      "sessions",
+      identifierHash("writing-session"),
+      "turns",
+      identifierHash("turn-1"),
+      "events",
+    ]);
+    writeFileSync(join(stagingDirectory, ".11111111-1111-4111-8111-111111111111.tmp"), "partial");
+
+    await expect(store.enumerateSessions("claude-code")).resolves.toMatchObject([
+      { sessionId: "saved-session" },
+    ]);
+  });
+
+  it("rejects a symlinked foreign session directory before following it", async () => {
+    const input = captureInput();
+    const outsideRoot = temporaryRoot();
+    await createCaptureStore(outsideRoot).capture(input);
+    const linkedRoot = temporaryRoot();
+    const sessionsDirectory = join(
+      linkedRoot,
+      "capture-v1",
+      "integrations",
+      input.integration,
+      "sessions",
+    );
+    await mkdir(sessionsDirectory, { recursive: true });
+    createDirectoryLink(
+      join(
+        outsideRoot,
+        "capture-v1",
+        "integrations",
+        input.integration,
+        "sessions",
+        identifierHash(input.sessionId),
+      ),
+      join(sessionsDirectory, identifierHash(input.sessionId)),
+    );
+
+    await expect(
+      createCaptureStore(linkedRoot).enumerateSessions(input.integration),
+    ).rejects.toThrow("Invalid capture session directory");
+  });
+
+  it("rejects a record whose session ID does not match its hashed directory", async () => {
+    const input = captureInput();
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    await store.capture(input);
+    const recordPath = eventPath(root, input);
+    const record = (await store.read(input))!;
+    writeFileSync(recordPath, JSON.stringify({ ...record, sessionId: "invented-session" }));
+    await expect(store.enumerateSessions(input.integration)).rejects.toThrow(
+      "Capture event namespace does not match",
+    );
+  });
+
+  it("fails enumeration when a committed event is malformed", async () => {
+    const root = temporaryRoot();
+    const input = captureInput();
+    const store = createCaptureStore(root);
+    await store.capture(input);
+    const record = (await store.read(input))!;
+    writeFileSync(eventPath(root, input), JSON.stringify({ ...record, version: 1 }));
+    await expect(store.enumerate(input.integration, input.sessionId)).rejects.toThrow(
+      "Unsupported capture record",
+    );
+  });
+
+  it("rejects symlinked directories during event enumeration", async () => {
+    const input = captureInput();
+    const outsideRoot = temporaryRoot();
+    await createCaptureStore(outsideRoot).capture(input);
+    const linkedRoot = temporaryRoot();
+    const captureRoot = join(linkedRoot, "capture-v1");
+    await mkdir(captureRoot);
+    createDirectoryLink(
+      join(outsideRoot, "capture-v1", "integrations"),
+      join(captureRoot, "integrations"),
+    );
+    await expect(
+      createCaptureStore(linkedRoot).enumerate(input.integration, input.sessionId),
+    ).rejects.toThrow("Private path contains a non-directory");
   });
 
   it("rejects an invalid destination fingerprint", async () => {

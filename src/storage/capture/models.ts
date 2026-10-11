@@ -6,6 +6,15 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+export interface CaptureScope {
+  integration: string;
+  sessionId: string;
+  turnId: string;
+  eventId: string;
+}
+
+export type CaptureDependency = CaptureScope;
+
 export interface CaptureInput {
   integration: string;
   sessionId: string;
@@ -17,6 +26,9 @@ export interface CaptureInput {
   normalizedPayload: JsonValue;
   turnEvidence: JsonValue;
   metadataProvenance: JsonValue;
+  sourceAgeStartedAtMs?: number;
+  priorDeliveryAttempts?: number;
+  dependencies?: CaptureDependency[];
 }
 
 export interface StoredCapture extends CaptureInput {
@@ -55,14 +67,17 @@ export interface CaptureCompactionPayload {
   fields: CaptureCompactionFields;
 }
 
-export type StorageFailure = { status: "failed"; code: string; message: string };
-
-export interface CaptureScope {
-  integration: string;
-  sessionId: string;
-  turnId: string;
-  eventId: string;
+export interface EnumeratedCapture {
+  record: StoredCapture;
+  capturedAtMs: number;
 }
+
+export interface EnumeratedCaptureSession {
+  sessionId: string;
+  captures: EnumeratedCapture[];
+}
+
+export type StorageFailure = { status: "failed"; code: string; message: string };
 
 export type CaptureWriteResult =
   | { status: "published"; record: StoredCapture }
@@ -122,6 +137,13 @@ export interface CaptureStore {
     destination: string,
   ): Promise<ReconstructionJobCleanupResult>;
   read(scope: CaptureScope): Promise<StoredCapture | undefined>;
+  enumerate(integration: string, sessionId: string): Promise<EnumeratedCapture[]>;
+  enumerateTurn(
+    integration: string,
+    sessionId: string,
+    turnId: string,
+  ): Promise<EnumeratedCapture[]>;
+  enumerateSessions(integration: string): Promise<EnumeratedCaptureSession[]>;
   recordOutcome(input: OutcomeInput): Promise<OutcomeWriteResult>;
   readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
 }

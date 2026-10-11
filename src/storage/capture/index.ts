@@ -1,17 +1,20 @@
 export { createCaptureStore } from "./capture-store.js";
 export type {
   CaptureCompactionResult,
+  CaptureDependency,
   CaptureInput,
-  ReconstructionJobCleanupResult,
   CaptureScope,
   CaptureStore,
   CaptureWriteResult,
+  EnumeratedCapture,
+  EnumeratedCaptureSession,
   JsonValue,
   OutcomeInput,
   OutcomeReadResult,
   OutcomeReceipt,
   OutcomeWriteResult,
-  StorageFailure,
+  ReconstructionJobCleanupResult,
   SourceSnapshotCleanup,
+  StorageFailure,
   StoredCapture,
 } from "./models.js";
