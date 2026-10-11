@@ -6,6 +6,7 @@ import { createLangSmithUploadWriter } from "./index.js";
 import { resolveUploadDestinationFingerprint } from "./identity.js";
 import type {
   LangSmithUploadDestinationConfig,
+  PreparedRunPatchSubmission,
   PreparedRunPostSubmission,
   UploadDestination,
 } from "./models.js";
@@ -46,6 +47,28 @@ function submission(overrides: Partial<PreparedRunPostSubmission> = {}): Prepare
       tags: ["source"],
       serialized: { type: "chain" },
     },
+    metadata: metadata(),
+    ...overrides,
+  };
+}
+
+function patchSubmission(
+  overrides: Partial<PreparedRunPatchSubmission> = {},
+): PreparedRunPatchSubmission {
+  return {
+    operation: "patch",
+    integration: "openai-codex",
+    privacyMode: "metadata",
+    run: {
+      id: RUN_ID,
+      name: "root run",
+      run_type: "chain",
+      start_time: "2026-10-09T20:00:00.000Z",
+      trace_id: RUN_ID,
+      dotted_order: "20261009T200000000Z12345678-1234-4123-8123-123456789012",
+    },
+    privacyContext: { status: "completed" },
+    patch: { fields: [], values: {} },
     metadata: metadata(),
     ...overrides,
   };
@@ -159,6 +182,189 @@ describe("bound LangSmith upload writer", () => {
     expect(requests[0]?.payload).toMatchObject({ session_name: "primary-project", id: RUN_ID });
     expect(requests[1]?.payload).toMatchObject({ session_name: "replica-project", id: RUN_ID });
   });
+  it("patches each configured destination independently", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: true,
+      destinations: [
+        destination(PRIMARY_KEY, "primary-project", "primary-workspace"),
+        destination(REPLICA_KEY, "replica-project", "replica-workspace"),
+      ],
+    });
+    const primaryId = destinationByIndex(writer.destinations, 0);
+    const replicaId = destinationByIndex(writer.destinations, 1);
+
+    await expect(writer.send(patchSubmission(), primaryId)).resolves.toMatchObject({
+      destinationId: primaryId,
+      runId: RUN_ID,
+      operation: "patched",
+    });
+    await expect(writer.send(patchSubmission(), replicaId)).resolves.toMatchObject({
+      destinationId: replicaId,
+      runId: RUN_ID,
+      operation: "patched",
+    });
+
+    expect(
+      requests.map(({ method, apiKey, workspaceId }) => [method, apiKey, workspaceId]),
+    ).toEqual([
+      ["PATCH", PRIMARY_KEY, "primary-workspace"],
+      ["PATCH", REPLICA_KEY, "replica-workspace"],
+    ]);
+    expect(requests.map(({ path }) => path)).toEqual([
+      `/api/v1/runs/${RUN_ID}`,
+      `/api/v1/runs/${RUN_ID}`,
+    ]);
+    expect(requests[0]?.payload).toMatchObject({ session_name: "primary-project" });
+    expect(requests[1]?.payload).toMatchObject({ session_name: "replica-project" });
+  });
+
+  it("updates run metadata without resending stored identity or content", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: false,
+      destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+    });
+    const destinationId = destinationByIndex(writer.destinations, 0);
+    const initial = submission({
+      privacyMode: "full",
+      run: {
+        ...submission().run,
+        inputs: { prompt: "original prompt" },
+        outputs: { answer: "original answer" },
+        end_time: "2026-10-09T20:00:01.000Z",
+        trace_id: "original-trace",
+        dotted_order: "original-order",
+      },
+    });
+    await writer.send(initial, destinationId);
+
+    const patch = patchSubmission({
+      privacyMode: "full",
+      run: {
+        id: RUN_ID,
+        name: "root run",
+        run_type: "chain",
+        start_time: "2026-10-09T20:00:00.000Z",
+        trace_id: "original-trace",
+        dotted_order: "original-order",
+      },
+      metadata: { ...metadata(), turnNumber: 2 },
+    });
+    await writer.send(patch, destinationId);
+
+    const request = requests[1];
+    expect(request?.method).toBe("PATCH");
+    expect(request?.payload).toMatchObject({
+      session_name: "primary-project",
+      extra: { metadata: { thread_id: "thread-1", turn_number: 2 } },
+    });
+    for (const field of [
+      "inputs",
+      "outputs",
+      "start_time",
+      "end_time",
+      "parent_run_id",
+      "trace_id",
+      "dotted_order",
+    ]) {
+      expect(request?.payload).not.toHaveProperty(field);
+    }
+    expect(storedRuns.get(PRIMARY_KEY + ":" + RUN_ID)).toMatchObject({
+      inputs: { prompt: "original prompt" },
+      outputs: { answer: "original answer" },
+      end_time: "2026-10-09T20:00:01.000Z",
+      trace_id: "original-trace",
+      dotted_order: "original-order",
+      extra: { metadata: { turn_number: 2 } },
+    });
+  });
+
+  it("sends a mutable field only when the patch mask selects it", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: false,
+      destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+    });
+    const destinationId = destinationByIndex(writer.destinations, 0);
+    const patch = patchSubmission({
+      privacyMode: "full",
+      patch: {
+        fields: ["inputs"],
+        values: {
+          inputs: { prompt: "updated prompt" },
+          outputs: { answer: "unselected answer" },
+        },
+      },
+    });
+
+    await writer.send(patch, destinationId);
+
+    expect(requests[0]?.payload).toMatchObject({
+      inputs: { prompt: "updated prompt" },
+      session_name: "primary-project",
+    });
+    for (const field of [
+      "id",
+      "name",
+      "run_type",
+      "outputs",
+      "start_time",
+      "end_time",
+      "parent_run_id",
+      "trace_id",
+      "dotted_order",
+    ]) {
+      expect(requests[0]?.payload).not.toHaveProperty(field);
+    }
+  });
+
+  it("mutes selected content fields in metadata mode before sending the patch", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: false,
+      destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+    });
+    const patch = patchSubmission({
+      privacyMode: "metadata",
+      patch: {
+        fields: ["inputs", "outputs"],
+        values: {
+          inputs: { prompt: PRIVATE_MARKER },
+          outputs: { answer: PRIVATE_MARKER },
+        },
+      },
+    });
+
+    await writer.send(patch, destinationByIndex(writer.destinations, 0));
+
+    expect(requests[0]?.payload).toMatchObject({
+      inputs: { messages: [{ role: "user" }] },
+      outputs: { messages: [{ role: "assistant" }] },
+    });
+    expect(JSON.stringify(requests[0]?.payload)).not.toContain(PRIVATE_MARKER);
+  });
+
+  it.each(["completed", "error"] as const)(
+    "uses %s patch privacy status without sending source fields",
+    async (status) => {
+      const writer = createLangSmithUploadWriter({
+        redact: false,
+        destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+      });
+      const destinationId = destinationByIndex(writer.destinations, 0);
+      const patch = patchSubmission({
+        privacyMode: "metadata",
+        privacyContext: { status },
+      });
+
+      await writer.send(patch, destinationId);
+
+      expect(requests[0]?.payload).toMatchObject({
+        extra: { metadata: { status, ls_tracing_mode: "metadata" } },
+        session_name: "primary-project",
+      });
+      expect(requests[0]?.payload).not.toHaveProperty("end_time");
+      expect(requests[0]?.payload).not.toHaveProperty("error");
+    },
+  );
+
   it("rejects a failed replica while keeping the primary outcome verifiable", async () => {
     const writer = createLangSmithUploadWriter({
       redact: true,
