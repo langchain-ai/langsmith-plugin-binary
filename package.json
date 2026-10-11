@@ -32,6 +32,10 @@
       "types": "./dist/metadata/index.d.ts",
       "default": "./dist/metadata/index.js"
     },
+    "./privacy": {
+      "types": "./dist/privacy/index.d.ts",
+      "default": "./dist/privacy/index.js"
+    },
     "./settings": {
       "types": "./dist/settings/index.d.ts",
       "default": "./dist/settings/index.js"
@@ -65,11 +69,15 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
+    "langsmith": "0.9.0",
     "oxfmt": "^0.71.0",
     "oxlint": "^1.86.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
     "yaml": "^2.9.1"
+  },
+  "peerDependencies": {
+    "langsmith": "^0.9.0 || ^0.10.0"
   },
   "engines": {
     "node": ">=20"
