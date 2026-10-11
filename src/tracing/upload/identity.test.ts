@@ -36,14 +36,7 @@ describe("upload destination identity", () => {
     expect(fingerprint).toMatch(/^account_[0-9a-f]{32}$/);
     expect(resolveUploadDestinationFingerprint(options)).toBe(fingerprint);
     expect(clients.createUploadClient).not.toHaveBeenCalled();
-    const writerOptions = {
-      destinations: options.destinations,
-      redact: options.redact,
-      redactExtraRules: options.redactExtraRules,
-    };
-    expect(createLangSmithUploadWriter(writerOptions).accountFingerprint).toBe(
-      resolveUploadDestinationFingerprint(writerOptions),
-    );
+    expect(createLangSmithUploadWriter(options).accountFingerprint).toBe(fingerprint);
     expect(clients.createUploadClient).toHaveBeenCalledTimes(1);
   });
 });

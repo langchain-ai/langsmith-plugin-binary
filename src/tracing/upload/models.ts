@@ -118,7 +118,7 @@ export interface LangSmithUploadIdentityOptions {
   redactExtraRules?: readonly UploadRedactRule[];
 }
 
-export type LangSmithUploadWriterOptions = Omit<LangSmithUploadIdentityOptions, "replicas">;
+export type LangSmithUploadWriterOptions = LangSmithUploadIdentityOptions;
 
 export interface ResolvedUploadDestinationIdentity {
   id: string;
