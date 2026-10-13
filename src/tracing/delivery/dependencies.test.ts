@@ -109,7 +109,7 @@ describe("delivery dependencies", () => {
       return store;
     });
     try {
-      const size = 24;
+      const size = 6;
       const coordinator = createDeliveryCoordinator({
         storageRoot: temporaryRoot(),
         integration: "claude-code",

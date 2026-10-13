@@ -199,6 +199,9 @@ function projectPost(
     ...(run.parent_run_id === undefined ? {} : { parent_run_id: run.parent_run_id }),
     ...(run.trace_id === undefined ? {} : { trace_id: run.trace_id }),
     ...(run.dotted_order === undefined ? {} : { dotted_order: run.dotted_order }),
+    ...(Array.isArray(projected["tags"])
+      ? { tags: requireStringArray(projected["tags"], "Projected run tags") }
+      : {}),
   };
 }
 

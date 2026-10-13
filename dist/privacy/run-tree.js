@@ -46,6 +46,8 @@ function configForMetadataMode(config, integration, privacyContext) {
     }
     if (Array.isArray(source.replicas))
         safe.replicas = source.replicas.map(projectReplica);
+    if (Array.isArray(source.tags) && source.tags.length === 0)
+        safe.tags = [];
     safe.inputs = mutedContent("user");
     safe.outputs = mutedContent("assistant");
     safe.extra = extraForMode(metadataForMode(originalExtra?.metadata, integration, "metadata", status) ?? {}, integration, status);
@@ -58,7 +60,8 @@ function sanitizeRunTree(run, integration) {
     run.outputs = mutedContent("assistant");
     delete run.error;
     run.serialized = {};
-    delete run.tags;
+    if (!Array.isArray(run.tags) || run.tags.length > 0)
+        delete run.tags;
     delete run.reference_example_id;
     delete run.attachments;
     delete run.events;

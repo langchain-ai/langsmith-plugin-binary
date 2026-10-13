@@ -430,6 +430,38 @@ describe("durable run lifecycle bridge", () => {
     expect(JSON.stringify(requests[0]?.payload)).not.toContain(PRIVATE_MARKER);
   });
 
+  it("keeps an empty tag list on a muted post through capture and drain", async () => {
+    const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-muted-tags-"));
+    const bridge = createLifecycleBridge({
+      storageRoot: root,
+      integration: "cursor",
+      sessionId: "session-muted-tags",
+      writer: { destinations: [destination()], redact: false },
+    });
+    for (const [eventId, id, tags] of [
+      ["event-empty-tags", PARENT_ID, []],
+      ["event-no-tags", CHILD_ID, undefined],
+    ] as const)
+      await bridge.capture({
+        turnId: "turn-muted-tags",
+        eventId,
+        submission: post(
+          id,
+          metadata("cursor", "root"),
+          { start_time: "2026-10-10T12:00:00.000Z", ...(tags === undefined ? {} : { tags: [] }) },
+          "metadata",
+        ),
+        turnEvidence: evidence(),
+      });
+
+    await bridge.drain();
+    const posts = requests.filter(({ method }) => method === "POST");
+    expect(posts.find(({ payload }) => payload["id"] === PARENT_ID)?.payload["tags"]).toEqual([]);
+    expect(posts.find(({ payload }) => payload["id"] === CHILD_ID)?.payload).not.toHaveProperty(
+      "tags",
+    );
+  });
+
   it("persists metadata-mode patches with a projected mask, status, and provenance", async () => {
     const root = await mkdtemp(join(tmpdir(), "plugins-base-lifecycle-patch-privacy-"));
     const bridge = createLifecycleBridge({

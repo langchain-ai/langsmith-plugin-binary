@@ -12,10 +12,11 @@ import type {
   PreparedRunPostSubmission,
   PreparedRunSubmission,
   ResolvedUploadDestination,
+  UploadFailure,
   UploadReceipt,
 } from "./models.js";
 import { resolveUploadDestinations } from "./destinations.js";
-import { UPLOAD_PATCH_FIELDS } from "./constants.js";
+import { UPLOAD_PATCH_ALREADY_RECEIVED_STATUS, UPLOAD_PATCH_FIELDS } from "./constants.js";
 import { createUploadClient } from "./client.js";
 import { normalizedRedactedFields, redactSdkOmittedFields } from "./redaction.js";
 import { contextForDestination, runIdForDestination } from "./replica-identifiers.js";
@@ -76,17 +77,21 @@ export function createLangSmithUploadWriter(
           );
           return { destinationId, runId: submission.run.id, operation: "posted" };
         }
-        await client.updateRun(
-          runIdForDestination(submission.run.id, destination),
-          payload,
-          clientOptions,
-        );
+        await client
+          .updateRun(runIdForDestination(submission.run.id, destination), payload, clientOptions)
+          .catch((error: unknown) => {
+            if (!patchAlreadyReceived(error)) throw error;
+          });
         return { destinationId, runId: submission.run.id, operation: "patched" };
       } catch {
         throw new Error("LangSmith upload failed");
       }
     },
   });
+}
+
+function patchAlreadyReceived(error: unknown): boolean {
+  return (error as UploadFailure | undefined)?.status === UPLOAD_PATCH_ALREADY_RECEIVED_STATUS;
 }
 
 function runConfig(
