@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { chmod, link, lstat, mkdir, open, unlink } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { CAPTURE_DIRECTORY_MODE, CAPTURE_FILE_MODE } from "../constants.js";
@@ -57,6 +57,72 @@ export async function publishExclusive(path, contents, beforeCommit) {
                 throw error;
         });
     }
+}
+export async function replacePrivateFile(root, path, contents) {
+    if (!(await hasRealParentDirectories(root, path)))
+        throw new Error("Capture record parent directory is missing");
+    const original = await lstat(path);
+    if (!original.isFile() || original.isSymbolicLink() || !hasPrivateFileMode(original.mode)) {
+        throw new Error("Capture record must be a private regular file");
+    }
+    const directory = dirname(path);
+    const stagingPath = join(directory, `.${randomUUID()}.tmp`);
+    let handle;
+    let stagingCreated = false;
+    let operationFailed = false;
+    let operationError;
+    try {
+        handle = await open(stagingPath, "wx", CAPTURE_FILE_MODE);
+        stagingCreated = true;
+        await handle.writeFile(contents, "utf8");
+        await handle.chmod(CAPTURE_FILE_MODE);
+        await handle.sync();
+        await handle.close();
+        handle = undefined;
+        const current = await lstat(path);
+        if (!current.isFile() ||
+            current.isSymbolicLink() ||
+            current.dev !== original.dev ||
+            current.ino !== original.ino ||
+            !hasPrivateFileMode(current.mode)) {
+            throw new Error("Capture record changed during replacement");
+        }
+        await rename(stagingPath, path);
+        await syncDirectory(directory);
+    }
+    catch (error) {
+        operationFailed = true;
+        operationError = error;
+    }
+    const cleanupErrors = [];
+    if (handle !== undefined) {
+        try {
+            await handle.close();
+        }
+        catch (error) {
+            cleanupErrors.push(error);
+        }
+    }
+    if (stagingCreated) {
+        try {
+            await unlink(stagingPath);
+        }
+        catch (error) {
+            if (errorCode(error) !== "ENOENT")
+                cleanupErrors.push(error);
+        }
+    }
+    if (operationFailed && cleanupErrors.length > 0)
+        throw new AggregateError([operationError, ...cleanupErrors], "Capture replacement failed");
+    if (operationFailed)
+        throw operationError;
+    if (cleanupErrors.length === 1)
+        throw cleanupErrors[0];
+    if (cleanupErrors.length > 1)
+        throw new AggregateError(cleanupErrors, "Capture replacement cleanup failed");
+}
+function hasPrivateFileMode(mode) {
+    return process.platform === "win32" || (mode & 0o077) === 0;
 }
 export async function readPrivateFile(root, path) {
     if (!(await hasRealParentDirectories(root, path)))
