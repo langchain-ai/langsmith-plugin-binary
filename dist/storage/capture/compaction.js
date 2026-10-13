@@ -1,13 +1,16 @@
 import { createHash } from "node:crypto";
-import { CAPTURE_COMPACTED_RECORD_VERSION, CAPTURE_HASH } from "./constants.js";
+import { CAPTURE_COMPACTED_RECORD_VERSION, CAPTURE_HASH, CAPTURE_RECONSTRUCTION_JOB_KIND, CAPTURE_SOURCE_SNAPSHOT_CLEANUP_VERSION, } from "./constants.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
 export function captureContentDigest(record) {
     if ("compaction" in record && record.compaction !== undefined)
         return record.compaction.originalContentDigest;
+    if ("sourceSnapshotCleanup" in record && record.sourceSnapshotCleanup !== undefined)
+        return record.sourceSnapshotCleanup.originalContentDigest;
     const content = { ...record };
     delete content.version;
     delete content.capturedAtMs;
     delete content.compaction;
+    delete content.sourceSnapshotCleanup;
     return createHash("sha256").update(canonicalJson(content)).digest("hex");
 }
 export function compactCaptureRecord(record, originalContentDigest) {
@@ -23,6 +26,38 @@ export function compactCaptureRecord(record, originalContentDigest) {
             originalContentDigest,
             fields: normalizedPayload.fields,
         },
+    };
+}
+export function compactReconstructionJobRecord(record, originalContentDigest) {
+    if (record.eventKind !== CAPTURE_RECONSTRUCTION_JOB_KIND)
+        return undefined;
+    const payload = canonicalValue(record.normalizedPayload, new Set());
+    if (!isJsonObject(payload) || !Object.hasOwn(payload, "sourceSnapshots"))
+        return undefined;
+    delete payload.sourceSnapshots;
+    return {
+        ...record,
+        normalizedPayload: payload,
+        sourceSnapshotCleanup: {
+            version: CAPTURE_SOURCE_SNAPSHOT_CLEANUP_VERSION,
+            originalContentDigest,
+        },
+    };
+}
+export function validateSourceSnapshotCleanup(value, eventKind, normalizedPayload) {
+    if (eventKind !== CAPTURE_RECONSTRUCTION_JOB_KIND ||
+        !isObjectRecord(value) ||
+        !hasExactKeys(value, ["version", "originalContentDigest"]) ||
+        value.version !== CAPTURE_SOURCE_SNAPSHOT_CLEANUP_VERSION ||
+        typeof value.originalContentDigest !== "string" ||
+        !CAPTURE_HASH.test(value.originalContentDigest) ||
+        !isJsonObject(normalizedPayload) ||
+        Object.hasOwn(normalizedPayload, "sourceSnapshots")) {
+        throw new Error("Invalid reconstruction source snapshot cleanup marker");
+    }
+    return {
+        version: CAPTURE_SOURCE_SNAPSHOT_CLEANUP_VERSION,
+        originalContentDigest: value.originalContentDigest,
     };
 }
 export function validateCompactionMarker(value, eventKind, normalizedPayload) {
