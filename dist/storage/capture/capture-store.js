@@ -1,7 +1,9 @@
-import { resolve } from "node:path";
-import { CAPTURE_DIRECTORY, CAPTURE_RECORD_VERSION, CAPTURE_RECEIPT_VERSION } from "./constants.js";
+import { join, resolve } from "node:path";
+import { withFileLock } from "../index.js";
+import { CAPTURE_COMPACTED_RECORD_VERSION, CAPTURE_DIRECTORY, CAPTURE_HASH, CAPTURE_RECORD_LOCK_DIRECTORY, CAPTURE_RECORD_VERSION, CAPTURE_RECEIPT_VERSION, } from "./constants.js";
 import { eventPath, identifierHash, receiptPath, validateIdentifier, validateIntegration, } from "./paths.js";
-import { ensurePrivateDirectory, publishExclusive, readPrivateFile } from "./utils/atomic-file.js";
+import { ensurePrivateDirectory, publishExclusive, readPrivateFile, replacePrivateFile, } from "./utils/atomic-file.js";
+import { captureContentDigest, compactCaptureRecord, validateCompactionMarker, } from "./compaction.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
 export function createCaptureStore(root) {
     const storageRoot = resolve(root);
@@ -16,6 +18,7 @@ export function createCaptureStore(root) {
                 validateIdentifier(input.eventKind, "event kind");
                 record = {
                     version: CAPTURE_RECORD_VERSION,
+                    capturedAtMs: Date.now(),
                     integration: input.integration,
                     sessionId: input.sessionId,
                     turnId: input.turnId,
@@ -34,21 +37,23 @@ export function createCaptureStore(root) {
             }
             try {
                 const path = eventPath(storageRoot, input);
-                await ensureDirectories(input.integration, input.sessionId, input.turnId, "events");
-                if (await publishExclusive(path, contents))
-                    return { status: "published", record };
-                const previous = await readRecord(storageRoot, path);
-                if (previous === undefined)
-                    return {
-                        status: "failed",
-                        code: "STORAGE_FAILED",
-                        message: "Published event disappeared",
-                    };
-                if (!sameScope(previous, input))
-                    return { status: "conflict" };
-                return canonicalJson(previous) === contents
-                    ? { status: "duplicate", record: previous }
-                    : { status: "conflict" };
+                return await withRecordLock(storageRoot, input, async () => {
+                    await ensureDirectories(input.integration, input.sessionId, input.turnId, "events");
+                    if (await publishExclusive(path, contents))
+                        return { status: "published", record };
+                    const previous = await readRecord(storageRoot, path);
+                    if (previous === undefined)
+                        return {
+                            status: "failed",
+                            code: "STORAGE_FAILED",
+                            message: "Published event disappeared",
+                        };
+                    if (!sameScope(previous, input))
+                        return { status: "conflict" };
+                    return sameCapture(previous, record)
+                        ? { status: "duplicate", record: previous }
+                        : { status: "conflict" };
+                });
             }
             catch (error) {
                 return failure("STORAGE_FAILED", error);
@@ -63,6 +68,35 @@ export function createCaptureStore(root) {
                 throw new Error("Capture namespace does not match");
             return record;
         },
+        async compact(scope, expected) {
+            try {
+                validateScope(scope);
+                if (!sameScope(expected, scope))
+                    throw new TypeError("Capture namespace does not match");
+                const expectedOriginalContentDigest = expected.compaction?.originalContentDigest ?? captureContentDigest(expected);
+                if (!CAPTURE_HASH.test(expectedOriginalContentDigest))
+                    throw new TypeError("Invalid original capture digest");
+                return await withRecordLock(storageRoot, scope, async () => {
+                    const path = eventPath(storageRoot, scope);
+                    const previous = await readRecord(storageRoot, path);
+                    if (previous === undefined)
+                        return { status: "missing-capture" };
+                    const originalContentDigest = previous.compaction?.originalContentDigest ?? captureContentDigest(previous);
+                    if (originalContentDigest !== expectedOriginalContentDigest)
+                        return { status: "changed" };
+                    if (previous.compaction !== undefined)
+                        return { status: "already-compacted", record: previous };
+                    const record = compactCaptureRecord(previous, originalContentDigest);
+                    if (record === undefined)
+                        return { status: "changed" };
+                    await replacePrivateFile(storageRoot, path, canonicalJson(record));
+                    return { status: "compacted", record };
+                });
+            }
+            catch (error) {
+                return failure("STORAGE_FAILED", error);
+            }
+        },
         async recordOutcome(input) {
             try {
                 validateScope(input);
@@ -71,24 +105,26 @@ export function createCaptureStore(root) {
                     throw new TypeError("Invalid outcome");
                 if (input.reason !== undefined)
                     validateIdentifier(input.reason, "outcome reason");
-                if ((await this.read(input)) === undefined)
-                    return { status: "missing-capture" };
-                const path = receiptPath(storageRoot, input, input.destination);
-                await ensureDirectories(input.integration, input.sessionId, input.turnId, "receipts", input.destination);
-                const comparable = receiptValue(input, new Date().toISOString());
-                const contents = canonicalJson(comparable);
-                if (await publishExclusive(path, contents))
-                    return { status: "recorded", receipt: comparable };
-                const previous = await readReceipt(storageRoot, path);
-                if (previous === undefined)
-                    return {
-                        status: "failed",
-                        code: "STORAGE_FAILED",
-                        message: "Published receipt disappeared",
-                    };
-                return sameReceipt(previous, input)
-                    ? { status: "duplicate", receipt: previous }
-                    : { status: "conflict" };
+                return await withRecordLock(storageRoot, input, async () => {
+                    if ((await readRecord(storageRoot, eventPath(storageRoot, input))) === undefined)
+                        return { status: "missing-capture" };
+                    const path = receiptPath(storageRoot, input, input.destination);
+                    await ensureDirectories(input.integration, input.sessionId, input.turnId, "receipts", input.destination);
+                    const comparable = receiptValue(input, new Date().toISOString());
+                    const contents = canonicalJson(comparable);
+                    if (await publishExclusive(path, contents))
+                        return { status: "recorded", receipt: comparable };
+                    const previous = await readReceipt(storageRoot, path);
+                    if (previous === undefined)
+                        return {
+                            status: "failed",
+                            code: "STORAGE_FAILED",
+                            message: "Published receipt disappeared",
+                        };
+                    return sameReceipt(previous, input)
+                        ? { status: "duplicate", receipt: previous }
+                        : { status: "conflict" };
+                });
             }
             catch (error) {
                 return failure("STORAGE_FAILED", error);
@@ -98,7 +134,7 @@ export function createCaptureStore(root) {
             try {
                 validateScope(scope);
                 validateIdentifier(destination, "destination");
-                if ((await this.read(scope)) === undefined)
+                if ((await readRecord(storageRoot, eventPath(storageRoot, scope))) === undefined)
                     return { status: "missing-capture" };
                 const receipt = await readReceipt(storageRoot, receiptPath(storageRoot, scope, destination));
                 if (receipt === undefined)
@@ -132,6 +168,29 @@ export function createCaptureStore(root) {
         await ensurePrivateDirectory(storageRoot, pathSegments);
     }
 }
+async function withRecordLock(root, scope, operation) {
+    validateScope(scope);
+    return withRecordLockByHashes(root, scope.integration, identifierHash(scope.sessionId), identifierHash(scope.turnId), identifierHash(scope.eventId), operation);
+}
+async function withRecordLockByHashes(root, integration, sessionHash, turnHash, eventHash, operation) {
+    if (![sessionHash, turnHash, eventHash].every((value) => CAPTURE_HASH.test(value)))
+        throw new TypeError("Invalid capture record lock path");
+    const directory = await ensurePrivateDirectory(root, [
+        CAPTURE_RECORD_LOCK_DIRECTORY,
+        "integrations",
+        integration,
+        "sessions",
+        sessionHash,
+        "turns",
+        turnHash,
+        "events",
+    ]);
+    return withFileLock(join(directory, `${eventHash}.lock`), operation);
+}
+function sameCapture(left, right) {
+    const leftDigest = left.compaction?.originalContentDigest ?? captureContentDigest(left);
+    return leftDigest === captureContentDigest(right);
+}
 function receiptValue(input, recordedAt) {
     return {
         version: CAPTURE_RECEIPT_VERSION,
@@ -150,7 +209,11 @@ async function readRecord(root, path) {
     if (contents === undefined)
         return undefined;
     const value = parseObject(contents);
-    if (value.version !== CAPTURE_RECORD_VERSION ||
+    if ((value.version !== CAPTURE_RECORD_VERSION &&
+        value.version !== CAPTURE_COMPACTED_RECORD_VERSION) ||
+        typeof value.capturedAtMs !== "number" ||
+        !Number.isSafeInteger(value.capturedAtMs) ||
+        !Number.isFinite(new Date(value.capturedAtMs).getTime()) ||
         typeof value.integration !== "string" ||
         typeof value.sessionId !== "string" ||
         typeof value.turnId !== "string" ||
@@ -170,7 +233,24 @@ async function readRecord(root, path) {
     ]) {
         validateIdentifier(identifier, name);
     }
-    return value;
+    const scope = {
+        integration: value.integration,
+        sessionId: value.sessionId,
+        turnId: value.turnId,
+        eventId: value.eventId,
+    };
+    validateScope(scope);
+    const normalizedPayload = canonicalValue(value.normalizedPayload, new Set());
+    const compaction = value.version === CAPTURE_COMPACTED_RECORD_VERSION
+        ? validateCompactionMarker(value.compaction, value.eventKind, normalizedPayload)
+        : undefined;
+    if (value.version === CAPTURE_RECORD_VERSION && "compaction" in value)
+        throw new Error("Invalid compacted capture marker");
+    return {
+        ...value,
+        normalizedPayload,
+        ...(compaction === undefined ? {} : { compaction }),
+    };
 }
 async function readReceipt(root, path) {
     const contents = await readPrivateFile(root, path);
