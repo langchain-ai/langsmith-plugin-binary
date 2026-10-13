@@ -1,11 +1,17 @@
 import { createHash } from "node:crypto";
-import { CAPTURE_COMPACTED_RECORD_VERSION, CAPTURE_HASH } from "./constants.js";
+import {
+  CAPTURE_COMPACTED_RECORD_VERSION,
+  CAPTURE_HASH,
+  CAPTURE_RECONSTRUCTION_JOB_KIND,
+  CAPTURE_SOURCE_SNAPSHOT_CLEANUP_VERSION,
+} from "./constants.js";
 import type {
   CompactedCapturePayload,
   CompactedFieldDigest,
   CaptureCompactionPayload,
   CaptureInput,
   JsonValue,
+  SourceSnapshotCleanup,
   StoredCapture,
 } from "./models.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
@@ -13,10 +19,13 @@ import { canonicalJson, canonicalValue } from "./utils/serialization.js";
 export function captureContentDigest(record: CaptureInput | StoredCapture): string {
   if ("compaction" in record && record.compaction !== undefined)
     return record.compaction.originalContentDigest;
+  if ("sourceSnapshotCleanup" in record && record.sourceSnapshotCleanup !== undefined)
+    return record.sourceSnapshotCleanup.originalContentDigest;
   const content: Record<string, unknown> = { ...record };
   delete content.version;
   delete content.capturedAtMs;
   delete content.compaction;
+  delete content.sourceSnapshotCleanup;
   return createHash("sha256").update(canonicalJson(content)).digest("hex");
 }
 
@@ -35,6 +44,47 @@ export function compactCaptureRecord(
       originalContentDigest,
       fields: normalizedPayload.fields,
     },
+  };
+}
+
+export function compactReconstructionJobRecord(
+  record: StoredCapture,
+  originalContentDigest: string,
+): StoredCapture | undefined {
+  if (record.eventKind !== CAPTURE_RECONSTRUCTION_JOB_KIND) return undefined;
+  const payload = canonicalValue(record.normalizedPayload, new Set<object>());
+  if (!isJsonObject(payload) || !Object.hasOwn(payload, "sourceSnapshots")) return undefined;
+  delete payload.sourceSnapshots;
+  return {
+    ...record,
+    normalizedPayload: payload,
+    sourceSnapshotCleanup: {
+      version: CAPTURE_SOURCE_SNAPSHOT_CLEANUP_VERSION,
+      originalContentDigest,
+    },
+  };
+}
+
+export function validateSourceSnapshotCleanup(
+  value: unknown,
+  eventKind: string,
+  normalizedPayload: JsonValue,
+): SourceSnapshotCleanup {
+  if (
+    eventKind !== CAPTURE_RECONSTRUCTION_JOB_KIND ||
+    !isObjectRecord(value) ||
+    !hasExactKeys(value, ["version", "originalContentDigest"]) ||
+    value.version !== CAPTURE_SOURCE_SNAPSHOT_CLEANUP_VERSION ||
+    typeof value.originalContentDigest !== "string" ||
+    !CAPTURE_HASH.test(value.originalContentDigest) ||
+    !isJsonObject(normalizedPayload) ||
+    Object.hasOwn(normalizedPayload, "sourceSnapshots")
+  ) {
+    throw new Error("Invalid reconstruction source snapshot cleanup marker");
+  }
+  return {
+    version: CAPTURE_SOURCE_SNAPSHOT_CLEANUP_VERSION,
+    originalContentDigest: value.originalContentDigest,
   };
 }
 
