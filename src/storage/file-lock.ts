@@ -11,10 +11,16 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
+import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import {
   FILE_LOCK_ACQUIRE_MESSAGE,
+  FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS,
+  FILE_LOCK_COMPATIBLE_OWNER_FILE,
+  FILE_LOCK_COMPATIBLE_OWNER_MESSAGE,
+  FILE_LOCK_COMPATIBLE_OWNER_PID_PATTERN,
+  FILE_LOCK_COMPATIBLE_STALE_SUFFIX,
   FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE,
   FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE,
   FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE,
@@ -39,6 +45,7 @@ import {
   FILE_LOCK_TEMP_PREFIX,
   FILE_LOCK_TEMP_SUFFIX,
   FILE_LOCK_TICKET_LIMIT_MESSAGE,
+  FILE_LOCK_TRY_CHOOSING_WAIT_MS,
   FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE,
   FILE_LOCK_UNSELECTED_TICKET,
   FILE_LOCK_LEGACY_DIRECTORY_SUFFIX,
@@ -249,7 +256,7 @@ async function acquireClaim(
         continue;
       }
       const peers = scan.claims.filter((peer) => peer.id !== claim.id);
-      if (!waitForPeers && peers.length > 0) {
+      if (!waitForPeers && peers.some((peer) => !peer.choosing)) {
         await makeHandle(claimDirectory, claim).release();
         return undefined;
       }
@@ -263,6 +270,7 @@ async function acquireClaim(
 
     const ticketedClaim = ownedClaim;
     if (!ticketedClaim) throw new Error(FILE_LOCK_ACQUIRE_MESSAGE);
+    const choosingDeadline = performance.now() + FILE_LOCK_TRY_CHOOSING_WAIT_MS;
     for (;;) {
       const scan = await scanClaims(claimDirectory);
       if (scan.blocked || !hasClaimState(scan.claims, claim.id, false, ticketedClaim.ticket)) {
@@ -271,8 +279,16 @@ async function acquireClaim(
         continue;
       }
       const peers = scan.claims.filter((peer) => peer.id !== claim.id);
-      const blockedByPeer =
-        peers.length > 0 && (!waitForPeers || peers.some((peer) => precedes(peer, ticketedClaim)));
+      if (
+        !waitForPeers &&
+        !peers.some((peer) => !peer.choosing && precedes(peer, ticketedClaim)) &&
+        peers.some((peer) => peer.choosing) &&
+        performance.now() < choosingDeadline
+      ) {
+        await delay(FILE_LOCK_POLL_INTERVAL_MS);
+        continue;
+      }
+      const blockedByPeer = peers.some((peer) => precedes(peer, ticketedClaim));
       if (blockedByPeer) {
         if (!(await waitOrReleaseClaim(waitForPeers, deadline, filePath, claimDirectory, claim)))
           return undefined;
@@ -306,6 +322,7 @@ async function acquireLegacyDirectoryGate(
       await mkdir(gatePath, { mode: FILE_LOCK_DIRECTORY_MODE });
       const stat = await lstat(gatePath);
       if (!stat.isDirectory()) throw new Error(FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE);
+      await recordLegacyGateOwner(gatePath);
       return { path: gatePath, dev: stat.dev, ino: stat.ino, birthtimeMs: stat.birthtimeMs };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
@@ -316,8 +333,16 @@ async function acquireLegacyDirectoryGate(
         throw error;
       }
       let isDirectory = false;
+      let isContended = false;
       try {
-        isDirectory = (await lstat(gatePath)).isDirectory();
+        const gate = await lstat(gatePath);
+        isDirectory = gate.isDirectory();
+        isContended = isDirectory || (gate.isFile() && code === FILE_LOCK_EXISTS_CODE);
+        if (isContended && (await legacyGateIsAbandoned(gatePath, isDirectory, gate.mtimeMs))) {
+          if (!(await reclaimLegacyGate(gatePath, filePath)))
+            await waitForNextScan(deadline, filePath);
+          continue;
+        }
       } catch (statError) {
         if ((statError as NodeJS.ErrnoException).code === FILE_LOCK_MISSING_CODE) {
           if (code === FILE_LOCK_EXISTS_CODE) {
@@ -332,7 +357,7 @@ async function acquireLegacyDirectoryGate(
         }
         throw error;
       }
-      if (!isDirectory) throw error;
+      if (!isContended) throw error;
       retriedMissingPermission = false;
       await waitForNextScan(deadline, filePath);
     }
@@ -355,7 +380,74 @@ async function releaseLegacyDirectoryGate(gate: LegacyDirectoryFileLockGate): Pr
   ) {
     throw new Error(FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE);
   }
+  await removeFile(join(gate.path, FILE_LOCK_COMPATIBLE_OWNER_FILE));
   await rmdir(gate.path);
+}
+
+async function recordLegacyGateOwner(gatePath: string): Promise<void> {
+  try {
+    await writeFile(join(gatePath, FILE_LOCK_COMPATIBLE_OWNER_FILE), String(process.pid), {
+      flag: FILE_LOCK_EXCLUSIVE_FLAG,
+      mode: FILE_LOCK_FILE_MODE,
+    });
+  } catch (error) {
+    try {
+      await rmdir(gatePath);
+    } catch {}
+    throw new Error(FILE_LOCK_COMPATIBLE_OWNER_MESSAGE, { cause: error });
+  }
+}
+
+async function legacyGateIsAbandoned(
+  gatePath: string,
+  isDirectory: boolean,
+  modifiedAtMs: number,
+): Promise<boolean> {
+  let contents: string;
+  try {
+    contents = await readFile(
+      isDirectory ? join(gatePath, FILE_LOCK_COMPATIBLE_OWNER_FILE) : gatePath,
+      FILE_LOCK_ENCODING,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== FILE_LOCK_MISSING_CODE) return false;
+    contents = "";
+  }
+  const pid = FILE_LOCK_COMPATIBLE_OWNER_PID_PATTERN.test(contents.trim())
+    ? Number(contents.trim())
+    : undefined;
+  if (pid !== undefined && Number.isSafeInteger(pid) && pid > 0)
+    return (await processIsAlive(pid)) === false;
+  return !isDirectory && Date.now() - modifiedAtMs >= FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS;
+}
+
+async function reclaimLegacyGate(gatePath: string, filePath: string): Promise<boolean> {
+  const takeover = await tryAcquireFileLock(filePath);
+  if (!takeover) return false;
+  try {
+    let gate;
+    try {
+      gate = await lstat(gatePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === FILE_LOCK_MISSING_CODE) return true;
+      throw error;
+    }
+    const isDirectory = gate.isDirectory();
+    if (!(await legacyGateIsAbandoned(gatePath, isDirectory, gate.mtimeMs))) return false;
+    const stalePath = `${gatePath}.${randomUUID()}${FILE_LOCK_COMPATIBLE_STALE_SUFFIX}`;
+    await rename(gatePath, stalePath);
+    if (!isDirectory) {
+      await removeFile(stalePath);
+      return true;
+    }
+    await removeFile(join(stalePath, FILE_LOCK_COMPATIBLE_OWNER_FILE));
+    try {
+      await rmdir(stalePath);
+    } catch {}
+    return true;
+  } finally {
+    await takeover.release();
+  }
 }
 
 export async function acquireCompatibleDirectoryFileLock(

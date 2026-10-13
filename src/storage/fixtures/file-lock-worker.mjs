@@ -51,6 +51,33 @@ if (mode === "hold") {
     writeFileSync(marker + ".failed", String(error.stack ?? error));
     process.exitCode = 4;
   }
+} else if (mode === "race") {
+  writeFileSync(marker + ".ready", "ready");
+  while (!existsSync(startPath)) await delay(1);
+  const handle = await api.tryAcquireFileLock(lockPath);
+  writeFileSync(marker, handle ? "owned" : "busy");
+  if (handle) {
+    while (!existsSync(gate)) await delay(5);
+    await handle.release();
+  }
+} else if (mode === "gate") {
+  writeFileSync(marker + ".ready", "ready");
+  while (!existsSync(startPath)) await delay(1);
+  let outcome = "ok";
+  try {
+    const handle = await api.acquireCompatibleDirectoryFileLock(lockPath, { timeoutMs: 20000 });
+    try {
+      mkdirSync(activePath);
+      await delay(10);
+      rmdirSync(activePath);
+    } catch {
+      outcome = "overlap";
+    }
+    await handle.release();
+  } catch (error) {
+    outcome = String(error);
+  }
+  writeFileSync(marker, outcome);
 } else if (mode === "die") {
   const handle = await api.tryAcquireFileLock(lockPath);
   if (!handle) process.exit(5);

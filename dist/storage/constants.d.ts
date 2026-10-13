@@ -24,9 +24,15 @@ export declare const FILE_LOCK_MISSING_CODE = "ENOENT";
 export declare const FILE_LOCK_PROCESS_MISSING_CODE = "ESRCH";
 export declare const FILE_LOCK_PROCESS_CHECK_SIGNAL = 0;
 export declare const FILE_LOCK_RENAME_RETRY_TIMEOUT_MS = 100;
+export declare const FILE_LOCK_TRY_CHOOSING_WAIT_MS = 1000;
 export declare const FILE_LOCK_RENAME_BUSY_CODE = "EPERM";
 export declare const FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES: readonly ["EPERM", "EACCES"];
 export declare const FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE = "Could not release the legacy lock gate after shared lock acquisition failed";
 export declare const FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE = "Could not release compatible file lock";
 export declare const FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE = "Legacy file lock gate changed before release";
+export declare const FILE_LOCK_COMPATIBLE_OWNER_FILE = "owner";
+export declare const FILE_LOCK_COMPATIBLE_OWNER_MESSAGE = "Could not record the legacy file lock gate owner";
+export declare const FILE_LOCK_COMPATIBLE_OWNER_PID_PATTERN: RegExp;
+export declare const FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS = 5000;
+export declare const FILE_LOCK_COMPATIBLE_STALE_SUFFIX = ".stale";
 //# sourceMappingURL=constants.d.ts.map

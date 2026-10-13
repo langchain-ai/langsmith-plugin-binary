@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -382,3 +382,90 @@ it("reclaims a killed owner while fresh processes contend", async () => {
     cleanupArea(area);
   }
 }, 20_000);
+
+it("lets exactly one of several simultaneous try-acquirers win", async () => {
+  for (let trial = 0; trial < 8; trial += 1) {
+    const area = createArea();
+    const children = new Set<ChildProcess>();
+    const ids = Array.from({ length: 4 }, (_, index) => `racer-${index}`);
+    const startPath = join(area.directory, "racers.start");
+    const gate = join(area.directory, "racers.gate");
+    try {
+      const racers = ids.map((id) =>
+        spawnWorker(area, "race", [join(area.directory, id), gate, "0", id, "", startPath]),
+      );
+      for (const racer of racers) children.add(racer);
+      await waitFor(() => ids.every((id) => filesWithPrefix(area, `${id}.ready`).length > 0));
+      writeFileSync(startPath, "go");
+      const outcomes = await waitFor(() => {
+        const read = ids.map((id) =>
+          filesWithPrefix(area, id).includes(id)
+            ? readFileSync(join(area.directory, id), "utf-8")
+            : "",
+        );
+        return read.every((outcome) => outcome !== "") ? read : false;
+      });
+      expect(outcomes.filter((outcome) => outcome === "owned")).toHaveLength(1);
+      writeFileSync(gate, "go");
+      expect((await Promise.all(racers.map(waitForExit))).every(Boolean)).toBe(true);
+    } finally {
+      writeFileSync(gate, "go");
+      await stopChildren(children);
+      cleanupArea(area);
+    }
+  }
+}, 30_000);
+
+it("takes over a dead holder's gate exactly once while live and legacy holders contend", async () => {
+  const deadPid = Number(
+    spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL("./fixtures/process-pid.mjs", import.meta.url))],
+      {
+        encoding: "utf8",
+      },
+    ).stdout,
+  );
+  for (let trial = 0; trial < 6; trial += 1) {
+    const area = createArea();
+    const children = new Set<ChildProcess>();
+    const gate = `${area.lockPath}.lock`;
+    const startPath = join(area.directory, "gate.start");
+    const activePath = join(area.directory, "gate.active");
+    mkdirSync(gate);
+    writeFileSync(join(gate, "owner"), String(deadPid));
+    const ids = Array.from({ length: 8 }, (_, index) => `gate-${index}`);
+    try {
+      for (const id of ids)
+        children.add(
+          spawnWorker(area, "gate", [join(area.directory, id), "", "0", id, activePath, startPath]),
+        );
+      children.add(
+        spawn(
+          process.execPath,
+          [
+            fileURLToPath(new URL("./fixtures/file-lock-legacy.mjs", import.meta.url)),
+            gate,
+            join(area.directory, "legacy"),
+            startPath,
+            activePath,
+          ],
+          {
+            stdio: "ignore",
+          },
+        ),
+      );
+      await waitFor(() =>
+        [...ids, "legacy"].every((id) => filesWithPrefix(area, `${id}.ready`).length > 0),
+      );
+      writeFileSync(startPath, "go");
+      await Promise.all([...children].map(waitForExit));
+      expect(
+        [...ids, "legacy"].map((id) => readFileSync(join(area.directory, id), "utf-8")),
+      ).toEqual([...ids, "legacy"].map(() => "ok"));
+    } finally {
+      await stopChildren(children);
+      cleanupArea(area);
+    }
+  }
+}, 60_000);
