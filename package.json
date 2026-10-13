@@ -32,6 +32,10 @@
       "types": "./dist/settings/index.d.ts",
       "default": "./dist/settings/index.js"
     },
+    "./git": {
+      "types": "./dist/git/index.d.ts",
+      "default": "./dist/git/index.js"
+    },
     "./storage": {
       "types": "./dist/storage/index.d.ts",
       "default": "./dist/storage/index.js"
