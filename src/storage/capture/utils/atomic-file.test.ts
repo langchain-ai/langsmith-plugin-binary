@@ -2,6 +2,7 @@ import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
+import { replacePrivateFile } from "./atomic-file.js";
 
 const fault = vi.hoisted(() => ({ phase: "" }));
 
@@ -33,8 +34,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
   };
 });
-
-import { replacePrivateFile } from "./atomic-file.js";
 
 beforeEach(() => {
   fault.phase = "";
