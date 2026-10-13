@@ -18,9 +18,7 @@ export const CODING_AGENT_SUPPORTED_INTEGRATIONS = [
   "openai-codex",
 ] as const satisfies readonly CodingAgentIntegration[];
 
-export const CODING_AGENT_CORE_INTEGRATIONS = CODING_AGENT_SUPPORTED_INTEGRATIONS;
-
-export const CODING_AGENT_CODEX_INTEGRATION = ["openai-codex"] as const;
+export const CODING_AGENT_CODEX_ONLY_INTEGRATIONS = ["openai-codex"] as const;
 
 export const CODING_AGENT_INTEGRATION_POLICIES = {
   "claude-code": {
@@ -29,7 +27,7 @@ export const CODING_AGENT_INTEGRATION_POLICIES = {
     metadataModePreservesToolName: false,
     legacyAliases: true,
   },
-  cursor: {
+  "cursor": {
     fullModePrecedence: "custom-wins",
     metadataModeUsesDirectMetadata: true,
     metadataModePreservesToolName: true,
@@ -42,3 +40,11 @@ export const CODING_AGENT_INTEGRATION_POLICIES = {
     legacyAliases: false,
   },
 } as const satisfies Readonly<Record<CodingAgentIntegration, CodingAgentIntegrationPolicy>>;
+
+export const CODING_AGENT_RUNTIME_NAMES = {
+  "claude-code": "claude-code",
+  "openai-codex": "openai-codex",
+  "deepagents-code": "deepagents-code",
+  "cursor": "cursor",
+  "pi": "pi",
+} as const satisfies Readonly<Record<CodingAgentSchemaIntegration, string>>;

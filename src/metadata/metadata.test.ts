@@ -55,7 +55,7 @@ describe("coding-agent-v1 metadata contract", () => {
     });
     expect(metadata).toMatchObject({
       ls_integration: "claude-code",
-      ls_agent_runtime: "Claude Code",
+      ls_agent_runtime: "claude-code",
       ls_integration_version: "0.1.3",
       ls_agent_runtime_version: "2.1.181",
       ls_trace_schema_version: "coding-agent-v1",

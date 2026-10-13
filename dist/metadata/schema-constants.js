@@ -1,4 +1,4 @@
-import { CODING_AGENT_CORE_INTEGRATIONS } from "./integration-constants.js";
+import { CODING_AGENT_SUPPORTED_INTEGRATIONS } from "./integration-constants.js";
 export const CODING_AGENT_SCHEMA_VERSION = "coding-agent-v1";
 export const CODING_AGENT_PURPOSE = "coding";
 export const CODING_AGENT_RUN_TYPES = [
@@ -33,11 +33,11 @@ export const CODING_AGENT_FIELD_DEFAULTS = {
     metadataModeIntegrations: [],
 };
 export const CODING_AGENT_STRUCTURAL_FIELD_DEFAULTS = {
-    metadataModeIntegrations: CODING_AGENT_CORE_INTEGRATIONS,
+    metadataModeIntegrations: CODING_AGENT_SUPPORTED_INTEGRATIONS,
     metadataSource: "structural",
 };
 export const CODING_AGENT_PROVIDER_FIELD_DEFAULTS = {
     metadataSource: "provider",
-    providerIntegrations: CODING_AGENT_CORE_INTEGRATIONS,
+    providerIntegrations: CODING_AGENT_SUPPORTED_INTEGRATIONS,
 };
 //# sourceMappingURL=schema-constants.js.map
