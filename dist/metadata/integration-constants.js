@@ -10,8 +10,7 @@ export const CODING_AGENT_SUPPORTED_INTEGRATIONS = [
     "cursor",
     "openai-codex",
 ];
-export const CODING_AGENT_CORE_INTEGRATIONS = CODING_AGENT_SUPPORTED_INTEGRATIONS;
-export const CODING_AGENT_CODEX_INTEGRATION = ["openai-codex"];
+export const CODING_AGENT_CODEX_ONLY_INTEGRATIONS = ["openai-codex"];
 export const CODING_AGENT_INTEGRATION_POLICIES = {
     "claude-code": {
         fullModePrecedence: "custom-wins",
@@ -19,7 +18,7 @@ export const CODING_AGENT_INTEGRATION_POLICIES = {
         metadataModePreservesToolName: false,
         legacyAliases: true,
     },
-    cursor: {
+    "cursor": {
         fullModePrecedence: "custom-wins",
         metadataModeUsesDirectMetadata: true,
         metadataModePreservesToolName: true,
@@ -31,5 +30,12 @@ export const CODING_AGENT_INTEGRATION_POLICIES = {
         metadataModePreservesToolName: false,
         legacyAliases: false,
     },
+};
+export const CODING_AGENT_RUNTIME_NAMES = {
+    "claude-code": "claude-code",
+    "openai-codex": "openai-codex",
+    "deepagents-code": "deepagents-code",
+    "cursor": "cursor",
+    "pi": "pi",
 };
 //# sourceMappingURL=integration-constants.js.map
