@@ -10,4 +10,6 @@ export const CAPTURE_FILE_MODE = 0o600;
 export const CAPTURE_INTEGRATION = /^[a-z][a-z0-9-]{0,62}$/;
 export const CAPTURE_MAX_IDENTIFIER_BYTES = 4096;
 export const CAPTURE_HASH = /^[0-9a-f]{64}$/u;
+export const CAPTURE_EVENT_FILE = /^[0-9a-f]{64}\.json$/u;
+export const CAPTURE_STAGING_FILE = /^\.[0-9a-f-]{36}\.tmp$/u;
 export const JSON_ARRAY_INDEX_KEY = /^(0|[1-9]\d*)$/u;
