@@ -13,7 +13,7 @@ import {
 import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { expect, it } from "vitest";
 import { tryAcquireFileLock, withFileLock } from "./file-lock.js";
@@ -39,7 +39,13 @@ function spawnWorker(
   const moduleUrl = pathToFileURL(resolve("dist/storage/file-lock.js")).href;
   return spawn(
     process.execPath,
-    [resolve("src/storage/fixtures/file-lock-worker.mjs"), moduleUrl, mode, area.lockPath, ...args],
+    [
+      fileURLToPath(new URL("./fixtures/file-lock-worker.mjs", import.meta.url)),
+      moduleUrl,
+      mode,
+      area.lockPath,
+      ...args,
+    ],
     {
       env: {
         HOME: area.directory,
