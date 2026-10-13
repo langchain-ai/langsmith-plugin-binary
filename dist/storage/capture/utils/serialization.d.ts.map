@@ -1,0 +1,1 @@
+{"version":3,"file":"serialization.d.ts","sourceRoot":"","sources":["../../../../src/storage/capture/utils/serialization.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,SAAS,EAAE,MAAM,cAAc,CAAC;AAG9C,wBAAgB,aAAa,CAAC,KAAK,EAAE,OAAO,GAAG,MAAM,CAIpD;AAED,wBAAgB,cAAc,CAAC,KAAK,EAAE,OAAO,EAAE,IAAI,EAAE,GAAG,CAAC,MAAM,CAAC,GAAG,SAAS,CAgD3E"}

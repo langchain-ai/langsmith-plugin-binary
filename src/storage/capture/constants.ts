@@ -1,0 +1,8 @@
+export const CAPTURE_DIRECTORY = "capture-v1";
+export const CAPTURE_RECORD_VERSION = 1;
+export const CAPTURE_RECEIPT_VERSION = 1;
+export const CAPTURE_DIRECTORY_MODE = 0o700;
+export const CAPTURE_FILE_MODE = 0o600;
+export const CAPTURE_INTEGRATION = /^[a-z][a-z0-9-]{0,62}$/;
+export const CAPTURE_MAX_IDENTIFIER_BYTES = 4096;
+export const JSON_ARRAY_INDEX_KEY = /^(0|[1-9]\d*)$/u;
