@@ -1,6 +1,7 @@
 export const UPLOAD_ACCOUNT_FINGERPRINT_PREFIX = "account_";
 export const UPLOAD_DESTINATION_ID_PREFIX = "destination_";
 export const UPLOAD_FINGERPRINT_LENGTH = 32;
+export const UPLOAD_PATCH_ALREADY_RECEIVED_STATUS = 409;
 export const UPLOAD_CONTROL_CHARACTER_PATTERN = /\p{Cc}/u;
 export const UPLOAD_API_URL_TRAILING_SLASH_PATTERN = /\/$/;
 export const UPLOAD_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

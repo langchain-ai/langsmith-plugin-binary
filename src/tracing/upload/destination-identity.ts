@@ -32,14 +32,20 @@ export function resolveUploadDestinationIdentities(
     throw new TypeError("A replica upload requires exactly one primary destination");
   }
   const primary = options.destinations[0];
+  const routedReplicas =
+    primary && typeof primary === "object" && !hasApiKey(primary.apiKey)
+      ? replicas.filter(
+          (replica) => !replica || typeof replica !== "object" || hasApiKey(replica.apiKey),
+        )
+      : replicas;
   const primaryProjectName =
-    replicas.length === 0 || primary === undefined
+    routedReplicas.length === 0 || primary === undefined
       ? undefined
       : normalizeRequiredText(primary.projectName, "project name");
   const destinations =
-    replicas.length === 0
+    routedReplicas.length === 0
       ? options.destinations.map((destination) => resolveDestination(destination))
-      : replicas.map((replica) =>
+      : routedReplicas.map((replica) =>
           resolveReplicaDestination(replica, primary!, primaryProjectName!),
         );
   const ids = new Set<string>();
@@ -64,7 +70,7 @@ function resolveDestination(
   updates?: Record<string, unknown>,
 ): ResolvedUploadDestinationIdentity {
   if (!config || typeof config !== "object") throw new TypeError("Invalid upload destination");
-  if (typeof config.apiKey !== "string" || config.apiKey.trim().length === 0) {
+  if (!hasApiKey(config.apiKey)) {
     throw new TypeError("An API key is required for each upload destination");
   }
   const apiUrl = normalizeApiUrl(config.apiUrl);
@@ -179,6 +185,10 @@ function normalizeRequiredText(value: string, name: string): string {
     throw new TypeError(`Invalid upload ${name}`);
   }
   return value.trim();
+}
+
+function hasApiKey(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function fingerprint(value: string): string {

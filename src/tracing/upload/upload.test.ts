@@ -14,6 +14,7 @@ import type {
 const PRIMARY_KEY = "synthetic-primary-key";
 const REPLICA_KEY = "synthetic-replica-key";
 const FAILING_KEY = "synthetic-failing-key";
+const CONFLICT_KEY = "synthetic-conflict-key";
 const PRIVATE_MARKER = "synthetic-private-upload-marker";
 const RUN_ID = "12345678-1234-4123-8123-123456789012";
 
@@ -114,6 +115,11 @@ function recordRequest(request: IncomingMessage, response: ServerResponse): void
       const key = apiKey + ":" + runId;
       const previous = storedRuns.get(key);
       if (previous) storedRuns.set(key, { ...previous, ...payload });
+    }
+    if (request.headers["x-api-key"] === CONFLICT_KEY) {
+      response.writeHead(409, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "Run update payload already received." }));
+      return;
     }
     if (request.headers["x-api-key"] === FAILING_KEY) {
       response.writeHead(401, { "content-type": "application/json" });
@@ -382,6 +388,24 @@ describe("bound LangSmith upload writer", () => {
     await expect(writer.send(submission(), replicaId)).rejects.toThrow("LangSmith upload failed");
     expect(requests.some(({ apiKey }) => apiKey === PRIMARY_KEY)).toBe(true);
     expect(requests.some(({ apiKey }) => apiKey === FAILING_KEY)).toBe(true);
+  });
+
+  it("counts a conflict on a patch as delivered but still rejects a conflicting post", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: true,
+      destinations: [destination(CONFLICT_KEY, "primary-project", "primary-workspace")],
+    });
+    const destinationId = destinationByIndex(writer.destinations, 0);
+
+    await expect(writer.send(patchSubmission(), destinationId)).resolves.toEqual({
+      destinationId,
+      runId: RUN_ID,
+      operation: "patched",
+    });
+    await expect(writer.send(submission(), destinationId)).rejects.toThrow(
+      "LangSmith upload failed",
+    );
+    expect(requests.map(({ method }) => method)).toEqual(["PATCH", "POST"]);
   });
 
   it("keeps metadata-mode wire content muted and uses the stable run ID on replay", async () => {
