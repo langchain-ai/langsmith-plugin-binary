@@ -64,6 +64,7 @@ export function createLifecycleBridge(options) {
             ...(sourceAgeStartedAtMs === undefined ? {} : { sourceAgeStartedAtMs }),
             ...(priorDeliveryAttempts === undefined ? {} : { priorDeliveryAttempts }),
             ...(dependencies === undefined ? {} : { dependencies }),
+            destinationRoutes: writer.routes,
         });
         let result = await captureProjected(projected.value);
         if (result.status === "conflict" &&
@@ -116,6 +117,7 @@ export function createLifecycleBridge(options) {
             if (settlementLock === undefined)
                 return { status: "busy", settlement: { captured: 0, turns: [] } };
             let drainResult;
+            const attempted = new Set();
             try {
                 const drainOnce = async () => {
                     const sourceSnapshot = (await captureStore.enumerate(integration, sessionId)).map(({ record }) => record);
@@ -137,9 +139,10 @@ export function createLifecycleBridge(options) {
                                     destinations: writer.destinations,
                                     readOutcome: (scope, destinationId) => captureStore.readOutcome(scope, destinationId),
                                 });
-                                await writer.send(outgoing, destination.id);
+                                await writer.send(outgoing, destination.id, capturedRoute(record, sourceSnapshot, destination.id));
                             },
                         },
+                        attempted,
                         ...(input.now === undefined ? {} : { now: input.now }),
                     });
                 };
@@ -196,6 +199,10 @@ export function createLifecycleBridge(options) {
             return drainResult;
         },
     });
+}
+function capturedRoute(record, sourceSnapshot, destination) {
+    return (record.destinationRoutes?.[destination] ??
+        sourceSnapshot.find((source) => source.runId === record.runId && source.destinationRoutes?.[destination] !== undefined)?.destinationRoutes?.[destination]);
 }
 function suppliedRunIdentityFields(value) {
     const source = requirePlainRecord(value, "Prepared run submission");

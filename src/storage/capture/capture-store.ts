@@ -15,6 +15,7 @@ import {
 import type {
   CaptureCompactionResult,
   CaptureDependency,
+  CaptureDestinationRoutes,
   CaptureScope,
   CaptureStore,
   EnumeratedCapture,
@@ -96,6 +97,9 @@ export function createCaptureStore(root: string): CaptureStore {
                 ),
               }),
           ...(dependencies === undefined ? {} : { dependencies }),
+          ...(input.destinationRoutes === undefined
+            ? {}
+            : { destinationRoutes: normalizeDestinationRoutes(input.destinationRoutes) }),
         };
         contents = canonicalJson(record);
       } catch (error) {
@@ -574,6 +578,7 @@ async function readRecord(root: string, path: string): Promise<StoredCapture | u
   };
   validateScope(scope);
   const dependencies = normalizeDependencies(value.dependencies, scope);
+  if ("destinationRoutes" in value) normalizeDestinationRoutes(value.destinationRoutes);
   const normalizedPayload = canonicalValue(value.normalizedPayload, new Set<object>());
   const compaction =
     value.version === CAPTURE_COMPACTED_RECORD_VERSION
@@ -673,6 +678,31 @@ function normalizeDependencies(
     seen.add(key);
     return dependency;
   });
+}
+
+function normalizeDestinationRoutes(value: unknown): CaptureDestinationRoutes {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new TypeError("Invalid capture destination routes");
+  const routes: CaptureDestinationRoutes = {};
+  for (const [destination, route] of Object.entries(value)) {
+    validateIdentifier(destination, "destination");
+    if (route === null || typeof route !== "object" || Array.isArray(route))
+      throw new TypeError("Invalid capture destination route");
+    const { projectName, sourceProjectName, ...extra } = route as Record<string, unknown>;
+    if (Object.keys(extra).length > 0) throw new TypeError("Invalid capture destination route");
+    if (typeof projectName !== "string") throw new TypeError("Invalid capture route project");
+    validateIdentifier(projectName, "route project");
+    if (sourceProjectName !== undefined) {
+      if (typeof sourceProjectName !== "string")
+        throw new TypeError("Invalid capture route project");
+      validateIdentifier(sourceProjectName, "route project");
+    }
+    routes[destination] = {
+      projectName,
+      ...(sourceProjectName === undefined ? {} : { sourceProjectName }),
+    };
+  }
+  return routes;
 }
 
 function sameScope(record: CaptureScope, scope: CaptureScope): boolean {

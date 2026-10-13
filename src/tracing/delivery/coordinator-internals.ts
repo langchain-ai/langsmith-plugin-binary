@@ -106,7 +106,7 @@ export async function drainLocked(
     dropped += await dropPending(drainCache, candidate, DELIVERY_CAPACITY_REASON);
   }
   const sendable = fresh.slice(overCapacity);
-  const attempted = new Set<string>();
+  const attempted = request.attempted ?? new Set<string>();
   let progressed: boolean;
   do {
     progressed = false;

@@ -43,6 +43,7 @@ export type DeliveryTransport = (
 export interface DrainOptions {
   writer: DeliveryWriter;
   now?: number;
+  attempted?: Set<string>;
 }
 
 export interface DeliveryCoordinator {

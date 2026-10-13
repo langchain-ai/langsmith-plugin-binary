@@ -5,6 +5,10 @@ import type {
   CodingAgentMetadataOptions,
 } from "../../metadata/index.js";
 import type { CodingAgentPrivacyContext } from "../../privacy/index.js";
+import type {
+  CaptureDestinationRoute,
+  CaptureDestinationRoutes,
+} from "../../storage/capture/models.js";
 
 export type UploadOperation = "post" | "patch";
 
@@ -169,5 +173,10 @@ export type LangSmithRunUpdate = Parameters<Client["updateRun"]>[1];
 export interface LangSmithUploadWriter {
   readonly accountFingerprint: string;
   readonly destinations: readonly UploadDestination[];
-  send(submission: PreparedRunSubmission, destinationId: string): Promise<UploadReceipt>;
+  readonly routes: Readonly<CaptureDestinationRoutes>;
+  send(
+    submission: PreparedRunSubmission,
+    destinationId: string,
+    route?: CaptureDestinationRoute,
+  ): Promise<UploadReceipt>;
 }

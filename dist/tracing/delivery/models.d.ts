@@ -23,6 +23,7 @@ export type DeliveryTransport = (record: StoredCapture, destination: DeliveryDes
 export interface DrainOptions {
     writer: DeliveryWriter;
     now?: number;
+    attempted?: Set<string>;
 }
 export interface DeliveryCoordinator {
     capture(input: DeliveryCaptureInput): Promise<CaptureWriteResult>;

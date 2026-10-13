@@ -1,6 +1,7 @@
 import { buildCodingAgentMetadata } from "../../metadata/index.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
 import type { Client, RunTreeConfig } from "langsmith";
+import type { CaptureDestinationRoute } from "../../storage/capture/models.js";
 import type {
   LangSmithRunUpdate,
   LangSmithRunCreate,
@@ -29,12 +30,29 @@ export function createLangSmithUploadWriter(
   const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
   const byId = new Map(resolved.destinations.map((destination) => [destination.id, destination]));
   const clientsByMode = new Map<string, Client>();
+  const routes = Object.freeze(
+    Object.fromEntries(
+      resolved.destinations.map(({ id, projectName, sourceProjectName }) => [
+        id,
+        Object.freeze({
+          projectName,
+          ...(sourceProjectName === undefined ? {} : { sourceProjectName }),
+        }),
+      ]),
+    ),
+  );
   return Object.freeze({
     accountFingerprint: resolved.accountFingerprint,
     destinations: Object.freeze(destinations),
-    async send(submission: PreparedRunSubmission, destinationId: string): Promise<UploadReceipt> {
-      const destination = byId.get(destinationId);
-      if (!destination) throw new TypeError("Unknown upload destination");
+    routes,
+    async send(
+      submission: PreparedRunSubmission,
+      destinationId: string,
+      route?: CaptureDestinationRoute,
+    ): Promise<UploadReceipt> {
+      const configured = byId.get(destinationId);
+      if (!configured) throw new TypeError("Unknown upload destination");
+      const destination = route === undefined ? configured : routedDestination(configured, route);
       validateSubmission(submission);
       const redactedFields = normalizedRedactedFields(submission.redactedFields).filter(
         (field) =>
@@ -88,6 +106,16 @@ export function createLangSmithUploadWriter(
       }
     },
   });
+}
+
+function routedDestination(
+  destination: ResolvedUploadDestination,
+  route: CaptureDestinationRoute,
+): ResolvedUploadDestination {
+  const routed: ResolvedUploadDestination = { ...destination, projectName: route.projectName };
+  if (route.sourceProjectName === undefined) delete routed.sourceProjectName;
+  else routed.sourceProjectName = route.sourceProjectName;
+  return routed;
 }
 
 function patchAlreadyReceived(error: unknown): boolean {

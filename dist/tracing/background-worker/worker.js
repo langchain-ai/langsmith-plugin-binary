@@ -89,12 +89,15 @@ export function createBackgroundWorker(options) {
                                     retryExhausted: false,
                                     retryPending: false,
                                     retryAttempted: false,
+                                    deferred: false,
                                 };
                             await clearOwnedLaunch(storageRoot, scope);
                             return processLocked(storageRoot, directory, scope, config, retryPolicy);
                         })();
                         if (pass.scopeMismatch)
                             return "scope-mismatch";
+                        if (pass.deferred)
+                            return "deferred";
                         processed ||= pass.processed;
                         retryExhausted ||= pass.retryExhausted;
                         if (pass.retryAttempted)
@@ -107,7 +110,7 @@ export function createBackgroundWorker(options) {
                             return retryExhausted ? "retry-exhausted" : processed ? "completed" : "idle";
                     }
                 }, { timeoutMs: BACKGROUND_WORKER_OWNER_WAIT_MS });
-                if (result === "scope-mismatch")
+                if (result === "scope-mismatch" || result === "deferred")
                     return result;
                 if (failures >= retryPolicy.maxAttempts)
                     return "retry-exhausted";
@@ -158,6 +161,7 @@ async function processLocked(storageRoot, directory, scope, options, retryPolicy
             retryExhausted: false,
             retryPending: false,
             retryAttempted: false,
+            deferred: false,
         };
     let attempts = state.attempts;
     if (attempts.length >= retryPolicy.maxAttempts) {
@@ -168,6 +172,7 @@ async function processLocked(storageRoot, directory, scope, options, retryPolicy
             retryExhausted: true,
             retryPending: false,
             retryAttempted: false,
+            deferred: false,
         };
     }
     for (;;) {
@@ -178,6 +183,7 @@ async function processLocked(storageRoot, directory, scope, options, retryPolicy
                 retryExhausted: false,
                 retryPending: false,
                 retryAttempted: false,
+                deferred: false,
             };
         const result = await runTasks(options, scope);
         if (result === "scope-mismatch" || !(await matchesScope(options.resolveScope, scope)))
@@ -187,17 +193,20 @@ async function processLocked(storageRoot, directory, scope, options, retryPolicy
                 retryExhausted: false,
                 retryPending: false,
                 retryAttempted: false,
+                deferred: false,
             };
         if (result === "progressed")
             continue;
-        if (result === "idle") {
-            await removeActiveMarker(storageRoot, scope, marker, attempts);
+        if (result === "idle" || result === "deferred") {
+            if (result === "idle")
+                await removeActiveMarker(storageRoot, scope, marker, attempts);
             return {
                 scopeMismatch: false,
                 processed: true,
                 retryExhausted: false,
                 retryPending: false,
                 retryAttempted: false,
+                deferred: result === "deferred",
             };
         }
         const attemptNumber = attempts.length + 1;
@@ -218,6 +227,7 @@ async function processLocked(storageRoot, directory, scope, options, retryPolicy
                 retryExhausted: true,
                 retryPending: false,
                 retryAttempted: true,
+                deferred: false,
             };
         }
         return {
@@ -226,11 +236,13 @@ async function processLocked(storageRoot, directory, scope, options, retryPolicy
             retryExhausted: false,
             retryPending: true,
             retryAttempted: true,
+            deferred: false,
         };
     }
 }
 async function runTasks(options, scope) {
     let progressed = false;
+    let deferred = false;
     if (options.reconstructPending) {
         let result;
         try {
@@ -244,6 +256,7 @@ async function runTasks(options, scope) {
         if (result === "retryable-failure")
             return result;
         progressed ||= result === "progressed";
+        deferred ||= result === "deferred";
     }
     let result;
     try {
@@ -255,7 +268,8 @@ async function runTasks(options, scope) {
     if (result === "retryable-failure")
         return result;
     progressed ||= result === "progressed";
-    return progressed ? "progressed" : "idle";
+    deferred ||= result === "deferred";
+    return deferred ? "deferred" : progressed ? "progressed" : "idle";
 }
 async function readWorkerState(storageRoot, directory) {
     const entries = await listPrivateDirectory(storageRoot, directory);

@@ -36,6 +36,7 @@ export function createTracingEngine(options: TracingEngineOptions): TracingEngin
 
   function createSession(session: TracingEngineSessionOptions): TracingEngineSession {
     let backgroundWorker: ReturnType<typeof createBackgroundWorker> | undefined;
+    let droppedWork = false;
     const lifecycleBridge = createLifecycleBridge({
       storageRoot: config.storageRoot,
       integration: config.integration,
@@ -64,8 +65,16 @@ export function createTracingEngine(options: TracingEngineOptions): TracingEngin
       launchWorker: session.scheduleWake,
       ...(session.startupWaitMs === undefined ? {} : { startupWaitMs: session.startupWaitMs }),
       ...(session.retryPolicy === undefined ? {} : { retryPolicy: session.retryPolicy }),
-      reconstructPending: async () => reconstructionPassResult(await reconstructionWorker.drain()),
-      drainPending: async () => lifecyclePassResult(await lifecycleBridge.drain()),
+      reconstructPending: async () => {
+        const result = await reconstructionWorker.drain();
+        droppedWork ||= result.status === "drained" && result.dropped > 0;
+        return reconstructionPassResult(result);
+      },
+      drainPending: async () => {
+        const result = await lifecycleBridge.drain();
+        droppedWork ||= result.status === "drained" && result.dropped > 0;
+        return lifecyclePassResult(result);
+      },
     });
     const recoveryRuntime = (): TracingEngineRecoveryRuntime => ({
       storageRoot: config.storageRoot,
@@ -104,9 +113,14 @@ export function createTracingEngine(options: TracingEngineOptions): TracingEngin
         return backgroundWorker!.wake();
       },
       async drain() {
-        const result = await backgroundWorker!.run();
+        droppedWork = false;
+        const run = await backgroundWorker!.run();
+        const result =
+          droppedWork && (run === "completed" || run === "idle" || run === "deferred")
+            ? "dropped"
+            : run;
         const backgroundRecovery = session.backgroundRecovery;
-        if (backgroundRecovery && (result === "completed" || result === "idle")) {
+        if (backgroundRecovery && (run === "completed" || run === "idle")) {
           let recoveryResult: TracingEngineBackgroundRecoveryResult;
           const checkScope = () => matchesScope(() => session.resolveScope(scope), scope);
           try {

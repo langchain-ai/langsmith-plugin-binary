@@ -52,7 +52,7 @@ export async function drainLocked(captureStore, attemptStore, integration, sessi
         dropped += await dropPending(drainCache, candidate, DELIVERY_CAPACITY_REASON);
     }
     const sendable = fresh.slice(overCapacity);
-    const attempted = new Set();
+    const attempted = request.attempted ?? new Set();
     let progressed;
     do {
         progressed = false;

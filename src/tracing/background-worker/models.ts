@@ -4,7 +4,7 @@ export interface BackgroundWorkerScope {
   accountFingerprint: string;
 }
 
-export type BackgroundWorkerPassResult = "idle" | "progressed" | "retryable-failure";
+export type BackgroundWorkerPassResult = "idle" | "progressed" | "retryable-failure" | "deferred";
 
 export type BackgroundWorkerTaskRunResult = BackgroundWorkerPassResult | "scope-mismatch";
 
@@ -30,7 +30,13 @@ export interface BackgroundWorkerOptions {
 
 export type BackgroundWorkerWakeResult = "queued" | "launched";
 
-export type BackgroundWorkerRunResult = "idle" | "completed" | "retry-exhausted" | "scope-mismatch";
+export type BackgroundWorkerRunResult =
+  | "idle"
+  | "completed"
+  | "deferred"
+  | "dropped"
+  | "retry-exhausted"
+  | "scope-mismatch";
 
 export interface BackgroundWorkerMarker {
   version: 1;
@@ -64,6 +70,7 @@ export interface BackgroundWorkerLockedPassResult {
   retryExhausted: boolean;
   retryPending: boolean;
   retryAttempted: boolean;
+  deferred: boolean;
 }
 
 export interface BackgroundWorker {

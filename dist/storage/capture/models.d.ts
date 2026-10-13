@@ -8,6 +8,11 @@ export interface CaptureScope {
     eventId: string;
 }
 export type CaptureDependency = CaptureScope;
+export interface CaptureDestinationRoute {
+    projectName: string;
+    sourceProjectName?: string;
+}
+export type CaptureDestinationRoutes = Record<string, CaptureDestinationRoute>;
 export interface CaptureInput {
     integration: string;
     sessionId: string;
@@ -22,6 +27,7 @@ export interface CaptureInput {
     sourceAgeStartedAtMs?: number;
     priorDeliveryAttempts?: number;
     dependencies?: CaptureDependency[];
+    destinationRoutes?: CaptureDestinationRoutes;
 }
 export interface StoredCapture extends CaptureInput {
     version: number;

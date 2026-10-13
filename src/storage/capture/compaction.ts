@@ -26,6 +26,7 @@ export function captureContentDigest(record: CaptureInput | StoredCapture): stri
   delete content.capturedAtMs;
   delete content.compaction;
   delete content.sourceSnapshotCleanup;
+  delete content.destinationRoutes;
   return createHash("sha256").update(canonicalJson(content)).digest("hex");
 }
 
