@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveUploadDestinationFingerprint } from "./identity.js";
+import { createLangSmithUploadWriter } from "./upload.js";
 
 const clients = vi.hoisted(() => ({ createUploadClient: vi.fn(() => ({})) }));
 
 vi.mock("./client.js", () => ({ createUploadClient: clients.createUploadClient }));
-
-import { resolveUploadDestinationFingerprint } from "./identity.js";
-import { createLangSmithUploadWriter } from "./upload.js";
 
 beforeEach(() => clients.createUploadClient.mockClear());
 

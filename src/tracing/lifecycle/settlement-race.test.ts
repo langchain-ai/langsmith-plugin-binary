@@ -3,6 +3,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createLifecycleBridge } from "./index.js";
+import type { DeliveryCaptureInput } from "../delivery/models.js";
+import type { LifecycleBridge, LifecycleDrainResult, LifecycleTurnEvidence } from "./models.js";
+import type { PreparedRunPatchSubmission, PreparedRunPostSubmission } from "../upload/models.js";
+import type { LocalRequest } from "../../test-support/models/lifecycle.js";
 
 const settlementHooks = vi.hoisted(() => ({
   eventKind: "run-settlement-patch",
@@ -32,12 +37,6 @@ vi.mock("../delivery/index.js", async (importOriginal) => {
     }),
   };
 });
-
-import { createLifecycleBridge } from "./index.js";
-import type { DeliveryCaptureInput } from "../delivery/models.js";
-import type { LifecycleBridge, LifecycleDrainResult, LifecycleTurnEvidence } from "./models.js";
-import type { PreparedRunPatchSubmission, PreparedRunPostSubmission } from "../upload/models.js";
-import type { LocalRequest } from "../../test-support/models/lifecycle.js";
 
 const ROOT_ID = "11111111-1111-4111-8111-111111111111";
 const CHILD_ID = "22222222-2222-4222-8222-222222222222";

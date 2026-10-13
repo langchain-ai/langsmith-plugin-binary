@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { mkdtempSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,10 +30,14 @@ describe("durable delivery coordinator", () => {
     await expect(coordinator.capture(input)).resolves.toMatchObject({ status: "published" });
     const marker = join(root, "accepted-run-id");
     const url = moduleUrl("dist/tracing/delivery/index.js");
-    const script = `const {createDeliveryCoordinator}=await import(${JSON.stringify(url)});const {writeFileSync}=await import("node:fs");const c=createDeliveryCoordinator({storageRoot:process.argv[1],integration:"claude-code",sessionId:"session-1"});await c.drain({writer:{accountFingerprint:"account-a",destinations:[{id:"primary"}],send:async record=>{writeFileSync(process.argv[2],record.runId);process.exit(71)}}});`;
     const childCode = await execFileAsync(
       process.execPath,
-      ["--input-type=module", "-e", script, root, marker],
+      [
+        fileURLToPath(new URL("./fixtures/delivery-crash-worker.mjs", import.meta.url)),
+        url,
+        root,
+        marker,
+      ],
       { env: childEnvironment(home), timeout: 10_000 },
     )
       .then(() => 0)

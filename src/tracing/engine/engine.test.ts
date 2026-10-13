@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import type { LocalRequest } from "../../test-support/models/lifecycle.js";
 import type { TestArea } from "../../test-support/models/engine.js";
@@ -46,28 +46,6 @@ const writer: LangSmithUploadWriterOptions = {
   ],
   redact: false,
 };
-
-const childProgram = `
-const fs = await import("node:fs");
-const api = await import(process.argv[1]);
-const { storageRoot, sessionId, writer, callPath, resultPath } = JSON.parse(process.argv[2]);
-const engine = api.createTracingEngine({ storageRoot, integration: "claude-code", writer });
-const session = engine.forSession({
-  sessionId,
-  resolveScope: (expected) => expected,
-  scheduleWake: () => { throw new Error("unexpected nested worker launch"); },
-  reconstruct: async () => {
-    fs.writeFileSync(callPath, String(Number(fs.existsSync(callPath) ? fs.readFileSync(callPath, "utf8") : 0) + 1));
-    return { status: "deferred", reason: "missing-thread-identity" };
-  },
-});
-try {
-  fs.writeFileSync(resultPath, await session.drain());
-} catch (error) {
-  fs.writeFileSync(resultPath, String(error));
-  process.exitCode = 1;
-}
-`;
 
 const areas: TestArea[] = [];
 
@@ -402,8 +380,7 @@ it("recovers a persisted reconstruction job after a later explicit wake", async 
       const child = spawn(
         process.execPath,
         [
-          "-e",
-          childProgram,
+          fileURLToPath(new URL("./fixtures/engine-worker.mjs", import.meta.url)),
           moduleUrl,
           JSON.stringify({
             storageRoot: area.root,
@@ -503,8 +480,7 @@ it("finishes settlement after its wake is queued during the worker run", async (
       const childProcess = spawn(
         process.execPath,
         [
-          "-e",
-          childProgram,
+          fileURLToPath(new URL("./fixtures/engine-worker.mjs", import.meta.url)),
           moduleUrl,
           JSON.stringify({
             storageRoot: area.root,

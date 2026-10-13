@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import type { CaptureScope, CaptureStore } from "../../storage/capture/models.js";
@@ -55,50 +55,6 @@ const recoveryRepository = {
 };
 const roots: string[] = [];
 const children = new Set<ChildProcess>();
-
-const childProgram = `
-const fs = await import("node:fs");
-const api = await import(process.argv[1]);
-const { storageRoot, sessionId, writer, resultPath, reconstructOutput } = JSON.parse(process.argv[2]);
-const engine = api.createTracingEngine({ storageRoot, integration: "claude-code", writer });
-const session = engine.forSession({
-  sessionId,
-  resolveScope: (expected) => expected,
-  scheduleWake: () => { throw new Error("unexpected nested worker launch"); },
-  reconstruct: async (job) => {
-    if (!reconstructOutput) return { status: "deferred", reason: "missing-thread-identity" };
-    const runId = "33333333-3333-4333-8333-333333333333";
-    return {
-      status: "ready",
-      outputs: [{
-        eventId: "recovered-output",
-        submission: {
-          operation: "post",
-          integration: "claude-code",
-          privacyMode: "full",
-          metadata: { integration: "claude-code", threadId: "recovered-thread", agentType: "root", runType: "root" },
-          run: {
-            id: runId,
-            name: "recovered run",
-            run_type: "chain",
-            start_time: "2026-10-10T12:00:00.000Z",
-            trace_id: runId,
-            dotted_order: "20261010T120000000000Z" + runId,
-            inputs: { source: job.eventId },
-          },
-        },
-      }],
-    };
-  },
-});
-try {
-  fs.writeFileSync(resultPath, await session.drain());
-} catch (error) {
-  fs.writeFileSync(resultPath, String(error.stack ?? error));
-  console.error(error);
-  process.exitCode = 1;
-}
-`;
 
 function createArea(): string {
   const root = mkdtempSync(join(tmpdir(), "plugins-base-session-recovery-"));
@@ -637,8 +593,7 @@ it("recovers stale current, foreign, and reconstruction work through localhost w
       const child = spawn(
         process.execPath,
         [
-          "-e",
-          childProgram,
+          fileURLToPath(new URL("./fixtures/recovery-worker.mjs", import.meta.url)),
           moduleUrl,
           JSON.stringify({
             storageRoot: root,

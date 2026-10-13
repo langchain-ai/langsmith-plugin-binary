@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import {
   BACKGROUND_WORKER_ACTIVE_MARKER_NAME,
@@ -27,42 +27,6 @@ import type {
 } from "./models.js";
 import { workerDirectory, workerLaunchPath, workerPendingPath } from "./paths.js";
 import { createBackgroundWorker } from "./worker.js";
-
-const childProgram = `
-const fs = await import("node:fs");
-const { setTimeout: delay } = await import("node:timers/promises");
-const api = await import(process.argv[1]);
-const { mode, storageRoot, integration, sessionId, accountFingerprint, statePath, gatePath, maxAttempts, retryDelayMs } = JSON.parse(process.argv[2]);
-const scope = { integration, sessionId, accountFingerprint };
-function increment() {
-  const count = Number(fs.existsSync(statePath) ? fs.readFileSync(statePath, "utf8") : 0) + 1;
-  fs.writeFileSync(statePath, String(count));
-  return count;
-}
-const worker = api.createBackgroundWorker({
-  storageRoot,
-  scope,
-  resolveScope: () => scope,
-  launchWorker: () => { throw new Error("unexpected nested worker launch"); },
-  retryPolicy: { maxAttempts: Number(maxAttempts), retryDelayMs: Number(retryDelayMs) },
-  drainPending: async () => {
-    const count = increment();
-    if (mode === "hold") {
-      fs.writeFileSync(statePath + ".entered", "ready");
-      while (!fs.existsSync(gatePath)) await delay(5);
-    }
-    if (mode === "retry") return "retryable-failure";
-    if (mode === "progress") return count < 3 ? "progressed" : "idle";
-    return "idle";
-  },
-});
-if (mode === "claim-gated" || mode === "start-gated") {
-  fs.writeFileSync(statePath + ".ready", "ready");
-  while (!fs.existsSync(gatePath)) await delay(5);
-}
-const result = await worker.run();
-fs.writeFileSync(statePath + ".result", result);
-`;
 
 const testAreas: TestArea[] = [];
 
@@ -92,8 +56,7 @@ function spawnRunner(
   const child = spawn(
     process.execPath,
     [
-      "-e",
-      childProgram,
+      fileURLToPath(new URL("./fixtures/worker-worker.mjs", import.meta.url)),
       moduleUrl,
       JSON.stringify({
         mode,

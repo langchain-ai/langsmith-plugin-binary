@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import type { LangSmithUploadWriterOptions, PreparedRunPostSubmission } from "../upload/models.js";
@@ -19,40 +19,6 @@ import type { TracingEngineRecoveryRuntime } from "./models.js";
 const integration = "claude-code";
 const processes = new Set<ChildProcess>();
 const servers = new Set<ReturnType<typeof createServer>>();
-
-const childProgram = `
-const fs = await import("node:fs");
-const api = await import(process.argv[1]);
-const { storageRoot, sessionId, writer, scanPath, reportPath, resultPath, readyPath, delayMs, cooldownMs, throwReportError } = JSON.parse(process.argv[2]);
-const engine = api.createTracingEngine({ storageRoot, integration: "claude-code", writer });
-const session = engine.forSession({
-  sessionId,
-  resolveScope: (expected) => expected,
-  scheduleWake: () => { throw new Error("unexpected recovered-session launch"); },
-  reconstruct: async () => ({ status: "deferred", reason: "missing-thread-identity" }),
-  backgroundRecovery: {
-    minimumForeignAgeMs: 0,
-    cooldownMs,
-    optionsForSession: async (recoveredSessionId) => {
-      fs.appendFileSync(scanPath, recoveredSessionId + "\\n");
-      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-      throw new Error("synthetic adapter context unavailable");
-    },
-    onReport: (report) => {
-      fs.writeFileSync(reportPath, JSON.stringify(report));
-      if (throwReportError) throw new Error("synthetic reporting callback failed");
-    },
-  },
-});
-try {
-  if (readyPath) fs.writeFileSync(readyPath, "ready");
-  fs.writeFileSync(resultPath, await session.drain());
-} catch (error) {
-  fs.writeFileSync(resultPath, String(error.stack ?? error));
-  console.error(error);
-  process.exitCode = 1;
-}
-`;
 
 function createRoot(): string {
   return mkdtempSync(join(tmpdir(), "plugins-base-background-recovery-"));
@@ -166,18 +132,26 @@ function launchWorker(options: {
   throwReportError?: boolean;
 }): ChildProcess {
   const moduleUrl = pathToFileURL(resolve("dist/tracing/index.js")).href;
-  const child = spawn(process.execPath, ["-e", childProgram, moduleUrl, JSON.stringify(options)], {
-    env: {
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
-      HOME: options.storageRoot,
-      USERPROFILE: options.storageRoot,
-      TEMP: options.storageRoot,
-      TMP: options.storageRoot,
-      TMPDIR: options.storageRoot,
-      CI: "1",
+  const child = spawn(
+    process.execPath,
+    [
+      fileURLToPath(new URL("./fixtures/background-recovery-worker.mjs", import.meta.url)),
+      moduleUrl,
+      JSON.stringify(options),
+    ],
+    {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: options.storageRoot,
+        USERPROFILE: options.storageRoot,
+        TEMP: options.storageRoot,
+        TMP: options.storageRoot,
+        TMPDIR: options.storageRoot,
+        CI: "1",
+      },
+      stdio: ["ignore", "ignore", "inherit"],
     },
-    stdio: ["ignore", "ignore", "inherit"],
-  });
+  );
   processes.add(child);
   return child;
 }

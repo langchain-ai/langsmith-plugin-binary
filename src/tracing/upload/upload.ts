@@ -27,7 +27,7 @@ export function createLangSmithUploadWriter(
   const resolved = resolveUploadDestinations(options);
   const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
   const byId = new Map(resolved.destinations.map((destination) => [destination.id, destination]));
-  const redactedClients = new Map<string, Client>();
+  const clientsByMode = new Map<string, Client>();
   return Object.freeze({
     accountFingerprint: resolved.accountFingerprint,
     destinations: Object.freeze(destinations),
@@ -44,12 +44,16 @@ export function createLangSmithUploadWriter(
             Object.hasOwn(destination.updates ?? {}, "outputs")
           ),
       );
+      const includeRuntimeMetadata =
+        destination.includeRuntimeMetadata === true && submission.privacyMode === "full";
       let client = destination.client;
-      if (redactedFields.length > 0) {
-        const key = JSON.stringify([destinationId, redactedFields]);
-        const previous = redactedClients.get(key);
-        client = previous ?? createUploadClient({ ...destination, redactedFields });
-        if (previous === undefined) redactedClients.set(key, client);
+      if (redactedFields.length > 0 || includeRuntimeMetadata) {
+        const key = JSON.stringify([destinationId, includeRuntimeMetadata, redactedFields]);
+        const previous = clientsByMode.get(key);
+        client =
+          previous ??
+          createUploadClient({ ...destination, redactedFields, includeRuntimeMetadata });
+        if (previous === undefined) clientsByMode.set(key, client);
       }
       const payload =
         submission.operation === "post"

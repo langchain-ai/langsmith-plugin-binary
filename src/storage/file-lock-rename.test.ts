@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { beforeEach, expect, it, vi } from "vitest";
+import { tryAcquireFileLock, withFileLock } from "./file-lock.js";
 
 const fault = vi.hoisted(() => ({ attempts: 0, failures: 0, code: "EPERM" }));
 
@@ -22,8 +23,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
   };
 });
-
-import { tryAcquireFileLock, withFileLock } from "./file-lock.js";
 
 beforeEach(() => {
   fault.attempts = 0;

@@ -16,6 +16,11 @@ import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { beforeEach, expect, it, vi } from "vitest";
 import { FileLockTimeoutError } from "./index.js";
+import {
+  acquireCompatibleDirectoryFileLock,
+  tryAcquireFileLock,
+  withFileLock,
+} from "./file-lock.js";
 
 const faults = vi.hoisted(() => ({
   gatePath: "",
@@ -97,12 +102,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
   };
 });
-
-import {
-  acquireCompatibleDirectoryFileLock,
-  tryAcquireFileLock,
-  withFileLock,
-} from "./file-lock.js";
 
 const CLAIM_SUFFIX = ".claims";
 const CLAIM_EXTENSION = ".json";
