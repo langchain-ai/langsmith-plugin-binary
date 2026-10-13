@@ -24,4 +24,9 @@ export const LIFECYCLE_SNAPSHOT_OPTIONAL_RUN_FIELDS = [
     "reference_example_id",
 ];
 export const LIFECYCLE_TURN_CLOSURE_STATES = ["open", "provisional", "authoritative"];
+export const LIFECYCLE_RUN_CONTEXT_FIELDS = [
+    ["parent_run_id", "Parent run ID"],
+    ["trace_id", "Trace ID"],
+    ["dotted_order", "Dotted order"],
+];
 //# sourceMappingURL=constants.js.map
