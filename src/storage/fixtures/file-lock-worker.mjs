@@ -47,7 +47,8 @@ if (mode === "hold") {
       { timeoutMs: Number(timeout) },
     );
     writeFileSync(marker + ".released", "released");
-  } catch {
+  } catch (error) {
+    writeFileSync(marker + ".failed", String(error.stack ?? error));
     process.exitCode = 4;
   }
 } else if (mode === "die") {

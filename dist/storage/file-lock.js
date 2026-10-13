@@ -2,7 +2,7 @@ import { chmod, link, lstat, mkdir, readFile, readdir, rename, unlink, writeFile
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
-import { FILE_LOCK_ACQUIRE_MESSAGE, FILE_LOCK_CLAIM_VERSION, FILE_LOCK_CLAIM_EXTENSION, FILE_LOCK_DIRECTORY_MODE, FILE_LOCK_DIRECTORY_SUFFIX, FILE_LOCK_DEFAULT_TIMEOUT_MS, FILE_LOCK_ENCODING, FILE_LOCK_EXISTS_CODE, FILE_LOCK_EXCLUSIVE_FLAG, FILE_LOCK_FILE_MODE, FILE_LOCK_INVALID_TIMEOUT_MESSAGE, FILE_LOCK_MISSING_CODE, FILE_LOCK_NEGATIVE_TICKET_LIMIT, FILE_LOCK_POLL_INTERVAL_MS, FILE_LOCK_PROCESS_MISSING_CODE, FILE_LOCK_PROCESS_CHECK_SIGNAL, FILE_LOCK_RELEASE_MESSAGE, FILE_LOCK_TEMP_PREFIX, FILE_LOCK_TEMP_SUFFIX, FILE_LOCK_TICKET_LIMIT_MESSAGE, FILE_LOCK_TIMEOUT_MESSAGE, FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE, FILE_LOCK_UNSELECTED_TICKET, } from "./constants.js";
+import { FILE_LOCK_ACQUIRE_MESSAGE, FILE_LOCK_CLAIM_VERSION, FILE_LOCK_CLAIM_EXTENSION, FILE_LOCK_DIRECTORY_MODE, FILE_LOCK_DIRECTORY_SUFFIX, FILE_LOCK_DEFAULT_TIMEOUT_MS, FILE_LOCK_ENCODING, FILE_LOCK_EXISTS_CODE, FILE_LOCK_EXCLUSIVE_FLAG, FILE_LOCK_FILE_MODE, FILE_LOCK_INVALID_TIMEOUT_MESSAGE, FILE_LOCK_MISSING_CODE, FILE_LOCK_NEGATIVE_TICKET_LIMIT, FILE_LOCK_POLL_INTERVAL_MS, FILE_LOCK_PROCESS_MISSING_CODE, FILE_LOCK_PROCESS_CHECK_SIGNAL, FILE_LOCK_RELEASE_MESSAGE, FILE_LOCK_RENAME_RETRY_TIMEOUT_MS, FILE_LOCK_RENAME_BUSY_CODE, FILE_LOCK_TEMP_PREFIX, FILE_LOCK_TEMP_SUFFIX, FILE_LOCK_TICKET_LIMIT_MESSAGE, FILE_LOCK_TIMEOUT_MESSAGE, FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE, FILE_LOCK_UNSELECTED_TICKET, } from "./constants.js";
 function isRecord(value) {
     return typeof value === "object" && value !== null;
 }
@@ -48,7 +48,7 @@ async function removeFile(filePath) {
         return false;
     }
 }
-async function publishClaim(filePath, claim, create) {
+async function publishClaim(filePath, claim, create, deadline) {
     const temporaryPath = join(dirname(filePath), `${FILE_LOCK_TEMP_PREFIX}${claim.id}.${randomUUID()}${FILE_LOCK_TEMP_SUFFIX}`);
     try {
         await writeFile(temporaryPath, JSON.stringify(claim), {
@@ -57,8 +57,20 @@ async function publishClaim(filePath, claim, create) {
         });
         if (create)
             await link(temporaryPath, filePath);
-        else
-            await rename(temporaryPath, filePath);
+        else {
+            const replacementDeadline = deadline ?? performance.now() + FILE_LOCK_RENAME_RETRY_TIMEOUT_MS;
+            for (;;) {
+                try {
+                    await rename(temporaryPath, filePath);
+                    break;
+                }
+                catch (error) {
+                    if (error.code !== FILE_LOCK_RENAME_BUSY_CODE)
+                        throw error;
+                    await waitForNextScan(replacementDeadline, filePath);
+                }
+            }
+        }
     }
     finally {
         await removeFile(temporaryPath);
@@ -181,7 +193,7 @@ async function acquireClaim(filePath, waitForPeers, deadline) {
             if (maxTicket >= Number.MAX_SAFE_INTEGER)
                 throw new Error(FILE_LOCK_TICKET_LIMIT_MESSAGE);
             ownedClaim = { ...claim, choosing: false, ticket: maxTicket + 1 };
-            await publishClaim(ownPath, ownedClaim, false);
+            await publishClaim(ownPath, ownedClaim, false, waitForPeers ? deadline : undefined);
             break;
         }
         const ticketedClaim = ownedClaim;
