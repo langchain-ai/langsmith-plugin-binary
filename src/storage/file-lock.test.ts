@@ -26,55 +26,6 @@ import {
 } from "./constants.js";
 import type { FileLockClaim } from "./models.js";
 
-const childProgram = `
-const { existsSync, mkdirSync, rmdirSync, writeFileSync } = await import("node:fs");
-const { setTimeout: delay } = await import("node:timers/promises");
-const api = await import(process.argv[1]);
-const [mode, lockPath, marker, gate, timeout, id, activePath, startPath] = process.argv.slice(2);
-if (mode === "hold") {
-  await api.withFileLock(lockPath, async () => {
-    writeFileSync(marker, "held");
-    while (!existsSync(gate)) await delay(5);
-  }, { timeoutMs: Number(timeout) });
-} else if (mode === "timeout") {
-  try {
-    await api.withFileLock(lockPath, async () => writeFileSync(marker, "ran"), { timeoutMs: Number(timeout) });
-    process.exitCode = 2;
-  } catch (error) {
-    process.exitCode = String(error).includes("Timed out waiting for file lock") ? 0 : 3;
-  }
-} else if (mode === "try") {
-  const handle = await api.tryAcquireFileLock(lockPath);
-  writeFileSync(marker, handle ? "owned" : "busy");
-  if (handle) await handle.release();
-} else if (mode === "queue") {
-  writeFileSync(marker + ".ready", "ready");
-  while (startPath && !existsSync(startPath)) await delay(5);
-  try {
-    await api.withFileLock(lockPath, async () => {
-      try {
-        mkdirSync(activePath);
-      } catch {
-        writeFileSync(marker + ".violation", "overlap");
-        throw new Error("overlapping critical sections");
-      }
-      writeFileSync(marker + ".acquired", "acquired");
-      while (!existsSync(gate)) await delay(5);
-      rmdirSync(activePath);
-      writeFileSync(marker + ".complete", "complete");
-    }, { timeoutMs: Number(timeout) });
-    writeFileSync(marker + ".released", "released");
-  } catch {
-    process.exitCode = 4;
-  }
-} else if (mode === "die") {
-  const handle = await api.tryAcquireFileLock(lockPath);
-  if (!handle) process.exit(5);
-  writeFileSync(marker, "owned");
-  for (;;) await delay(1000);
-}
-`;
-
 function createArea() {
   const directory = mkdtempSync(join(tmpdir(), "plugins-base-file-lock-"));
   return { directory, lockPath: join(directory, "state.lock") };
@@ -86,10 +37,14 @@ function spawnWorker(
   args: string[] = [],
 ): ChildProcess {
   const moduleUrl = pathToFileURL(resolve("dist/storage/file-lock.js")).href;
-  return spawn(process.execPath, ["-e", childProgram, moduleUrl, mode, area.lockPath, ...args], {
-    env: { HOME: area.directory, TMPDIR: area.directory, CI: "1" },
-    stdio: "ignore",
-  });
+  return spawn(
+    process.execPath,
+    [resolve("src/storage/fixtures/file-lock-worker.mjs"), moduleUrl, mode, area.lockPath, ...args],
+    {
+      env: { HOME: area.directory, TMPDIR: area.directory, CI: "1" },
+      stdio: "ignore",
+    },
+  );
 }
 
 function waitForExit(child: ChildProcess): Promise<boolean> {
