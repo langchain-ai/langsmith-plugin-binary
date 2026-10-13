@@ -152,11 +152,19 @@ function makeHandle(claimDirectory, claim) {
 }
 async function beginClaim(filePath) {
     const claimDirectory = `${resolve(filePath)}${FILE_LOCK_DIRECTORY_SUFFIX}`;
-    await assertSafeClaimDirectory(claimDirectory);
-    await mkdir(claimDirectory, { recursive: true, mode: FILE_LOCK_DIRECTORY_MODE });
-    await assertSafeClaimDirectory(claimDirectory);
-    await chmod(claimDirectory, FILE_LOCK_DIRECTORY_MODE);
-    return { claimDirectory, claim: await createClaim(claimDirectory) };
+    for (;;) {
+        await assertSafeClaimDirectory(claimDirectory);
+        await mkdir(claimDirectory, { recursive: true, mode: FILE_LOCK_DIRECTORY_MODE });
+        await assertSafeClaimDirectory(claimDirectory);
+        try {
+            await chmod(claimDirectory, FILE_LOCK_DIRECTORY_MODE);
+            return { claimDirectory, claim: await createClaim(claimDirectory) };
+        }
+        catch (error) {
+            if (error.code !== FILE_LOCK_MISSING_CODE)
+                throw error;
+        }
+    }
 }
 async function assertSafeClaimDirectory(claimDirectory) {
     let stat;

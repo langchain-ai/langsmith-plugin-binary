@@ -11,6 +11,7 @@ import type {
   StoredCapture,
 } from "../../storage/capture/models.js";
 import type {
+  DeliveryAttemptStore,
   DeliveryDestination,
   DeliveryDrainResult,
   DeliveryPolicy,
@@ -73,6 +74,26 @@ export interface CompactSettledCapturesOptions {
   settledTurnIds: readonly string[];
   eligibleCaptures: readonly EnumeratedCapture[];
   readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
+}
+
+export interface RetireSessionsBaseOptions {
+  storageRoot: string;
+  integration: CodingAgentIntegration;
+  sessionId: string;
+  store: CaptureStore;
+  attempts: DeliveryAttemptStore;
+  now: number;
+}
+
+export interface RetireSettledSessionsOptions extends RetireSessionsBaseOptions {
+  lockPath(sessionId: string): Promise<string>;
+  lastSettledWrite(records: readonly StoredCapture[]): Promise<number | undefined>;
+  afterRetire?(sessionId: string, turnId: string, records: readonly StoredCapture[]): Promise<void>;
+}
+
+export interface RetireDeliveredTurnsOptions extends RetireSessionsBaseOptions {
+  destinationFingerprint: string;
+  destinations: readonly DeliveryDestination[];
 }
 
 export interface RunRetentionGroup {

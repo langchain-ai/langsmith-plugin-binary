@@ -9,6 +9,7 @@ import type {
 import { identifierHash } from "../../storage/capture/paths.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import { createDeliveryCoordinator } from "../delivery/index.js";
+import { createDeliveryAttemptStore } from "../delivery/attempt-store.js";
 import type { DeliveryDestination } from "../delivery/models.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import { wakeCapturedWork } from "../capture-wake.js";
@@ -47,6 +48,7 @@ import {
 import { projectSubmission, projectTurnEvidence } from "./projection.js";
 import { captureLifecycleSnapshot } from "./snapshot.js";
 import { compactSettledCaptures } from "./retention.js";
+import { retireDeliveredTurns } from "./cleanup.js";
 import {
   deriveAttributionReadiness,
   indexCaptureSources,
@@ -66,6 +68,7 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
     ...(options.policy === undefined ? {} : { policy: options.policy }),
   });
   const writer = createLangSmithUploadWriter(options.writer);
+  const attemptStore = createDeliveryAttemptStore(storageRoot);
   const capture = async (input: LifecycleCaptureInput): Promise<LifecycleCaptureResult> => {
     const captureRecord = requirePlainRecord(
       snapshotData(requirePlainRecord(input, "Lifecycle capture")),
@@ -259,6 +262,16 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
             .map((entry) => entry.turnId),
           eligibleCaptures: settlementCaptures,
           readOutcome,
+        });
+        await retireDeliveredTurns({
+          storageRoot,
+          integration,
+          sessionId,
+          destinationFingerprint: writer.accountFingerprint,
+          destinations: writer.destinations,
+          store: captureStore,
+          attempts: attemptStore,
+          now: input.now ?? Date.now(),
         });
         drainResult = { ...result, settlement };
       } finally {

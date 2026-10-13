@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { resolve, join } from "node:path";
-import { CAPTURE_DIRECTORY, CAPTURE_INTEGRATION, CAPTURE_MAX_IDENTIFIER_BYTES, } from "./constants.js";
+import { CAPTURE_DIRECTORY, CAPTURE_INTEGRATION, CAPTURE_MAX_IDENTIFIER_BYTES, CAPTURE_RETIRED_DIRECTORY, } from "./constants.js";
 export function validateIntegration(value) {
     if (!CAPTURE_INTEGRATION.test(value))
         throw new TypeError("Invalid integration namespace");
@@ -28,6 +28,9 @@ export function captureDirectory(root) {
 }
 export function eventPath(root, scope) {
     return join(captureDirectory(root), "integrations", scope.integration, "sessions", identifierHash(scope.sessionId), "turns", identifierHash(scope.turnId), "events", `${identifierHash(scope.eventId)}.json`);
+}
+export function retiredPath(root, scope) {
+    return join(captureDirectory(root), "integrations", scope.integration, "sessions", identifierHash(scope.sessionId), "turns", identifierHash(scope.turnId), CAPTURE_RETIRED_DIRECTORY, `${identifierHash(scope.eventId)}.json`);
 }
 export function receiptPath(root, scope, destination) {
     return join(captureDirectory(root), "integrations", scope.integration, "sessions", identifierHash(scope.sessionId), "turns", identifierHash(scope.turnId), "receipts", identifierHash(destination), `${identifierHash(scope.eventId)}.json`);

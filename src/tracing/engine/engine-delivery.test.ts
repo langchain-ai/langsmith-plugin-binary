@@ -1,17 +1,29 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdtempSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmdirSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { join, relative } from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
 import type { LocalRequest } from "../../test-support/models/lifecycle.js";
 import type { LangSmithUploadWriterOptions, PreparedRunPostSubmission } from "../upload/models.js";
+import { identifierHash } from "../../storage/capture/paths.js";
 import { createTracingEngine } from "./engine.js";
 
 const integration = "claude-code";
+const RETIRE_AFTER_MS = 2 * 60 * 60 * 1000 + 1000;
+const TOMBSTONE_AFTER_MS = 24 * 60 * 60 * 1000 + 1000;
 const roots: string[] = [];
 const closers: (() => Promise<void>)[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   for (const close of closers.splice(0)) await close();
   for (const root of roots.splice(0)) removeTree(root);
 });
@@ -169,6 +181,7 @@ it("spends one delivery attempt per drain and reports dropped work", async () =>
   expect(results).toEqual(["deferred", "deferred", "deferred", "deferred", "dropped"]);
   expect(posts).toEqual([1, 1, 1, 1, 1]);
   expect(endpoint.requests.length - before).toBe(0);
+  expect(listPaths(join(root, "delivery-v1")).files).toEqual([]);
 });
 
 it("delivers leftover work to its captured project after the project changes", async () => {
@@ -200,4 +213,111 @@ it("delivers leftover work to its captured project after the project changes", a
     const projects = endpoint.requests.map(({ payload }) => payload["session_name"]);
     expect(new Set(projects)).toEqual(new Set(["project-a"]));
   }
+});
+
+it("removes delivered work once settled and keeps duplicate Stop from posting again", async () => {
+  const root = area();
+  const endpoint = await localEndpoint();
+  const writer = writerFor(endpoint.apiUrl, "cleanup-project");
+  const old = openSession(root, writer, "old-session");
+  const runId = "55555555-5555-4555-8555-555555555555";
+  await captureRoot(old, "turn-old", runId);
+  await expect(old.drain()).resolves.toBe("completed");
+  const delivered = endpoint.requests.length;
+  expect(delivered).toBeGreaterThan(0);
+  expect(listPaths(join(root, "delivery-v1")).files).toEqual([]);
+
+  await captureRoot(old, "turn-old", runId);
+  await old.drain();
+  expect(endpoint.requests.length).toBe(delivered);
+
+  const [oldTurn] = listPaths(root).directories.filter(
+    (path) => path.includes("capture-v1") && path.endsWith("events"),
+  );
+  const strayTemp = join(oldTurn!, `.${"0".repeat(8)}-0000-4000-8000-${"0".repeat(12)}.tmp`);
+  writeFileSync(strayTemp, "");
+  utimesSync(strayTemp, new Date(0), new Date(0));
+  const event = readdirSync(oldTurn!).find((name) => name.endsWith(".json"));
+  const strayAttempt = join(
+    root,
+    "delivery-v1",
+    relative(join(root, "capture-v1"), oldTurn!),
+    event!.replace(".json", ""),
+    "destinations",
+    "crashed",
+    "attempts",
+  );
+  mkdirSync(strayAttempt, { recursive: true });
+  writeFileSync(join(strayAttempt, "1.json"), "{}");
+  const start = Date.now();
+  vi.useFakeTimers({ now: start + RETIRE_AFTER_MS, toFake: ["Date"] });
+  const next = openSession(root, writer, "next-session");
+  await captureRoot(next, "turn-next", "66666666-6666-4666-8666-666666666666");
+  await expect(next.drain()).resolves.toBe("completed");
+  const oldHash = identifierHash("old-session");
+  const oldFiles = () => listPaths(root).files.filter((path) => path.includes(oldHash));
+  expect(oldFiles().length).toBeGreaterThan(0);
+  expect(oldFiles().every((path) => path.includes("/retired/"))).toBe(true);
+
+  const beforeReplay = endpoint.requests.length;
+  await captureRoot(old, "turn-old", runId);
+  await expect(old.drain()).resolves.not.toMatch(/dropped|deferred/u);
+  expect(endpoint.requests.length).toBe(beforeReplay);
+
+  vi.setSystemTime(start + RETIRE_AFTER_MS + TOMBSTONE_AFTER_MS);
+  await captureRoot(next, "turn-later", "99999999-9999-4999-8999-999999999999");
+  await next.drain();
+  const remaining = listPaths(root);
+  expect(
+    [...remaining.files, ...remaining.directories].filter((path) => path.includes(oldHash)),
+  ).toEqual([]);
+  expect(remaining.files.some((path) => path.includes(identifierHash("next-session")))).toBe(true);
+});
+
+it("removes a delivered reconstruction job once it is settled and old enough", async () => {
+  const root = area();
+  const endpoint = await localEndpoint();
+  const writer = writerFor(endpoint.apiUrl, "cleanup-project");
+  const job = {
+    turnId: "turn-job",
+    eventId: "job-old",
+    sourceRefs: ["snapshot:job-old"],
+    privacyMode: "full" as const,
+    turnEvidence: { childRunIds: [], closureState: "authoritative" as const },
+  };
+  const old = openSession(root, writer, "old-job-session", "77777777-7777-4777-8777-777777777777");
+  await expect(old.queueReconstruction(job)).rejects.toThrow("no worker in this test");
+  await expect(old.drain()).resolves.toBe("completed");
+  const delivered = endpoint.requests.length;
+  await expect(old.queueReconstruction(job)).rejects.toThrow("no worker in this test");
+  await old.drain();
+  expect(endpoint.requests.length).toBe(delivered);
+
+  const start = Date.now();
+  vi.useFakeTimers({ now: start + RETIRE_AFTER_MS, toFake: ["Date"] });
+  const next = openSession(
+    root,
+    writer,
+    "next-job-session",
+    "88888888-8888-4888-8888-888888888888",
+  );
+  await expect(next.queueReconstruction({ ...job, eventId: "job-next" })).rejects.toThrow(
+    "no worker in this test",
+  );
+  await expect(next.drain()).resolves.toBe("completed");
+  const beforeReplay = endpoint.requests.length;
+  await expect(old.queueReconstruction(job)).rejects.toThrow("no worker in this test");
+  await expect(old.drain()).resolves.not.toMatch(/dropped|deferred/u);
+  expect(endpoint.requests.length).toBe(beforeReplay);
+
+  vi.setSystemTime(start + RETIRE_AFTER_MS + TOMBSTONE_AFTER_MS);
+  await expect(next.queueReconstruction({ ...job, eventId: "job-later" })).rejects.toThrow(
+    "no worker in this test",
+  );
+  await next.drain();
+  const oldHash = identifierHash("old-job-session");
+  const remaining = listPaths(root);
+  expect(
+    [...remaining.files, ...remaining.directories].filter((path) => path.includes(oldHash)),
+  ).toEqual([]);
 });

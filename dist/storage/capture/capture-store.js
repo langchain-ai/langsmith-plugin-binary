@@ -1,10 +1,12 @@
 import { lstat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { withFileLock } from "../index.js";
-import { CAPTURE_COMPACTED_RECORD_VERSION, CAPTURE_DIRECTORY, CAPTURE_EVENT_FILE, CAPTURE_HASH, CAPTURE_RECORD_LOCK_DIRECTORY, CAPTURE_RECORD_VERSION, CAPTURE_RECONSTRUCTION_JOB_KIND, CAPTURE_RECEIPT_VERSION, CAPTURE_STAGING_FILE, } from "./constants.js";
-import { captureDirectory, eventPath, identifierHash, receiptPath, validateIdentifier, validateIntegration, } from "./paths.js";
-import { ensurePrivateDirectory, publishExclusive, readPrivateFile, replacePrivateFile, } from "./utils/atomic-file.js";
+import { CAPTURE_COMPACTED_RECORD_VERSION, CAPTURE_DIRECTORY, CAPTURE_EVENT_FILE, CAPTURE_HASH, CAPTURE_RECORD_LOCK_DIRECTORY, CAPTURE_RECORD_VERSION, CAPTURE_RECONSTRUCTION_JOB_KIND, CAPTURE_RECEIPT_VERSION, CAPTURE_RETIRED_DIRECTORY, CAPTURE_STAGING_FILE, } from "./constants.js";
+import { captureDirectory, eventPath, identifierHash, receiptPath, retiredPath, validateIdentifier, validateIntegration, } from "./paths.js";
+import { ensurePrivateDirectory, publishExclusive, readPrivateFile, replacePrivateFile, retryRemovedDirectory, } from "./utils/atomic-file.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
+import { removeEmptyDirectories, removeFileIfPresent, removeStaleFiles, } from "../../utils/files/cleanup.js";
+import { FILE_LOCK_DIRECTORY_SUFFIX } from "../constants.js";
 import { requireNonNegativeInteger, requireSafeEpochMilliseconds, } from "../../utils/validation/objects.js";
 import { captureContentDigest, compactCaptureRecord, compactReconstructionJobRecord, validateCompactionMarker, validateSourceSnapshotCleanup, } from "./compaction.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
@@ -56,8 +58,16 @@ export function createCaptureStore(root) {
             try {
                 const path = eventPath(storageRoot, input);
                 return await withRecordLock(storageRoot, input, async () => {
-                    await ensureDirectories(input.integration, input.sessionId, input.turnId, "events");
-                    if (await publishExclusive(path, contents))
+                    const retired = await readRecord(storageRoot, retiredPath(storageRoot, input));
+                    if (retired !== undefined)
+                        return sameCapture(retired, record)
+                            ? { status: "duplicate", record: retired }
+                            : { status: "conflict" };
+                    const published = await retryRemovedDirectory(async () => {
+                        await ensureDirectories(input.integration, input.sessionId, input.turnId, "events");
+                        return publishExclusive(path, contents);
+                    });
+                    if (published)
                         return { status: "published", record };
                     const previous = await readRecord(storageRoot, path);
                     if (previous === undefined)
@@ -234,10 +244,13 @@ export function createCaptureStore(root) {
                     if ((await readRecord(storageRoot, eventPath(storageRoot, input))) === undefined)
                         return { status: "missing-capture" };
                     const path = receiptPath(storageRoot, input, input.destination);
-                    await ensureDirectories(input.integration, input.sessionId, input.turnId, "receipts", input.destination);
                     const comparable = receiptValue(input, new Date().toISOString());
                     const contents = canonicalJson(comparable);
-                    if (await publishExclusive(path, contents))
+                    const published = await retryRemovedDirectory(async () => {
+                        await ensureDirectories(input.integration, input.sessionId, input.turnId, "receipts", input.destination);
+                        return publishExclusive(path, contents);
+                    });
+                    if (published)
                         return { status: "recorded", receipt: comparable };
                     const previous = await readReceipt(storageRoot, path);
                     if (previous === undefined)
@@ -276,7 +289,75 @@ export function createCaptureStore(root) {
                 return failure("STORAGE_FAILED", error);
             }
         },
+        retireTurn,
+        async expireRetired(integration, retiredBeforeMs) {
+            validateIntegration(integration);
+            const sessions = join(captureDirectory(storageRoot), "integrations", integration, "sessions");
+            for (const session of (await listPrivateDirectory(storageRoot, sessions)) ?? []) {
+                if (!session.isDirectory() || !CAPTURE_HASH.test(session.name))
+                    continue;
+                const turns = join(sessions, session.name, "turns");
+                for (const turn of (await listPrivateDirectory(storageRoot, turns)) ?? []) {
+                    if (!turn.isDirectory() || !CAPTURE_HASH.test(turn.name))
+                        continue;
+                    const retired = join(turns, turn.name, CAPTURE_RETIRED_DIRECTORY);
+                    await removeStaleFiles(retired, CAPTURE_EVENT_FILE, retiredBeforeMs);
+                    await removeEmptyDirectories([retired, join(turns, turn.name)]);
+                }
+                await removeEmptyDirectories([turns, join(sessions, session.name)]);
+            }
+        },
     };
+    async function retireTurn(integration, sessionId, turnId, expected, staleBeforeMs) {
+        validateIntegration(integration);
+        validateIdentifier(sessionId, "session ID");
+        validateIdentifier(turnId, "turn ID");
+        const sessionHash = identifierHash(sessionId);
+        const turnHash = identifierHash(turnId);
+        const sessionDirectory = join(captureDirectory(storageRoot), "integrations", integration, "sessions", sessionHash);
+        const turnDirectory = join(sessionDirectory, "turns", turnHash);
+        const receiptsDirectory = join(turnDirectory, "receipts");
+        const eventsDirectory = join(turnDirectory, "events");
+        const destinations = ((await listPrivateDirectory(storageRoot, receiptsDirectory)) ?? [])
+            .filter((entry) => entry.isDirectory() && CAPTURE_HASH.test(entry.name))
+            .map((entry) => join(receiptsDirectory, entry.name));
+        let removed = 0;
+        for (const record of expected) {
+            const scope = { integration, sessionId, turnId, eventId: record.eventId };
+            if (!sameScope(record, scope))
+                throw new Error("Retired capture is outside its turn");
+            await withRecordLock(storageRoot, scope, async () => {
+                const current = await readRecord(storageRoot, eventPath(storageRoot, scope));
+                if (current === undefined || canonicalJson(current) !== canonicalJson(record))
+                    return;
+                await ensureDirectories(integration, sessionId, turnId, CAPTURE_RETIRED_DIRECTORY);
+                await publishExclusive(retiredPath(storageRoot, scope), canonicalJson(current));
+                for (const destination of destinations)
+                    await removeFileIfPresent(join(destination, `${identifierHash(record.eventId)}.json`));
+                await removeFileIfPresent(eventPath(storageRoot, scope));
+                removed += 1;
+            });
+        }
+        for (const directory of [eventsDirectory, ...destinations])
+            await removeStaleFiles(directory, CAPTURE_STAGING_FILE, staleBeforeMs);
+        await removeEmptyDirectories([
+            ...destinations,
+            receiptsDirectory,
+            eventsDirectory,
+            turnDirectory,
+            join(sessionDirectory, "turns"),
+            sessionDirectory,
+        ]);
+        const lockTurnDirectory = join(storageRoot, CAPTURE_RECORD_LOCK_DIRECTORY, "integrations", integration, "sessions", sessionHash, "turns", turnHash);
+        await removeEmptyDirectories([
+            ...expected.map((record) => join(lockTurnDirectory, "events", `${identifierHash(record.eventId)}.lock${FILE_LOCK_DIRECTORY_SUFFIX}`)),
+            join(lockTurnDirectory, "events"),
+            lockTurnDirectory,
+            dirname(lockTurnDirectory),
+            dirname(dirname(lockTurnDirectory)),
+        ]);
+        return removed;
+    }
     async function ensureDirectories(integration, sessionId, turnId, collection, destination) {
         const pathSegments = [
             CAPTURE_DIRECTORY,

@@ -154,4 +154,12 @@ export interface CaptureStore {
   enumerateSessions(integration: string): Promise<EnumeratedCaptureSession[]>;
   recordOutcome(input: OutcomeInput): Promise<OutcomeWriteResult>;
   readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
+  retireTurn(
+    integration: string,
+    sessionId: string,
+    turnId: string,
+    expected: readonly StoredCapture[],
+    staleBeforeMs: number,
+  ): Promise<number>;
+  expireRetired(integration: string, retiredBeforeMs: number): Promise<void>;
 }

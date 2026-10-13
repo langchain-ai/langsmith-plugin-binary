@@ -2,9 +2,33 @@ import { constants as fsConstants } from "node:fs";
 import { chmod, link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { randomUUID } from "node:crypto";
-import { CAPTURE_DIRECTORY_MODE, CAPTURE_FILE_MODE } from "../constants.js";
+import {
+  CAPTURE_DIRECTORY_MODE,
+  CAPTURE_DIRECTORY_SETUP_ATTEMPTS,
+  CAPTURE_FILE_MODE,
+  CAPTURE_REMOVED_DIRECTORY_CODES,
+} from "../constants.js";
 
 export async function ensurePrivateDirectory(root: string, segments: string[]): Promise<string> {
+  return retryRemovedDirectory(() => createPrivateDirectory(root, segments));
+}
+
+export async function retryRemovedDirectory<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const code = errorCode(error);
+      if (
+        !CAPTURE_REMOVED_DIRECTORY_CODES.some((removed) => removed === code) ||
+        attempt >= CAPTURE_DIRECTORY_SETUP_ATTEMPTS
+      )
+        throw error;
+    }
+  }
+}
+
+async function createPrivateDirectory(root: string, segments: string[]): Promise<string> {
   await mkdir(root, { recursive: true, mode: CAPTURE_DIRECTORY_MODE });
   const rootInfo = await lstat(root);
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())

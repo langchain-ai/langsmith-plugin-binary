@@ -80,6 +80,7 @@ export interface DeliveryAttemptStore {
     attempt: number,
     startedAt: string,
   ): Promise<void>;
+  clear(scope: CaptureScope, destination?: string): Promise<void>;
 }
 
 export interface DeliveryDrainCache {

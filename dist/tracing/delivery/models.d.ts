@@ -50,6 +50,7 @@ export interface DeliveryAttempt extends CaptureScope {
 export interface DeliveryAttemptStore {
     count(scope: CaptureScope, destination: string): Promise<number>;
     record(scope: CaptureScope, destination: string, attempt: number, startedAt: string): Promise<void>;
+    clear(scope: CaptureScope, destination?: string): Promise<void>;
 }
 export interface DeliveryDrainCache {
     read(scope: CaptureScope): Promise<StoredCapture | undefined>;

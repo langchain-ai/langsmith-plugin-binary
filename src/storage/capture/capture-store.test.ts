@@ -1003,3 +1003,14 @@ function errorCode(error: unknown): number | undefined {
     ? error.code
     : undefined;
 }
+
+it("keeps a capture that changed after its turn was chosen for removal", async () => {
+  const root = temporaryRoot();
+  const store = createCaptureStore(root);
+  const captured = await store.capture(captureInput());
+  if (captured.status !== "published") throw new Error("capture was not published");
+  const stale = { ...captured.record, capturedAtMs: captured.record.capturedAtMs - 1 };
+
+  await expect(store.retireTurn("claude-code", "session-1", "turn-1", [stale], 0)).resolves.toBe(0);
+  await expect(store.read(captureInput())).resolves.toEqual(captured.record);
+});

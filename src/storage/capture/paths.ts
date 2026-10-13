@@ -4,6 +4,7 @@ import {
   CAPTURE_DIRECTORY,
   CAPTURE_INTEGRATION,
   CAPTURE_MAX_IDENTIFIER_BYTES,
+  CAPTURE_RETIRED_DIRECTORY,
 } from "./constants.js";
 import type { CaptureScope } from "./models.js";
 
@@ -47,6 +48,20 @@ export function eventPath(root: string, scope: CaptureScope): string {
     "turns",
     identifierHash(scope.turnId),
     "events",
+    `${identifierHash(scope.eventId)}.json`,
+  );
+}
+
+export function retiredPath(root: string, scope: CaptureScope): string {
+  return join(
+    captureDirectory(root),
+    "integrations",
+    scope.integration,
+    "sessions",
+    identifierHash(scope.sessionId),
+    "turns",
+    identifierHash(scope.turnId),
+    CAPTURE_RETIRED_DIRECTORY,
     `${identifierHash(scope.eventId)}.json`,
   );
 }

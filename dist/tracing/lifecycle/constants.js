@@ -13,6 +13,8 @@ export const LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY = "sessions";
 export const LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY = "accounts";
 export const LIFECYCLE_SNAPSHOT_LOCK_DIRECTORY = "lifecycle-snapshot-v1";
 export const LIFECYCLE_SNAPSHOT_LOCK_FILE = "capture";
+export const LIFECYCLE_RETIRE_AFTER_MS = 2 * 60 * 60 * 1000;
+export const LIFECYCLE_TOMBSTONE_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const LIFECYCLE_SNAPSHOT_REVISION_EVENT_ID_PREFIX = "run-snapshot-v1:";
 export const LIFECYCLE_SNAPSHOT_OPTIONAL_RUN_FIELDS = [
     "outputs",

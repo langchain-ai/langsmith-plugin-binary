@@ -1,4 +1,4 @@
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   DELIVERY_ATTEMPT_FILE,
   DELIVERY_ATTEMPT_VERSION,
@@ -18,6 +18,7 @@ import {
   readPrivateFile,
 } from "../../storage/capture/utils/atomic-file.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
+import { removeEmptyDirectories, removeFileIfPresent } from "../../utils/files/cleanup.js";
 
 export function createDeliveryAttemptStore(root: string): DeliveryAttemptStore {
   const storageRoot = resolve(root);
@@ -69,6 +70,36 @@ export function createDeliveryAttemptStore(root: string): DeliveryAttemptStore {
         JSON.stringify(record),
       );
       if (!published) throw new Error("Delivery attempt already exists");
+    },
+    async clear(scope, destination) {
+      validateAttemptScope(scope, destination ?? scope.eventId);
+      const eventDirectory = join(
+        storageRoot,
+        ...attemptSegments(scope, scope.eventId).slice(0, -3),
+      );
+      const destinationsDirectory = join(eventDirectory, "destinations");
+      const destinations =
+        destination === undefined
+          ? ((await listPrivateDirectory(storageRoot, destinationsDirectory)) ?? [])
+              .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+              .map((entry) => join(destinationsDirectory, entry.name))
+          : [join(destinationsDirectory, identifierHash(destination))];
+      for (const directory of destinations) {
+        const attempts = join(directory, "attempts");
+        for (const entry of (await listPrivateDirectory(storageRoot, attempts)) ?? []) {
+          if (DELIVERY_ATTEMPT_FILE.test(entry.name) || DELIVERY_STAGING_FILE.test(entry.name))
+            await removeFileIfPresent(join(attempts, entry.name));
+        }
+        await removeEmptyDirectories([attempts, directory]);
+      }
+      const turnDirectory = dirname(dirname(eventDirectory));
+      await removeEmptyDirectories([
+        destinationsDirectory,
+        eventDirectory,
+        dirname(eventDirectory),
+        turnDirectory,
+        dirname(turnDirectory),
+      ]);
     },
   };
 }

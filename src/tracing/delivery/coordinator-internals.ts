@@ -17,6 +17,7 @@ import {
 } from "./constants.js";
 import { createDeliveryAttemptStore } from "./attempt-store.js";
 import type {
+  DeliveryAttemptStore,
   DeliveryDependencyState,
   DeliveryDestination,
   DeliveryDrainCache,
@@ -79,6 +80,7 @@ export async function drainLocked(
       if (dependencyState === "dropped") {
         dropped += await recordDropped(
           drainCache,
+          attemptStore,
           candidate.scope,
           destination.id,
           DELIVERY_DEPENDENCY_DROPPED_REASON,
@@ -95,7 +97,7 @@ export async function drainLocked(
       now - (entry.record.sourceAgeStartedAtMs ?? entry.capturedAtMs) >= policy.maxAgeMs,
   );
   for (const candidate of expired) {
-    dropped += await dropPending(drainCache, candidate, DELIVERY_EXPIRED_REASON);
+    dropped += await dropPending(drainCache, attemptStore, candidate, DELIVERY_EXPIRED_REASON);
   }
   const fresh = active.filter(
     ({ entry }) =>
@@ -103,7 +105,7 @@ export async function drainLocked(
   );
   const overCapacity = Math.max(0, fresh.length - policy.maxEntries);
   for (const candidate of fresh.slice(0, overCapacity)) {
-    dropped += await dropPending(drainCache, candidate, DELIVERY_CAPACITY_REASON);
+    dropped += await dropPending(drainCache, attemptStore, candidate, DELIVERY_CAPACITY_REASON);
   }
   const sendable = fresh.slice(overCapacity);
   const attempted = request.attempted ?? new Set<string>();
@@ -124,6 +126,7 @@ export async function drainLocked(
         if (dependencyState === "dropped") {
           dropped += await recordDropped(
             drainCache,
+            attemptStore,
             candidate.scope,
             destination.id,
             DELIVERY_DEPENDENCY_DROPPED_REASON,
@@ -137,6 +140,7 @@ export async function drainLocked(
         if (attemptCount >= remainingAttempts) {
           dropped += await recordDropped(
             drainCache,
+            attemptStore,
             candidate.scope,
             destination.id,
             DELIVERY_RETRY_EXHAUSTED_REASON,
@@ -164,6 +168,7 @@ export async function drainLocked(
           if (attempt >= remainingAttempts) {
             dropped += await recordDropped(
               drainCache,
+              attemptStore,
               candidate.scope,
               destination.id,
               DELIVERY_RETRY_EXHAUSTED_REASON,
@@ -177,6 +182,7 @@ export async function drainLocked(
           destination: destination.id,
           outcome: "delivered",
         });
+        await attemptStore.clear(candidate.scope, destination.id);
         delivered += 1;
         progressed = true;
       }
@@ -243,23 +249,32 @@ function deliveryKey(scope: CaptureScope, destination: string): string {
 
 async function dropPending(
   drainCache: DeliveryDrainCache,
+  attemptStore: DeliveryAttemptStore,
   candidate: DeliveryPendingCandidate,
   reason: string,
 ): Promise<number> {
   let dropped = 0;
   for (const destination of candidate.pending) {
-    dropped += await recordDropped(drainCache, candidate.scope, destination.id, reason);
+    dropped += await recordDropped(
+      drainCache,
+      attemptStore,
+      candidate.scope,
+      destination.id,
+      reason,
+    );
   }
   return dropped;
 }
 
 async function recordDropped(
   drainCache: DeliveryDrainCache,
+  attemptStore: DeliveryAttemptStore,
   scope: CaptureScope,
   destination: string,
   reason: string,
 ): Promise<number> {
   await drainCache.recordOutcome({ ...scope, destination, outcome: "dropped", reason });
+  await attemptStore.clear(scope, destination);
   return 1;
 }
 
