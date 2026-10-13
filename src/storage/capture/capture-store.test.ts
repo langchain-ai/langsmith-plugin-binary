@@ -3,7 +3,7 @@ import { lstatSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { createCaptureStore } from "./capture-store.js";
@@ -52,10 +52,9 @@ function createDirectoryLink(target: string, path: string): void {
 async function runCaptureChild(root: string, input: CaptureInput): Promise<string> {
   const inputArg = Buffer.from(JSON.stringify(input)).toString("base64");
   const url = moduleUrl("dist/storage/capture/index.js");
-  const script = `const input=JSON.parse(Buffer.from(process.argv[1],"base64").toString());const store=await import(${JSON.stringify(url)});console.log(JSON.stringify(await store.createCaptureStore(process.argv[2]).capture(input)));`;
   const result = await execFileAsync(
     process.execPath,
-    ["--input-type=module", "-e", script, inputArg, root],
+    [fileURLToPath(new URL("./fixtures/capture-worker.mjs", import.meta.url)), url, inputArg, root],
     {
       env: childEnvironment(),
       timeout: 10_000,
@@ -376,10 +375,14 @@ describe("immutable capture storage", () => {
     ]);
     const contents = JSON.stringify(input);
     const url = moduleUrl("dist/storage/capture/utils/atomic-file.js");
-    const script = `const file=await import(${JSON.stringify(url)});await file.publishExclusive(process.argv[1],process.argv[2],()=>process.exit(71));`;
     const child = await execFileAsync(
       process.execPath,
-      ["--input-type=module", "-e", script, path, contents],
+      [
+        fileURLToPath(new URL("./fixtures/capture-crash-worker.mjs", import.meta.url)),
+        url,
+        path,
+        contents,
+      ],
       {
         env: childEnvironment(),
         timeout: 10_000,
