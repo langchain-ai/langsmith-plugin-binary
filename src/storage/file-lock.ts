@@ -30,6 +30,8 @@ import {
   FILE_LOCK_PROCESS_MISSING_CODE,
   FILE_LOCK_PROCESS_CHECK_SIGNAL,
   FILE_LOCK_RELEASE_MESSAGE,
+  FILE_LOCK_RENAME_RETRY_TIMEOUT_MS,
+  FILE_LOCK_RENAME_BUSY_CODE,
   FILE_LOCK_TEMP_PREFIX,
   FILE_LOCK_TEMP_SUFFIX,
   FILE_LOCK_TICKET_LIMIT_MESSAGE,
@@ -96,6 +98,7 @@ async function publishClaim(
   filePath: string,
   claim: FileLockClaim,
   create: boolean,
+  deadline?: number,
 ): Promise<void> {
   const temporaryPath = join(
     dirname(filePath),
@@ -107,7 +110,18 @@ async function publishClaim(
       mode: FILE_LOCK_FILE_MODE,
     });
     if (create) await link(temporaryPath, filePath);
-    else await rename(temporaryPath, filePath);
+    else {
+      const replacementDeadline = deadline ?? performance.now() + FILE_LOCK_RENAME_RETRY_TIMEOUT_MS;
+      for (;;) {
+        try {
+          await rename(temporaryPath, filePath);
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== FILE_LOCK_RENAME_BUSY_CODE) throw error;
+          await waitForNextScan(replacementDeadline, filePath);
+        }
+      }
+    }
   } finally {
     await removeFile(temporaryPath);
   }
@@ -236,7 +250,7 @@ async function acquireClaim(
       for (const peer of scan.claims) maxTicket = Math.max(maxTicket, peer.ticket);
       if (maxTicket >= Number.MAX_SAFE_INTEGER) throw new Error(FILE_LOCK_TICKET_LIMIT_MESSAGE);
       ownedClaim = { ...claim, choosing: false, ticket: maxTicket + 1 };
-      await publishClaim(ownPath, ownedClaim, false);
+      await publishClaim(ownPath, ownedClaim, false, waitForPeers ? deadline : undefined);
       break;
     }
 
