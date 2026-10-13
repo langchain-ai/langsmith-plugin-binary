@@ -24,6 +24,7 @@ import {
 
 const faults = vi.hoisted(() => ({
   gatePath: "",
+  observedGatePath: "",
   mkdirCodes: [] as string[],
   mkdirAttempts: 0,
   mkdirFailures: 0,
@@ -67,6 +68,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
       const stat = await actual.lstat(...args);
       if (String(args[0]) === faults.gatePath && stat.isDirectory()) {
+        faults.observedGatePath = String(args[0]);
         if (faults.removeGateDuringLstat === String(args[0])) {
           faults.removeGateDuringLstat = "";
           await actual.rmdir(String(args[0]));
@@ -159,6 +161,7 @@ function startSharedHolder(filePath: string) {
 
 beforeEach(() => {
   faults.gatePath = "";
+  faults.observedGatePath = "";
   faults.mkdirCodes = [];
   faults.mkdirAttempts = 0;
   faults.mkdirFailures = 0;
@@ -234,12 +237,13 @@ it("keeps a relative lock path stable when the working directory changes while w
 
 it("does not remove a replacement legacy gate during release", async () => {
   const area = createArea();
+  faults.gatePath = area.gatePath;
   const holder = startSharedHolder(area.filePath);
   await holder.entered;
   const pending = acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 1_000 });
   const originalGatePath = `${area.gatePath}.owned`;
   try {
-    await waitFor(() => existsSync(area.gatePath));
+    await waitFor(() => faults.observedGatePath === area.gatePath);
     renameSync(area.gatePath, originalGatePath);
     mkdirSync(area.gatePath, { mode: 0o700 });
     holder.finish();
