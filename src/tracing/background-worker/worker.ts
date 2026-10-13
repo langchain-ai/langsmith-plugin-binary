@@ -139,11 +139,13 @@ export function createBackgroundWorker(options: BackgroundWorkerOptions): Backgr
                     retryExhausted: false,
                     retryPending: false,
                     retryAttempted: false,
+                    deferred: false,
                   };
                 await clearOwnedLaunch(storageRoot, scope);
                 return processLocked(storageRoot, directory, scope, config, retryPolicy);
               })();
               if (pass.scopeMismatch) return "scope-mismatch";
+              if (pass.deferred) return "deferred";
               processed ||= pass.processed;
               retryExhausted ||= pass.retryExhausted;
               if (pass.retryAttempted) failures += 1;
@@ -157,7 +159,7 @@ export function createBackgroundWorker(options: BackgroundWorkerOptions): Backgr
           },
           { timeoutMs: BACKGROUND_WORKER_OWNER_WAIT_MS },
         );
-        if (result === "scope-mismatch") return result;
+        if (result === "scope-mismatch" || result === "deferred") return result;
         if (failures >= retryPolicy.maxAttempts) return "retry-exhausted";
         if (!(await hasPendingWork(storageRoot, directory))) return result;
       }
@@ -224,6 +226,7 @@ async function processLocked(
       retryExhausted: false,
       retryPending: false,
       retryAttempted: false,
+      deferred: false,
     };
   let attempts = state.attempts;
   if (attempts.length >= retryPolicy.maxAttempts) {
@@ -234,6 +237,7 @@ async function processLocked(
       retryExhausted: true,
       retryPending: false,
       retryAttempted: false,
+      deferred: false,
     };
   }
   for (;;) {
@@ -244,6 +248,7 @@ async function processLocked(
         retryExhausted: false,
         retryPending: false,
         retryAttempted: false,
+        deferred: false,
       };
     const result = await runTasks(options, scope);
     if (result === "scope-mismatch" || !(await matchesScope(options.resolveScope, scope)))
@@ -253,16 +258,18 @@ async function processLocked(
         retryExhausted: false,
         retryPending: false,
         retryAttempted: false,
+        deferred: false,
       };
     if (result === "progressed") continue;
-    if (result === "idle") {
-      await removeActiveMarker(storageRoot, scope, marker, attempts);
+    if (result === "idle" || result === "deferred") {
+      if (result === "idle") await removeActiveMarker(storageRoot, scope, marker, attempts);
       return {
         scopeMismatch: false,
         processed: true,
         retryExhausted: false,
         retryPending: false,
         retryAttempted: false,
+        deferred: result === "deferred",
       };
     }
     const attemptNumber = attempts.length + 1;
@@ -288,6 +295,7 @@ async function processLocked(
         retryExhausted: true,
         retryPending: false,
         retryAttempted: true,
+        deferred: false,
       };
     }
     return {
@@ -296,6 +304,7 @@ async function processLocked(
       retryExhausted: false,
       retryPending: true,
       retryAttempted: true,
+      deferred: false,
     };
   }
 }
@@ -305,6 +314,7 @@ async function runTasks(
   scope: BackgroundWorkerScope,
 ): Promise<BackgroundWorkerTaskRunResult> {
   let progressed = false;
+  let deferred = false;
   if (options.reconstructPending) {
     let result: BackgroundWorkerPassResult;
     try {
@@ -315,6 +325,7 @@ async function runTasks(
     if (!(await matchesScope(options.resolveScope, scope))) return "scope-mismatch";
     if (result === "retryable-failure") return result;
     progressed ||= result === "progressed";
+    deferred ||= result === "deferred";
   }
   let result: BackgroundWorkerPassResult;
   try {
@@ -324,7 +335,8 @@ async function runTasks(
   }
   if (result === "retryable-failure") return result;
   progressed ||= result === "progressed";
-  return progressed ? "progressed" : "idle";
+  deferred ||= result === "deferred";
+  return deferred ? "deferred" : progressed ? "progressed" : "idle";
 }
 
 async function readWorkerState(

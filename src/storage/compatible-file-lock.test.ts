@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -8,6 +9,7 @@ import {
   renameSync,
   rmdirSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -474,5 +476,54 @@ it("attempts both releases in order and reports both cleanup errors", async () =
     faults.rmdirPath = "";
     faults.unlinkPath = "";
     cleanDirectory(area.directory);
+  }
+});
+
+function exitedProcessId(): number {
+  const child = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], {
+    encoding: "utf8",
+  });
+  return Number(child.stdout);
+}
+
+it("reclaims a gate left by a dead holder and a dead or old legacy lock file", async () => {
+  const deadPid = exitedProcessId();
+  const deadDirectory = createArea();
+  mkdirSync(deadDirectory.gatePath, { mode: 0o700 });
+  writeFileSync(join(deadDirectory.gatePath, "owner"), String(deadPid));
+  const deadFile = createArea();
+  writeFileSync(deadFile.gatePath, String(deadPid));
+  const oldEmptyFile = createArea();
+  writeFileSync(oldEmptyFile.gatePath, "");
+  utimesSync(oldEmptyFile.gatePath, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  try {
+    for (const area of [deadDirectory, deadFile, oldEmptyFile]) {
+      const handle = await acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 1_000 });
+      expect(readFileSync(join(area.gatePath, "owner"), "utf8")).toBe(String(process.pid));
+      await handle.release();
+      expect(existsSync(area.gatePath)).toBe(false);
+      expect(readdirSync(area.directory).filter((name) => name.endsWith(".stale"))).toEqual([]);
+    }
+  } finally {
+    for (const area of [deadDirectory, deadFile, oldEmptyFile]) cleanDirectory(area.directory);
+  }
+});
+
+it("keeps waiting for a live legacy lock file and an old ownerless gate", async () => {
+  const liveFile = createArea();
+  writeFileSync(liveFile.gatePath, String(process.pid));
+  const ownerless = createArea();
+  mkdirSync(ownerless.gatePath, { mode: 0o700 });
+  for (const area of [liveFile, ownerless])
+    utimesSync(area.gatePath, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  try {
+    for (const area of [liveFile, ownerless])
+      await expect(
+        acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 60 }),
+      ).rejects.toBeInstanceOf(FileLockTimeoutError);
+    expect(readFileSync(liveFile.gatePath, "utf8")).toBe(String(process.pid));
+    expect(readdirSync(ownerless.gatePath)).toEqual([]);
+  } finally {
+    for (const area of [liveFile, ownerless]) cleanDirectory(area.directory);
   }
 });

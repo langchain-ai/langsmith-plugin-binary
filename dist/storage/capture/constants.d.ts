@@ -6,6 +6,7 @@ export declare const CAPTURE_SOURCE_SNAPSHOT_CLEANUP_VERSION = 1;
 export declare const CAPTURE_RECEIPT_VERSION = 1;
 export declare const CAPTURE_RECORD_LOCK_DIRECTORY = "record-lock-v1";
 export declare const CAPTURE_DIRECTORY_MODE = 448;
+export declare const CAPTURE_DIRECTORY_SETUP_ATTEMPTS = 3;
 export declare const CAPTURE_FILE_MODE = 384;
 export declare const CAPTURE_INTEGRATION: RegExp;
 export declare const CAPTURE_MAX_IDENTIFIER_BYTES = 4096;

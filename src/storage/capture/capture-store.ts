@@ -1,5 +1,5 @@
 import { lstat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { withFileLock } from "../index.js";
 import {
   CAPTURE_COMPACTED_RECORD_VERSION,
@@ -15,6 +15,7 @@ import {
 import type {
   CaptureCompactionResult,
   CaptureDependency,
+  CaptureDestinationRoutes,
   CaptureScope,
   CaptureStore,
   EnumeratedCapture,
@@ -41,6 +42,12 @@ import {
   replacePrivateFile,
 } from "./utils/atomic-file.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
+import {
+  removeEmptyDirectories,
+  removeFileIfPresent,
+  removeStaleFiles,
+} from "../../utils/files/cleanup.js";
+import { FILE_LOCK_DIRECTORY_SUFFIX } from "../constants.js";
 import {
   requireNonNegativeInteger,
   requireSafeEpochMilliseconds,
@@ -96,6 +103,9 @@ export function createCaptureStore(root: string): CaptureStore {
                 ),
               }),
           ...(dependencies === undefined ? {} : { dependencies }),
+          ...(input.destinationRoutes === undefined
+            ? {}
+            : { destinationRoutes: normalizeDestinationRoutes(input.destinationRoutes) }),
         };
         contents = canonicalJson(record);
       } catch (error) {
@@ -233,8 +243,8 @@ export function createCaptureStore(root: string): CaptureStore {
           if (!CAPTURE_EVENT_FILE.test(event.name)) throw new Error("Invalid capture event path");
           const path = join(eventDirectory, event.name);
           const record = await readRecord(storageRoot, path);
+          if (record === undefined) continue;
           if (
-            record === undefined ||
             record.integration !== integration ||
             record.sessionId !== sessionId ||
             identifierHash(record.turnId) !== turn.name ||
@@ -339,7 +349,82 @@ export function createCaptureStore(root: string): CaptureStore {
         return failure("STORAGE_FAILED", error);
       }
     },
+    retireTurn,
   };
+
+  async function retireTurn(
+    integration: string,
+    sessionId: string,
+    turnId: string,
+    expected: readonly StoredCapture[],
+    staleBeforeMs: number,
+  ): Promise<number> {
+    validateIntegration(integration);
+    validateIdentifier(sessionId, "session ID");
+    validateIdentifier(turnId, "turn ID");
+    const sessionHash = identifierHash(sessionId);
+    const turnHash = identifierHash(turnId);
+    const sessionDirectory = join(
+      captureDirectory(storageRoot),
+      "integrations",
+      integration,
+      "sessions",
+      sessionHash,
+    );
+    const turnDirectory = join(sessionDirectory, "turns", turnHash);
+    const receiptsDirectory = join(turnDirectory, "receipts");
+    const eventsDirectory = join(turnDirectory, "events");
+    const destinations = ((await listPrivateDirectory(storageRoot, receiptsDirectory)) ?? [])
+      .filter((entry) => entry.isDirectory() && CAPTURE_HASH.test(entry.name))
+      .map((entry) => join(receiptsDirectory, entry.name));
+    let removed = 0;
+    for (const record of expected) {
+      const scope = { integration, sessionId, turnId, eventId: record.eventId };
+      if (!sameScope(record, scope)) throw new Error("Retired capture is outside its turn");
+      await withRecordLock(storageRoot, scope, async () => {
+        const current = await readRecord(storageRoot, eventPath(storageRoot, scope));
+        if (current === undefined || canonicalJson(current) !== canonicalJson(record)) return;
+        for (const destination of destinations)
+          await removeFileIfPresent(join(destination, `${identifierHash(record.eventId)}.json`));
+        await removeFileIfPresent(eventPath(storageRoot, scope));
+        removed += 1;
+      });
+    }
+    for (const directory of [eventsDirectory, ...destinations])
+      await removeStaleFiles(directory, CAPTURE_STAGING_FILE, staleBeforeMs);
+    await removeEmptyDirectories([
+      ...destinations,
+      receiptsDirectory,
+      eventsDirectory,
+      turnDirectory,
+      join(sessionDirectory, "turns"),
+      sessionDirectory,
+    ]);
+    const lockTurnDirectory = join(
+      storageRoot,
+      CAPTURE_RECORD_LOCK_DIRECTORY,
+      "integrations",
+      integration,
+      "sessions",
+      sessionHash,
+      "turns",
+      turnHash,
+    );
+    await removeEmptyDirectories([
+      ...expected.map((record) =>
+        join(
+          lockTurnDirectory,
+          "events",
+          `${identifierHash(record.eventId)}.lock${FILE_LOCK_DIRECTORY_SUFFIX}`,
+        ),
+      ),
+      join(lockTurnDirectory, "events"),
+      lockTurnDirectory,
+      dirname(lockTurnDirectory),
+      dirname(dirname(lockTurnDirectory)),
+    ]);
+    return removed;
+  }
 
   async function ensureDirectories(
     integration: string,
@@ -421,8 +506,8 @@ async function enumerateTurnCaptures(
     if (!CAPTURE_EVENT_FILE.test(event.name)) throw new Error("Invalid capture event path");
     const path = join(eventDirectory, event.name);
     const record = await readRecord(root, path);
+    if (record === undefined) continue;
     if (
-      record === undefined ||
       record.integration !== integration ||
       record.sessionId !== sessionId ||
       record.turnId !== turnId ||
@@ -468,8 +553,8 @@ async function enumerateSession(
       if (!CAPTURE_EVENT_FILE.test(event.name)) throw new Error("Invalid capture event path");
       const path = join(eventDirectory, event.name);
       const record = await readRecord(root, path);
+      if (record === undefined) continue;
       if (
-        record === undefined ||
         record.integration !== integration ||
         identifierHash(record.sessionId) !== sessionHash ||
         identifierHash(record.turnId) !== turn.name ||
@@ -574,6 +659,7 @@ async function readRecord(root: string, path: string): Promise<StoredCapture | u
   };
   validateScope(scope);
   const dependencies = normalizeDependencies(value.dependencies, scope);
+  if ("destinationRoutes" in value) normalizeDestinationRoutes(value.destinationRoutes);
   const normalizedPayload = canonicalValue(value.normalizedPayload, new Set<object>());
   const compaction =
     value.version === CAPTURE_COMPACTED_RECORD_VERSION
@@ -673,6 +759,31 @@ function normalizeDependencies(
     seen.add(key);
     return dependency;
   });
+}
+
+function normalizeDestinationRoutes(value: unknown): CaptureDestinationRoutes {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new TypeError("Invalid capture destination routes");
+  const routes: CaptureDestinationRoutes = {};
+  for (const [destination, route] of Object.entries(value)) {
+    validateIdentifier(destination, "destination");
+    if (route === null || typeof route !== "object" || Array.isArray(route))
+      throw new TypeError("Invalid capture destination route");
+    const { projectName, sourceProjectName, ...extra } = route as Record<string, unknown>;
+    if (Object.keys(extra).length > 0) throw new TypeError("Invalid capture destination route");
+    if (typeof projectName !== "string") throw new TypeError("Invalid capture route project");
+    validateIdentifier(projectName, "route project");
+    if (sourceProjectName !== undefined) {
+      if (typeof sourceProjectName !== "string")
+        throw new TypeError("Invalid capture route project");
+      validateIdentifier(sourceProjectName, "route project");
+    }
+    routes[destination] = {
+      projectName,
+      ...(sourceProjectName === undefined ? {} : { sourceProjectName }),
+    };
+  }
+  return routes;
 }
 
 function sameScope(record: CaptureScope, scope: CaptureScope): boolean {

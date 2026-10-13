@@ -11,13 +11,22 @@ export function createLangSmithUploadWriter(options) {
     const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
     const byId = new Map(resolved.destinations.map((destination) => [destination.id, destination]));
     const clientsByMode = new Map();
+    const routes = Object.freeze(Object.fromEntries(resolved.destinations.map(({ id, projectName, sourceProjectName }) => [
+        id,
+        Object.freeze({
+            projectName,
+            ...(sourceProjectName === undefined ? {} : { sourceProjectName }),
+        }),
+    ])));
     return Object.freeze({
         accountFingerprint: resolved.accountFingerprint,
         destinations: Object.freeze(destinations),
-        async send(submission, destinationId) {
-            const destination = byId.get(destinationId);
-            if (!destination)
+        routes,
+        async send(submission, destinationId, route) {
+            const configured = byId.get(destinationId);
+            if (!configured)
                 throw new TypeError("Unknown upload destination");
+            const destination = route === undefined ? configured : routedDestination(configured, route);
             validateSubmission(submission);
             const redactedFields = normalizedRedactedFields(submission.redactedFields).filter((field) => submission.privacyMode === "full" &&
                 !(submission.operation === "patch" &&
@@ -64,6 +73,14 @@ export function createLangSmithUploadWriter(options) {
             }
         },
     });
+}
+function routedDestination(destination, route) {
+    const routed = { ...destination, projectName: route.projectName };
+    if (route.sourceProjectName === undefined)
+        delete routed.sourceProjectName;
+    else
+        routed.sourceProjectName = route.sourceProjectName;
+    return routed;
 }
 function patchAlreadyReceived(error) {
     return error?.status === UPLOAD_PATCH_ALREADY_RECEIVED_STATUS;

@@ -1,0 +1,2 @@
+export const CLEANUP_MISSING_CODE = "ENOENT";
+export const CLEANUP_IGNORED_DIRECTORY_CODES = ["ENOENT", "ENOTEMPTY", "EEXIST"] as const;

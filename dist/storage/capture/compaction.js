@@ -11,6 +11,7 @@ export function captureContentDigest(record) {
     delete content.capturedAtMs;
     delete content.compaction;
     delete content.sourceSnapshotCleanup;
+    delete content.destinationRoutes;
     return createHash("sha256").update(canonicalJson(content)).digest("hex");
 }
 export function compactCaptureRecord(record, originalContentDigest) {

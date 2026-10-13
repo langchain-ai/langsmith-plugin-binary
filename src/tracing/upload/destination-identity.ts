@@ -68,6 +68,7 @@ function resolveDestination(
   config: LangSmithUploadDestinationConfig,
   sourceProjectName?: string,
   updates?: Record<string, unknown>,
+  replicaProjectName?: string | null,
 ): ResolvedUploadDestinationIdentity {
   if (!config || typeof config !== "object") throw new TypeError("Invalid upload destination");
   if (!hasApiKey(config.apiKey)) {
@@ -82,9 +83,10 @@ function resolveDestination(
   const identity = JSON.stringify({
     apiKey: config.apiKey,
     apiUrl,
-    projectName,
     workspaceId: workspaceId ?? null,
-    ...(sourceProjectName === undefined ? {} : { sourceProjectName, updates: updates ?? null }),
+    ...(sourceProjectName === undefined
+      ? {}
+      : { projectName: replicaProjectName ?? null, updates: updates ?? null }),
   });
   const id = `${UPLOAD_DESTINATION_ID_PREFIX}${fingerprint(identity)}`;
   return {
@@ -115,6 +117,9 @@ function resolveReplicaDestination(
     },
     primaryProjectName,
     updates,
+    replica.projectName === undefined
+      ? null
+      : normalizeRequiredText(replica.projectName, "project name"),
   );
 }
 

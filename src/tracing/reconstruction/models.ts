@@ -7,7 +7,11 @@ import type {
 } from "../../storage/capture/models.js";
 import type { DeliveryPolicy } from "../delivery/models.js";
 import type { SavedCaptureResult } from "../capture-wake-models.js";
-import type { LifecycleBridge, LifecycleTurnEvidence } from "../lifecycle/models.js";
+import type {
+  LifecycleBridge,
+  LifecycleTurnEvidence,
+  RetireSessionsBaseOptions,
+} from "../lifecycle/models.js";
 import type { PreparedRunSubmission } from "../upload/models.js";
 import type { RECONSTRUCTION_DEFERRED_REASON } from "./constants.js";
 
@@ -72,6 +76,10 @@ export interface ReconstructionWorkerOptions {
   bridge: Pick<LifecycleBridge, "accountFingerprint" | "capture">;
   reconstruct: ReconstructionCallback;
   policy?: Partial<DeliveryPolicy>;
+}
+
+export interface RetireReconstructionJobsOptions extends RetireSessionsBaseOptions {
+  accountFingerprint: string;
 }
 
 export interface ReconstructionDrainOptions {

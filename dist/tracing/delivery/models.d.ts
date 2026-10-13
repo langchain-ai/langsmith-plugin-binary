@@ -23,6 +23,7 @@ export type DeliveryTransport = (record: StoredCapture, destination: DeliveryDes
 export interface DrainOptions {
     writer: DeliveryWriter;
     now?: number;
+    attempted?: Set<string>;
 }
 export interface DeliveryCoordinator {
     capture(input: DeliveryCaptureInput): Promise<CaptureWriteResult>;
@@ -49,6 +50,7 @@ export interface DeliveryAttempt extends CaptureScope {
 export interface DeliveryAttemptStore {
     count(scope: CaptureScope, destination: string): Promise<number>;
     record(scope: CaptureScope, destination: string, attempt: number, startedAt: string): Promise<void>;
+    clear(scope: CaptureScope, destination?: string): Promise<void>;
 }
 export interface DeliveryDrainCache {
     read(scope: CaptureScope): Promise<StoredCapture | undefined>;

@@ -15,6 +15,13 @@ export interface CaptureScope {
 
 export type CaptureDependency = CaptureScope;
 
+export interface CaptureDestinationRoute {
+  projectName: string;
+  sourceProjectName?: string;
+}
+
+export type CaptureDestinationRoutes = Record<string, CaptureDestinationRoute>;
+
 export interface CaptureInput {
   integration: string;
   sessionId: string;
@@ -29,6 +36,7 @@ export interface CaptureInput {
   sourceAgeStartedAtMs?: number;
   priorDeliveryAttempts?: number;
   dependencies?: CaptureDependency[];
+  destinationRoutes?: CaptureDestinationRoutes;
 }
 
 export interface StoredCapture extends CaptureInput {
@@ -146,4 +154,11 @@ export interface CaptureStore {
   enumerateSessions(integration: string): Promise<EnumeratedCaptureSession[]>;
   recordOutcome(input: OutcomeInput): Promise<OutcomeWriteResult>;
   readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
+  retireTurn(
+    integration: string,
+    sessionId: string,
+    turnId: string,
+    expected: readonly StoredCapture[],
+    staleBeforeMs: number,
+  ): Promise<number>;
 }

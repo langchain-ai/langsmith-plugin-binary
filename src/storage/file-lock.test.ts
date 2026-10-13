@@ -68,6 +68,15 @@ if (mode === "hold") {
     writeFileSync(marker + ".failed", String(error.stack ?? error));
     process.exitCode = 4;
   }
+} else if (mode === "race") {
+  writeFileSync(marker + ".ready", "ready");
+  while (!existsSync(startPath)) await delay(1);
+  const handle = await api.tryAcquireFileLock(lockPath);
+  writeFileSync(marker, handle ? "owned" : "busy");
+  if (handle) {
+    while (!existsSync(gate)) await delay(5);
+    await handle.release();
+  }
 } else if (mode === "die") {
   const handle = await api.tryAcquireFileLock(lockPath);
   if (!handle) process.exit(5);
@@ -422,3 +431,36 @@ it("reclaims a killed owner while fresh processes contend", async () => {
     cleanupArea(area);
   }
 }, 20_000);
+
+it("lets exactly one of several simultaneous try-acquirers win", async () => {
+  for (let trial = 0; trial < 8; trial += 1) {
+    const area = createArea();
+    const children = new Set<ChildProcess>();
+    const ids = Array.from({ length: 4 }, (_, index) => `racer-${index}`);
+    const startPath = join(area.directory, "racers.start");
+    const gate = join(area.directory, "racers.gate");
+    try {
+      const racers = ids.map((id) =>
+        spawnWorker(area, "race", [join(area.directory, id), gate, "0", id, "", startPath]),
+      );
+      for (const racer of racers) children.add(racer);
+      await waitFor(() => ids.every((id) => filesWithPrefix(area, `${id}.ready`).length > 0));
+      writeFileSync(startPath, "go");
+      const outcomes = await waitFor(() => {
+        const read = ids.map((id) =>
+          filesWithPrefix(area, id).includes(id)
+            ? readFileSync(join(area.directory, id), "utf-8")
+            : "",
+        );
+        return read.every((outcome) => outcome !== "") ? read : false;
+      });
+      expect(outcomes.filter((outcome) => outcome === "owned")).toHaveLength(1);
+      writeFileSync(gate, "go");
+      expect((await Promise.all(racers.map(waitForExit))).every(Boolean)).toBe(true);
+    } finally {
+      writeFileSync(gate, "go");
+      await stopChildren(children);
+      cleanupArea(area);
+    }
+  }
+}, 30_000);

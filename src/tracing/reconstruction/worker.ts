@@ -1,5 +1,6 @@
 import { join, resolve } from "node:path";
 import { tryAcquireFileLock } from "../../storage/index.js";
+import { retireReconstructionJobs } from "./cleanup.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import type {
   CaptureInput,
@@ -227,6 +228,15 @@ export function createReconstructionWorker(
           );
           if (result === "deferred") counts.deferred += 1;
         }
+        await retireReconstructionJobs({
+          storageRoot,
+          integration,
+          sessionId,
+          accountFingerprint,
+          store: captureStore,
+          attempts: attemptStore,
+          now,
+        });
       } finally {
         await lock.release();
       }

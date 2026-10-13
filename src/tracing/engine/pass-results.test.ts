@@ -38,7 +38,7 @@ it("retries busy drains and loops only after persisted work changes", () => {
       pending: 1,
       accountMismatch: 0,
     }),
-  ).toBe("progressed");
+  ).toBe("deferred");
   expect(lifecyclePassResult({ status: "busy", settlement: { captured: 0, turns: [] } })).toBe(
     "retryable-failure",
   );

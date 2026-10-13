@@ -2508,7 +2508,7 @@ describe("durable run lifecycle bridge", () => {
       createLifecycleBridge({
         ...options,
         writer: {
-          destinations: [{ ...destination(), projectName: "other-project" }],
+          destinations: [{ ...destination(), apiKey: "synthetic-other-account-key" }],
           redact: false,
         },
       }).captureSnapshot(snapshotInput("event-snapshot-account-change", {})),

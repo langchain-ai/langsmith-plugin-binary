@@ -49,6 +49,7 @@ export function createDeliveryCoordinator(
       const drainRequest = {
         writer,
         ...(request.now === undefined ? {} : { now: request.now }),
+        ...(request.attempted === undefined ? {} : { attempted: request.attempted }),
       };
       validateDrainRequest(drainRequest);
       const sessionDirectory = await ensurePrivateDirectory(storageRoot, [

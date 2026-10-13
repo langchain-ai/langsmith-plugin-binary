@@ -33,7 +33,7 @@ export async function drainLocked(captureStore, attemptStore, integration, sessi
         for (const destination of candidate.pending) {
             const dependencyState = await dependenciesForDestination(drainCache, candidate.entry.record, destination.id);
             if (dependencyState === "dropped") {
-                dropped += await recordDropped(drainCache, candidate.scope, destination.id, DELIVERY_DEPENDENCY_DROPPED_REASON);
+                dropped += await recordDropped(drainCache, attemptStore, candidate.scope, destination.id, DELIVERY_DEPENDENCY_DROPPED_REASON);
             }
             else {
                 pending.push(destination);
@@ -44,15 +44,15 @@ export async function drainLocked(captureStore, attemptStore, integration, sessi
     const active = candidates.filter((candidate) => candidate.pending.length > 0);
     const expired = active.filter(({ entry }) => now - (entry.record.sourceAgeStartedAtMs ?? entry.capturedAtMs) >= policy.maxAgeMs);
     for (const candidate of expired) {
-        dropped += await dropPending(drainCache, candidate, DELIVERY_EXPIRED_REASON);
+        dropped += await dropPending(drainCache, attemptStore, candidate, DELIVERY_EXPIRED_REASON);
     }
     const fresh = active.filter(({ entry }) => now - (entry.record.sourceAgeStartedAtMs ?? entry.capturedAtMs) < policy.maxAgeMs);
     const overCapacity = Math.max(0, fresh.length - policy.maxEntries);
     for (const candidate of fresh.slice(0, overCapacity)) {
-        dropped += await dropPending(drainCache, candidate, DELIVERY_CAPACITY_REASON);
+        dropped += await dropPending(drainCache, attemptStore, candidate, DELIVERY_CAPACITY_REASON);
     }
     const sendable = fresh.slice(overCapacity);
-    const attempted = new Set();
+    const attempted = request.attempted ?? new Set();
     let progressed;
     do {
         progressed = false;
@@ -66,14 +66,14 @@ export async function drainLocked(captureStore, attemptStore, integration, sessi
                     continue;
                 attempted.add(key);
                 if (dependencyState === "dropped") {
-                    dropped += await recordDropped(drainCache, candidate.scope, destination.id, DELIVERY_DEPENDENCY_DROPPED_REASON);
+                    dropped += await recordDropped(drainCache, attemptStore, candidate.scope, destination.id, DELIVERY_DEPENDENCY_DROPPED_REASON);
                     progressed = true;
                     continue;
                 }
                 const attemptCount = await attemptStore.count(candidate.scope, destination.id);
                 const remainingAttempts = policy.maxAttempts - (candidate.entry.record.priorDeliveryAttempts ?? 0);
                 if (attemptCount >= remainingAttempts) {
-                    dropped += await recordDropped(drainCache, candidate.scope, destination.id, DELIVERY_RETRY_EXHAUSTED_REASON);
+                    dropped += await recordDropped(drainCache, attemptStore, candidate.scope, destination.id, DELIVERY_RETRY_EXHAUSTED_REASON);
                     progressed = true;
                     continue;
                 }
@@ -87,7 +87,7 @@ export async function drainLocked(captureStore, attemptStore, integration, sessi
                 catch {
                     failed += 1;
                     if (attempt >= remainingAttempts) {
-                        dropped += await recordDropped(drainCache, candidate.scope, destination.id, DELIVERY_RETRY_EXHAUSTED_REASON);
+                        dropped += await recordDropped(drainCache, attemptStore, candidate.scope, destination.id, DELIVERY_RETRY_EXHAUSTED_REASON);
                         progressed = true;
                     }
                     continue;
@@ -97,6 +97,7 @@ export async function drainLocked(captureStore, attemptStore, integration, sessi
                     destination: destination.id,
                     outcome: "delivered",
                 });
+                await attemptStore.clear(candidate.scope, destination.id);
                 delivered += 1;
                 progressed = true;
             }
@@ -151,15 +152,16 @@ function deliveryKey(scope, destination) {
         destination,
     ]);
 }
-async function dropPending(drainCache, candidate, reason) {
+async function dropPending(drainCache, attemptStore, candidate, reason) {
     let dropped = 0;
     for (const destination of candidate.pending) {
-        dropped += await recordDropped(drainCache, candidate.scope, destination.id, reason);
+        dropped += await recordDropped(drainCache, attemptStore, candidate.scope, destination.id, reason);
     }
     return dropped;
 }
-async function recordDropped(drainCache, scope, destination, reason) {
+async function recordDropped(drainCache, attemptStore, scope, destination, reason) {
     await drainCache.recordOutcome({ ...scope, destination, outcome: "dropped", reason });
+    await attemptStore.clear(scope, destination);
     return 1;
 }
 export function createDrainCache(store) {

@@ -1,10 +1,15 @@
 import { join, resolve } from "node:path";
 import { tryAcquireFileLock } from "../../storage/index.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
-import type { CaptureScope, StoredCapture } from "../../storage/capture/models.js";
+import type {
+  CaptureDestinationRoute,
+  CaptureScope,
+  StoredCapture,
+} from "../../storage/capture/models.js";
 import { identifierHash } from "../../storage/capture/paths.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import { createDeliveryCoordinator } from "../delivery/index.js";
+import { createDeliveryAttemptStore } from "../delivery/attempt-store.js";
 import type { DeliveryDestination } from "../delivery/models.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import { wakeCapturedWork } from "../capture-wake.js";
@@ -43,6 +48,7 @@ import {
 import { projectSubmission, projectTurnEvidence } from "./projection.js";
 import { captureLifecycleSnapshot } from "./snapshot.js";
 import { compactSettledCaptures } from "./retention.js";
+import { retireDeliveredTurns } from "./cleanup.js";
 import {
   deriveAttributionReadiness,
   indexCaptureSources,
@@ -62,6 +68,7 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
     ...(options.policy === undefined ? {} : { policy: options.policy }),
   });
   const writer = createLangSmithUploadWriter(options.writer);
+  const attemptStore = createDeliveryAttemptStore(storageRoot);
   const capture = async (input: LifecycleCaptureInput): Promise<LifecycleCaptureResult> => {
     const captureRecord = requirePlainRecord(
       snapshotData(requirePlainRecord(input, "Lifecycle capture")),
@@ -113,6 +120,7 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
         ...(sourceAgeStartedAtMs === undefined ? {} : { sourceAgeStartedAtMs }),
         ...(priorDeliveryAttempts === undefined ? {} : { priorDeliveryAttempts }),
         ...(dependencies === undefined ? {} : { dependencies }),
+        destinationRoutes: writer.routes,
       });
     let result = await captureProjected(projected.value);
     if (
@@ -172,6 +180,7 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
       if (settlementLock === undefined)
         return { status: "busy" as const, settlement: { captured: 0, turns: [] } };
       let drainResult: LifecycleDrainResult;
+      const attempted = new Set<string>();
       try {
         const drainOnce = async () => {
           const sourceSnapshot = (await captureStore.enumerate(integration, sessionId)).map(
@@ -200,9 +209,14 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
                   readOutcome: (scope, destinationId) =>
                     captureStore.readOutcome(scope, destinationId),
                 });
-                await writer.send(outgoing, destination.id);
+                await writer.send(
+                  outgoing,
+                  destination.id,
+                  capturedRoute(record, sourceSnapshot, destination.id),
+                );
               },
             },
+            attempted,
             ...(input.now === undefined ? {} : { now: input.now }),
           });
         };
@@ -249,6 +263,16 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
           eligibleCaptures: settlementCaptures,
           readOutcome,
         });
+        await retireDeliveredTurns({
+          storageRoot,
+          integration,
+          sessionId,
+          destinationFingerprint: writer.accountFingerprint,
+          destinations: writer.destinations,
+          store: captureStore,
+          attempts: attemptStore,
+          now: input.now ?? Date.now(),
+        });
         drainResult = { ...result, settlement };
       } finally {
         await settlementLock.release();
@@ -259,6 +283,20 @@ export function createLifecycleBridge(options: LifecycleBridgeOptions): Lifecycl
       return drainResult;
     },
   });
+}
+
+function capturedRoute(
+  record: StoredCapture,
+  sourceSnapshot: StoredCapture[],
+  destination: string,
+): CaptureDestinationRoute | undefined {
+  return (
+    record.destinationRoutes?.[destination] ??
+    sourceSnapshot.find(
+      (source) =>
+        source.runId === record.runId && source.destinationRoutes?.[destination] !== undefined,
+    )?.destinationRoutes?.[destination]
+  );
 }
 
 function suppliedRunIdentityFields(value: unknown) {

@@ -38,7 +38,7 @@ export function resolveUploadDestinationIdentities(options) {
     }))}`;
     return { accountFingerprint, destinations };
 }
-function resolveDestination(config, sourceProjectName, updates) {
+function resolveDestination(config, sourceProjectName, updates, replicaProjectName) {
     if (!config || typeof config !== "object")
         throw new TypeError("Invalid upload destination");
     if (!hasApiKey(config.apiKey)) {
@@ -52,9 +52,10 @@ function resolveDestination(config, sourceProjectName, updates) {
     const identity = JSON.stringify({
         apiKey: config.apiKey,
         apiUrl,
-        projectName,
         workspaceId: workspaceId ?? null,
-        ...(sourceProjectName === undefined ? {} : { sourceProjectName, updates: updates ?? null }),
+        ...(sourceProjectName === undefined
+            ? {}
+            : { projectName: replicaProjectName ?? null, updates: updates ?? null }),
     });
     const id = `${UPLOAD_DESTINATION_ID_PREFIX}${fingerprint(identity)}`;
     return {
@@ -77,7 +78,9 @@ function resolveReplicaDestination(replica, primary, primaryProjectName) {
         apiUrl: replica.apiUrl ?? primary.apiUrl,
         projectName: replica.projectName ?? primary.projectName,
         ...(workspaceId === undefined ? {} : { workspaceId }),
-    }, primaryProjectName, updates);
+    }, primaryProjectName, updates, replica.projectName === undefined
+        ? null
+        : normalizeRequiredText(replica.projectName, "project name"));
 }
 function snapshotReplicaUpdates(value) {
     if (value === undefined)

@@ -43,6 +43,7 @@ export type DeliveryTransport = (
 export interface DrainOptions {
   writer: DeliveryWriter;
   now?: number;
+  attempted?: Set<string>;
 }
 
 export interface DeliveryCoordinator {
@@ -79,6 +80,7 @@ export interface DeliveryAttemptStore {
     attempt: number,
     startedAt: string,
   ): Promise<void>;
+  clear(scope: CaptureScope, destination?: string): Promise<void>;
 }
 
 export interface DeliveryDrainCache {
