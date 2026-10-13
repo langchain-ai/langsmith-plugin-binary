@@ -59,6 +59,10 @@
     "./tracing/upload-identity": {
       "types": "./dist/tracing/upload/identity.d.ts",
       "default": "./dist/tracing/upload/identity.js"
+    },
+    "./tracing": {
+      "types": "./dist/tracing/index.d.ts",
+      "default": "./dist/tracing/index.js"
     }
   },
   "publishConfig": {
