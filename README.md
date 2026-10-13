@@ -1,8 +1,14 @@
-# langsmith-plugin-binary
+# @langchain/plugins-base
 
-Shared build and sign pipeline for the LangSmith plugin binaries.
+Shared build and signing pipeline for LangChain plugin binaries.
 
-Releases land in each plugin's own repo. This one publishes nothing.
+Runtime modules support Node 20. The CLI, build, lint and test tooling uses Node 22 or newer.
+
+Plugin binary releases land in each plugin's own repo. Shared settings are available from `@langchain/plugins-base/settings`:
+
+```ts
+import { parseCommonConfig } from "@langchain/plugins-base/settings";
+```
 
 ## Onboarded plugins
 
