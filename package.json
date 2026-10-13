@@ -71,6 +71,18 @@
     "./tracing/settlement": {
       "types": "./dist/tracing/settlement/index.d.ts",
       "default": "./dist/tracing/settlement/index.js"
+    },
+    "./tracing/delivery": {
+      "types": "./dist/tracing/delivery/index.d.ts",
+      "default": "./dist/tracing/delivery/index.js"
+    },
+    "./tracing/background-worker": {
+      "types": "./dist/tracing/background-worker/index.d.ts",
+      "default": "./dist/tracing/background-worker/index.js"
+    },
+    "./tracing/reconstruction": {
+      "types": "./dist/tracing/reconstruction/index.d.ts",
+      "default": "./dist/tracing/reconstruction/index.js"
     }
   },
   "publishConfig": {
