@@ -1,3 +1,4 @@
+export { buildCodingAgentMetadata, trustedCodingAgentMetadata } from "./builder.js";
 export {
   CODING_AGENT_AGENT_TYPES,
   CODING_AGENT_PURPOSE,
@@ -10,6 +11,8 @@ export {
 } from "./integration-constants.js";
 export { METADATA_MODE_NAME, METADATA_MODE_STATUS_VALUES } from "./metadata-export-constants.js";
 export { CODING_AGENT_V1_CONTRACT } from "./contract.js";
+export { prepareCodingAgentMetadataProvenance } from "./provenance.js";
+export { metadataForMode, projectCodingAgentMetadata } from "./privacy.js";
 export {
   normalizeProviderMetadata,
   validateCodingAgentMetadata,
@@ -25,7 +28,7 @@ export type {
   CodingAgentMetadataProvenanceResult,
   CodingAgentRunType,
   CodingAgentSchemaIntegration,
-  CodingAgentV1Contract,
   MetadataValidationIssue,
   ProviderMetadata,
+  CodingAgentV1Contract,
 } from "./models.js";
