@@ -15,6 +15,32 @@ export interface CaptureInput {
 }
 export interface StoredCapture extends CaptureInput {
     version: number;
+    capturedAtMs: number;
+    compaction?: CompactedCapturePayload;
+}
+export type CompactedFieldDigest = {
+    state: "preserve";
+} | {
+    state: "absent";
+} | {
+    state: "value";
+    digest: string;
+};
+export interface CompactedCapturePayload {
+    version: 1;
+    originalContentDigest: string;
+    fields: {
+        inputs: CompactedFieldDigest;
+        outputs: CompactedFieldDigest;
+    };
+}
+export interface CaptureCompactionFields {
+    inputs: CompactedFieldDigest;
+    outputs: CompactedFieldDigest;
+}
+export interface CaptureCompactionPayload {
+    value: JsonValue;
+    fields: CaptureCompactionFields;
 }
 export type StorageFailure = {
     status: "failed";
@@ -35,6 +61,17 @@ export type CaptureWriteResult = {
     record: StoredCapture;
 } | {
     status: "conflict";
+} | StorageFailure;
+export type CaptureCompactionResult = {
+    status: "compacted";
+    record: StoredCapture;
+} | {
+    status: "already-compacted";
+    record: StoredCapture;
+} | {
+    status: "changed";
+} | {
+    status: "missing-capture";
 } | StorageFailure;
 export interface OutcomeInput extends CaptureScope {
     destination: string;
@@ -69,6 +106,7 @@ export type OutcomeReadResult = {
 } | StorageFailure;
 export interface CaptureStore {
     capture(input: CaptureInput): Promise<CaptureWriteResult>;
+    compact(scope: CaptureScope, expected: StoredCapture): Promise<CaptureCompactionResult>;
     read(scope: CaptureScope): Promise<StoredCapture | undefined>;
     recordOutcome(input: OutcomeInput): Promise<OutcomeWriteResult>;
     readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
