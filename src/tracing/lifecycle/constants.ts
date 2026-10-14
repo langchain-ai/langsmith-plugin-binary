@@ -24,3 +24,9 @@ export const LIFECYCLE_SNAPSHOT_OPTIONAL_RUN_FIELDS = [
   "reference_example_id",
 ] as const;
 export const LIFECYCLE_TURN_CLOSURE_STATES = ["open", "provisional", "authoritative"] as const;
+
+export const LIFECYCLE_RUN_CONTEXT_FIELDS = [
+  ["parent_run_id", "Parent run ID"],
+  ["trace_id", "Trace ID"],
+  ["dotted_order", "Dotted order"],
+] as const;
