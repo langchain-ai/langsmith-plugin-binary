@@ -60,3 +60,16 @@ export interface SdkReplica {
   projectName?: string;
   updates?: Record<string, unknown>;
 }
+
+export interface CommonConfigFileOptions {
+  cwd: string;
+  home: string | undefined;
+  harnessDirectory: string;
+}
+
+export interface CommonConfigFiles {
+  harness: CommonConfigResult;
+  root: CommonConfigResult;
+  user: CommonConfigResult;
+  userRoot: CommonConfigResult;
+}

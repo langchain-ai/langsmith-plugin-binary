@@ -1,6 +1,8 @@
 export { COMMON_BOOLEAN_SETTINGS } from "./constants.js";
 export type {
   CommonConfig,
+  CommonConfigFileOptions,
+  CommonConfigFiles,
   CommonConfigResult,
   CommonReplica,
   CommonRedactRule,
@@ -9,5 +11,6 @@ export {
   mergeCommonConfig,
   parseCommonConfig,
   readCommonConfigFile,
+  readCommonConfigFiles,
   toSdkReplicas,
 } from "./common-config.js";

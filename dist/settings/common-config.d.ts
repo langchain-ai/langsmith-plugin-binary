@@ -1,8 +1,9 @@
-import type { CommonConfigResult, CommonConfigSources, CommonReplica, MergeCommonConfigOptions, MergedCommonConfig, SdkReplica } from "./models.js";
+import type { CommonConfigFileOptions, CommonConfigFiles, CommonConfigResult, CommonConfigSources, CommonReplica, MergeCommonConfigOptions, MergedCommonConfig, SdkReplica } from "./models.js";
 /** Parse a decoded JSON value (not JSON text). Unknown/adapter fields do not affect common validity. */
 export declare function parseCommonConfig(value: unknown): CommonConfigResult;
 /** Follow readable symlinks, but never read directories/devices/FIFOs. Only true ENOENT is absent. */
 export declare function readCommonConfigFile(path: string): CommonConfigResult;
+export declare function readCommonConfigFiles(options: CommonConfigFileOptions): CommonConfigFiles;
 /**
  * Metadata shallow-merges per key. envFirst opts into uniform environment-first
  * precedence; by default switches retain the legacy file-first precedence.

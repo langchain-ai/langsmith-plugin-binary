@@ -1,7 +1,15 @@
 import { lstatSync, readFileSync, statSync } from "node:fs";
-import { COMMON_BOOLEAN_SETTINGS } from "./constants.js";
+import { join } from "node:path";
+import {
+  COMMON_BOOLEAN_SETTINGS,
+  COMMON_CONFIG_FILE_NAME,
+  COMMON_CONFIG_ROOT_FILE_NAME,
+  COMMON_CONFIG_USER_ROOT_FILE_NAME,
+} from "./constants.js";
 import type {
   CommonConfig,
+  CommonConfigFileOptions,
+  CommonConfigFiles,
   CommonConfigResult,
   CommonConfigSources,
   CommonRedactRule,
@@ -117,7 +125,7 @@ export function readCommonConfigFile(path: string): CommonConfigResult {
         lstatSync(path);
       } catch (lstatError) {
         if ((lstatError as NodeJS.ErrnoException).code === "ENOENT") {
-          return { status: "absent", common: {}, diagnostics: [] };
+          return absent();
         }
       }
     }
@@ -128,6 +136,22 @@ export function readCommonConfigFile(path: string): CommonConfigResult {
   } catch {
     return invalid();
   }
+}
+
+function absent(): CommonConfigResult {
+  return { status: "absent", common: {}, diagnostics: [] };
+}
+
+export function readCommonConfigFiles(options: CommonConfigFileOptions): CommonConfigFiles {
+  const { cwd, home, harnessDirectory } = options;
+  return {
+    harness: readCommonConfigFile(join(cwd, harnessDirectory, COMMON_CONFIG_FILE_NAME)),
+    root: readCommonConfigFile(join(cwd, COMMON_CONFIG_ROOT_FILE_NAME)),
+    user: home
+      ? readCommonConfigFile(join(home, harnessDirectory, COMMON_CONFIG_FILE_NAME))
+      : absent(),
+    userRoot: home ? readCommonConfigFile(join(home, COMMON_CONFIG_USER_ROOT_FILE_NAME)) : absent(),
+  };
 }
 
 /** Resolve the first supplied value from sources ordered highest priority first. */
