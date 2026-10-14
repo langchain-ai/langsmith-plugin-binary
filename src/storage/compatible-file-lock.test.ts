@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -8,6 +10,7 @@ import {
   renameSync,
   rmdirSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +18,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { beforeEach, expect, it, vi } from "vitest";
+import { waitFor } from "../test-support/wait.js";
 import { FileLockTimeoutError } from "./index.js";
 import {
   acquireCompatibleDirectoryFileLock,
@@ -38,6 +42,11 @@ const faults = vi.hoisted(() => ({
   unlinkCode: "",
   unlinkFailures: 0,
   unlinkAttempts: 0,
+  writeFilePath: "",
+  renamePath: "",
+  renameCode: "",
+  renameFailures: 0,
+  renameAttempts: 0,
   releaseEvents: [] as string[],
 }));
 
@@ -87,6 +96,23 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       }
       return actual.rmdir(...args);
     },
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      if (String(args[0]) === faults.renamePath) {
+        faults.renameAttempts += 1;
+        if (faults.renameFailures > 0) {
+          faults.renameFailures -= 1;
+          throw Object.assign(new Error("Injected gate rename contention"), {
+            code: faults.renameCode,
+          });
+        }
+      }
+      return actual.rename(...args);
+    },
+    writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+      if (String(args[0]) === faults.writeFilePath)
+        throw Object.assign(new Error("Injected owner write failure"), { code: "EIO" });
+      return actual.writeFile(...args);
+    },
     unlink: async (...args: Parameters<typeof actual.unlink>) => {
       if (String(args[0]) === faults.unlinkPath) {
         faults.unlinkAttempts += 1;
@@ -130,14 +156,6 @@ function cleanDirectory(directory: string): void {
   rmdirSync(directory);
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  const deadline = performance.now() + 2_000;
-  while (!predicate()) {
-    if (performance.now() >= deadline) throw new Error("Timed out waiting for lock test state");
-    await delay(5);
-  }
-}
-
 function startSharedHolder(filePath: string) {
   const signals: { enter?: () => void; finish?: () => void } = {};
   const entered = new Promise<void>((resolve) => {
@@ -173,6 +191,11 @@ beforeEach(() => {
   faults.unlinkCode = "";
   faults.unlinkFailures = 0;
   faults.unlinkAttempts = 0;
+  faults.writeFilePath = "";
+  faults.renamePath = "";
+  faults.renameCode = "";
+  faults.renameFailures = 0;
+  faults.renameAttempts = 0;
   faults.releaseEvents = [];
 });
 
@@ -472,6 +495,152 @@ it("attempts both releases in order and reports both cleanup errors", async () =
   } finally {
     faults.rmdirPath = "";
     faults.unlinkPath = "";
+    cleanDirectory(area.directory);
+  }
+});
+
+function exitedProcessId(): number {
+  const child = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL("./fixtures/process-pid.mjs", import.meta.url))],
+    {
+      encoding: "utf8",
+    },
+  );
+  return Number(child.stdout);
+}
+
+it("reclaims a gate left by a dead holder and a dead or old legacy lock file", async () => {
+  const deadPid = exitedProcessId();
+  const deadDirectory = createArea();
+  mkdirSync(deadDirectory.gatePath, { mode: 0o700 });
+  writeFileSync(join(deadDirectory.gatePath, "owner"), String(deadPid));
+  const deadFile = createArea();
+  writeFileSync(deadFile.gatePath, String(deadPid));
+  const oldEmptyFile = createArea();
+  writeFileSync(oldEmptyFile.gatePath, "");
+  utimesSync(oldEmptyFile.gatePath, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  try {
+    for (const area of [deadDirectory, deadFile, oldEmptyFile]) {
+      const handle = await acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 1_000 });
+      expect(readFileSync(join(area.gatePath, "owner"), "utf8")).toBe(String(process.pid));
+      await handle.release();
+      expect(existsSync(area.gatePath)).toBe(false);
+      expect(readdirSync(area.directory).filter((name) => name.endsWith(".stale"))).toEqual([]);
+    }
+  } finally {
+    for (const area of [deadDirectory, deadFile, oldEmptyFile]) cleanDirectory(area.directory);
+  }
+});
+
+it("keeps waiting for a live, unknown or ownerless legacy holder", async () => {
+  const liveFile = createArea();
+  writeFileSync(liveFile.gatePath, String(process.pid));
+  const unknownPid = process.platform === "win32" ? 4 : 1;
+  const unknownOwner = createArea();
+  writeFileSync(unknownOwner.gatePath, String(unknownPid));
+  const ownerless = createArea();
+  mkdirSync(ownerless.gatePath, { mode: 0o700 });
+  const areas = [liveFile, unknownOwner, ownerless];
+  for (const area of areas)
+    utimesSync(area.gatePath, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  try {
+    for (const area of areas)
+      await expect(
+        acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 60 }),
+      ).rejects.toBeInstanceOf(FileLockTimeoutError);
+    expect(readFileSync(liveFile.gatePath, "utf8")).toBe(String(process.pid));
+    expect(readFileSync(unknownOwner.gatePath, "utf8")).toBe(String(unknownPid));
+    expect(readdirSync(ownerless.gatePath)).toEqual([]);
+  } finally {
+    for (const area of areas) cleanDirectory(area.directory);
+  }
+});
+
+it.each([
+  ["EBUSY", true],
+  ["ENOENT", false],
+])("warns when a half-created legacy gate cannot be removed (%s)", async (code, warns) => {
+  const area = createArea();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  faults.writeFilePath = join(area.gatePath, "owner");
+  faults.rmdirPath = area.gatePath;
+  faults.rmdirCode = code;
+  faults.rmdirFailures = 1;
+  try {
+    await expect(
+      acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 1_000 }),
+    ).rejects.toThrow("Could not record the legacy file lock gate owner");
+    if (warns)
+      expect(warn).toHaveBeenCalledWith(
+        "Could not remove a half-created lock folder:",
+        "Injected legacy gate cleanup failure",
+      );
+    else expect(warn).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
+    faults.rmdirPath = "";
+    faults.writeFilePath = "";
+    if (existsSync(area.gatePath)) rmdirSync(area.gatePath);
+    cleanDirectory(area.directory);
+  }
+});
+
+it("keeps trying to reclaim a dead holder's gate while it is busy", async () => {
+  const area = createArea();
+  mkdirSync(area.gatePath, { mode: 0o700 });
+  writeFileSync(join(area.gatePath, "owner"), String(exitedProcessId()));
+  faults.renamePath = area.gatePath;
+  faults.renameCode = "EBUSY";
+  faults.renameFailures = 2;
+  try {
+    const handle = await acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 2_000 });
+    expect(faults.renameAttempts).toBe(3);
+    expect(readFileSync(join(area.gatePath, "owner"), "utf8")).toBe(String(process.pid));
+    await handle.release();
+  } finally {
+    cleanDirectory(area.directory);
+  }
+});
+
+it("reclaims a gate whose owner pid looks alive but stopped refreshing its owner file", async () => {
+  const area = createArea();
+  mkdirSync(area.gatePath, { mode: 0o700 });
+  const owner = join(area.gatePath, "owner");
+  writeFileSync(owner, String(process.pid));
+  utimesSync(owner, new Date(Date.now() - 10_000), new Date(Date.now() - 10_000));
+  try {
+    const handle = await acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 1_000 });
+    await handle.release();
+    expect(existsSync(area.gatePath)).toBe(false);
+  } finally {
+    cleanDirectory(area.directory);
+  }
+});
+
+it("keeps waiting for a live owner that refreshed its owner file recently", async () => {
+  const area = createArea();
+  mkdirSync(area.gatePath, { mode: 0o700 });
+  writeFileSync(join(area.gatePath, "owner"), String(process.pid));
+  try {
+    await expect(
+      acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 100 }),
+    ).rejects.toBeInstanceOf(FileLockTimeoutError);
+    expect(readFileSync(join(area.gatePath, "owner"), "utf8")).toBe(String(process.pid));
+  } finally {
+    cleanDirectory(area.directory);
+  }
+});
+
+it("keeps refreshing the owner file while the gate is held", async () => {
+  const area = createArea();
+  const handle = await acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 1_000 });
+  const owner = join(area.gatePath, "owner");
+  try {
+    utimesSync(owner, new Date(Date.now() - 10_000), new Date(Date.now() - 10_000));
+    await waitFor(() => Date.now() - lstatSync(owner).mtimeMs < 2_000);
+  } finally {
+    await handle.release();
     cleanDirectory(area.directory);
   }
 });

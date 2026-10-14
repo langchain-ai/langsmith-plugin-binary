@@ -1,3 +1,4 @@
+import { diagnose } from "./diagnose-lock.mjs";
 const { existsSync, mkdirSync, rmdirSync, writeFileSync } = await import("node:fs");
 const { setTimeout: delay } = await import("node:timers/promises");
 const api = await import(process.argv[2]);
@@ -51,6 +52,38 @@ if (mode === "hold") {
     writeFileSync(marker + ".failed", String(error.stack ?? error));
     process.exitCode = 4;
   }
+} else if (mode === "race") {
+  writeFileSync(marker + ".ready", "ready");
+  while (!existsSync(startPath)) await delay(1);
+  let handle;
+  try {
+    handle = await api.tryAcquireFileLock(lockPath);
+    writeFileSync(marker, handle ? "owned" : `busy ${diagnose(lockPath)}`);
+  } catch (error) {
+    writeFileSync(marker, `error ${String(error)} ${diagnose(lockPath)}`);
+  }
+  if (handle) {
+    while (!existsSync(gate)) await delay(5);
+    await handle.release();
+  }
+} else if (mode === "gate") {
+  writeFileSync(marker + ".ready", "ready");
+  while (!existsSync(startPath)) await delay(1);
+  let outcome = "ok";
+  try {
+    const handle = await api.acquireCompatibleDirectoryFileLock(lockPath, { timeoutMs: 20000 });
+    try {
+      mkdirSync(activePath);
+      await delay(10);
+      rmdirSync(activePath);
+    } catch {
+      outcome = "overlap";
+    }
+    await handle.release();
+  } catch (error) {
+    outcome = `${String(error)} ${diagnose(lockPath)}`;
+  }
+  writeFileSync(marker, outcome);
 } else if (mode === "die") {
   const handle = await api.tryAcquireFileLock(lockPath);
   if (!handle) process.exit(5);

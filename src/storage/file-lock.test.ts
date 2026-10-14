@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { waitFor } from "../test-support/wait.js";
 import {
   mkdtempSync,
   mkdirSync,
@@ -8,6 +9,7 @@ import {
   statSync,
   symlinkSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { rename } from "node:fs/promises";
@@ -67,16 +69,6 @@ function waitForExit(child: ChildProcess): Promise<boolean> {
     child.once("error", rejectPromise);
     child.once("exit", (code, signal) => resolvePromise(code === 0 && signal === null));
   });
-}
-
-async function waitFor<T>(predicate: () => T | false): Promise<T> {
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline) {
-    const value = predicate();
-    if (value) return value;
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
-  }
-  throw new Error("Timed out waiting for lock test process state");
 }
 
 function cleanupArea(area: ReturnType<typeof createArea>): void {
@@ -382,3 +374,166 @@ it("reclaims a killed owner while fresh processes contend", async () => {
     cleanupArea(area);
   }
 }, 20_000);
+
+it("lets exactly one of several simultaneous try-acquirers win", async () => {
+  for (let trial = 0; trial < 8; trial += 1) {
+    const area = createArea();
+    const children = new Set<ChildProcess>();
+    const ids = Array.from({ length: 4 }, (_, index) => `racer-${index}`);
+    const startPath = join(area.directory, "racers.start");
+    const gate = join(area.directory, "racers.gate");
+    try {
+      const racers = ids.map((id) =>
+        spawnWorker(area, "race", [join(area.directory, id), gate, "0", id, "", startPath]),
+      );
+      for (const racer of racers) children.add(racer);
+      await waitFor(() => ids.every((id) => filesWithPrefix(area, `${id}.ready`).length > 0));
+      writeFileSync(startPath, "go");
+      const outcomes = await waitFor(() => {
+        const read = ids.map((id) =>
+          filesWithPrefix(area, id).includes(id)
+            ? readFileSync(join(area.directory, id), "utf-8")
+            : "",
+        );
+        return read.every((outcome) => outcome !== "") ? read : false;
+      });
+      expect(
+        outcomes.filter((outcome) => outcome === "owned"),
+        JSON.stringify(outcomes),
+      ).toHaveLength(1);
+      writeFileSync(gate, "go");
+      expect((await Promise.all(racers.map(waitForExit))).every(Boolean)).toBe(true);
+    } finally {
+      writeFileSync(gate, "go");
+      await stopChildren(children);
+      cleanupArea(area);
+    }
+  }
+}, 30_000);
+
+function exitedProcessId(): number {
+  return Number(
+    spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL("./fixtures/process-pid.mjs", import.meta.url))],
+      { encoding: "utf8" },
+    ).stdout,
+  );
+}
+
+it("takes over a dead holder's gate exactly once while live and legacy holders contend", async () => {
+  for (let trial = 0; trial < 6; trial += 1) {
+    const deadPid = exitedProcessId();
+    const area = createArea();
+    const children = new Set<ChildProcess>();
+    const gate = `${area.lockPath}.lock`;
+    const startPath = join(area.directory, "gate.start");
+    const activePath = join(area.directory, "gate.active");
+    mkdirSync(gate);
+    writeFileSync(join(gate, "owner"), String(deadPid));
+    const ids = Array.from({ length: 8 }, (_, index) => `gate-${index}`);
+    try {
+      for (const id of ids)
+        children.add(
+          spawnWorker(area, "gate", [join(area.directory, id), "", "0", id, activePath, startPath]),
+        );
+      children.add(
+        spawn(
+          process.execPath,
+          [
+            fileURLToPath(new URL("./fixtures/file-lock-legacy.mjs", import.meta.url)),
+            gate,
+            join(area.directory, "legacy"),
+            startPath,
+            activePath,
+          ],
+          {
+            stdio: "ignore",
+          },
+        ),
+      );
+      await waitFor(() =>
+        [...ids, "legacy"].every((id) => filesWithPrefix(area, `${id}.ready`).length > 0),
+      );
+      writeFileSync(startPath, "go");
+      await Promise.all([...children].map(waitForExit));
+      expect(
+        [...ids, "legacy"].map((id) => readFileSync(join(area.directory, id), "utf-8")),
+      ).toEqual([...ids, "legacy"].map(() => "ok"));
+    } finally {
+      await stopChildren(children);
+      cleanupArea(area);
+    }
+  }
+}, 60_000);
+
+const claim = (id: string, pid: number) =>
+  JSON.stringify({ version: 1, id, pid, choosing: false, ticket: 1 });
+
+it("reclaims an unreadable, foreign or silent claim once it is older than the hold limit", async () => {
+  const area = createArea();
+  const claimDirectory = `${area.lockPath}${FILE_LOCK_DIRECTORY_SUFFIX}`;
+  mkdirSync(claimDirectory);
+  const stuck = randomUUID();
+  const foreign = randomUUID();
+  const entries = {
+    [`${randomUUID()}${FILE_LOCK_CLAIM_EXTENSION}`]: "nope",
+    [`${stuck}${FILE_LOCK_CLAIM_EXTENSION}`]: claim(stuck, process.pid),
+    [`${foreign}${FILE_LOCK_CLAIM_EXTENSION}`]: claim(foreign, 1),
+  };
+  const old = new Date(Date.now() - 60_000);
+  for (const [name, contents] of Object.entries(entries)) {
+    writeFileSync(join(claimDirectory, name), contents);
+    utimesSync(join(claimDirectory, name), old, old);
+  }
+  try {
+    await expect(withFileLock(area.lockPath, () => "ran", { timeoutMs: 1_000 })).resolves.toBe(
+      "ran",
+    );
+    expect(readdirSync(claimDirectory)).toEqual([]);
+  } finally {
+    cleanupArea(area);
+  }
+});
+
+it("keeps a live holder's claim fresh so nobody takes it over", async () => {
+  const area = createArea();
+  const claimDirectory = `${area.lockPath}${FILE_LOCK_DIRECTORY_SUFFIX}`;
+  try {
+    await withFileLock(area.lockPath, async () => {
+      const [held] = readdirSync(claimDirectory);
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(join(claimDirectory, held!), old, old);
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 700));
+      await expect(tryAcquireFileLock(area.lockPath)).resolves.toBeUndefined();
+    });
+  } finally {
+    cleanupArea(area);
+  }
+});
+
+it("waits at least three seconds of silence before taking over a claim", async () => {
+  const area = createArea();
+  const claimDirectory = `${area.lockPath}${FILE_LOCK_DIRECTORY_SUFFIX}`;
+  mkdirSync(claimDirectory);
+  const id = randomUUID();
+  const path = join(claimDirectory, `${id}${FILE_LOCK_CLAIM_EXTENSION}`);
+  writeFileSync(
+    path,
+    JSON.stringify({ version: 1, id, pid: process.pid, choosing: false, ticket: 1 }),
+  );
+  const silent = (seconds: number) => {
+    const at = new Date(Date.now() - seconds * 1_000);
+    utimesSync(path, at, at);
+  };
+  try {
+    silent(2);
+    await expect(tryAcquireFileLock(area.lockPath)).resolves.toBeUndefined();
+    silent(4);
+    const handle = await tryAcquireFileLock(area.lockPath);
+    expect(handle).toBeDefined();
+    await handle?.release();
+  } finally {
+    cleanupArea(area);
+  }
+});
