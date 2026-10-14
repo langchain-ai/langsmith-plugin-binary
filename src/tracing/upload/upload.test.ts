@@ -574,7 +574,11 @@ describe("bound LangSmith upload writer", () => {
       });
       const other = "33333333-3333-4333-8333-333333333333";
       const receipts = await writer.sendBatch(
-        [llmRun(), submission(), patchSubmission({ run: { ...patchSubmission().run, id: other } })],
+        [
+          { submission: llmRun() },
+          { submission: submission() },
+          { submission: patchSubmission({ run: { ...patchSubmission().run, id: other } }) },
+        ],
         destinationByIndex(writer.destinations, 0),
       );
       expect(httpRequests).toBe(1);
@@ -596,7 +600,10 @@ describe("bound LangSmith upload writer", () => {
         destinations: [destination(FAILING_KEY, "primary-project", "primary-workspace")],
       });
       await expect(
-        writer.sendBatch([llmRun(), submission()], destinationByIndex(writer.destinations, 0)),
+        writer.sendBatch(
+          [{ submission: llmRun() }, { submission: submission() }],
+          destinationByIndex(writer.destinations, 0),
+        ),
       ).rejects.toThrow("LangSmith upload failed");
       expect(httpRequests).toBe(1);
     });
@@ -618,7 +625,7 @@ describe("bound LangSmith upload writer", () => {
           destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
         });
         await writer.sendBatch(
-          [redacted(CHILD_ID), withInputs(RUN_ID)],
+          [{ submission: redacted(CHILD_ID) }, { submission: withInputs(RUN_ID) }],
           destinationByIndex(writer.destinations, 0),
         );
         expect(inputsOf(RUN_ID)).toEqual({ text: "[SECRET_DETECTED]" });
@@ -631,7 +638,11 @@ describe("bound LangSmith upload writer", () => {
           destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
         });
         await writer.sendBatch(
-          [redacted(CHILD_ID), withInputs(RUN_ID), redacted(SECOND_ID)],
+          [
+            { submission: redacted(CHILD_ID) },
+            { submission: withInputs(RUN_ID) },
+            { submission: redacted(SECOND_ID) },
+          ],
           destinationByIndex(writer.destinations, 0),
         );
         expect(httpRequests).toBe(3);
@@ -645,7 +656,7 @@ describe("bound LangSmith upload writer", () => {
         destinations: [destination(OTHER_CONFLICT_KEY, "primary-project", "primary-workspace")],
       });
       await expect(
-        writer.sendBatch([llmRun()], destinationByIndex(writer.destinations, 0)),
+        writer.sendBatch([{ submission: llmRun() }], destinationByIndex(writer.destinations, 0)),
       ).rejects.toThrow("LangSmith upload failed");
     });
 
@@ -655,7 +666,7 @@ describe("bound LangSmith upload writer", () => {
         destinations: [destination(DUPLICATE_CREATE_KEY, "primary-project", "primary-workspace")],
       });
       await expect(
-        writer.sendBatch([llmRun()], destinationByIndex(writer.destinations, 0)),
+        writer.sendBatch([{ submission: llmRun() }], destinationByIndex(writer.destinations, 0)),
       ).resolves.toHaveLength(1);
     });
 

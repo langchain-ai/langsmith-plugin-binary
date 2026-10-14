@@ -6,6 +6,7 @@ import type {
   StoredCapture,
 } from "../../storage/capture/models.js";
 import type { CodingAgentIntegration, CodingAgentMetadataOptions } from "../../metadata/models.js";
+import type { CaptureSettledTurn } from "../../storage/capture/models.js";
 import type { DeliveryCaptureInput, DeliveryDestination } from "../delivery/models.js";
 import type { ProjectedPayload } from "../lifecycle/models.js";
 
@@ -37,9 +38,9 @@ export interface TurnRecord {
   fixed: Set<string>;
 }
 
-export type TurnSettlementStatus = "settled" | "pending" | "deferred" | "blocked";
+type TurnSettlementStatus = "settled" | "pending" | "deferred" | "blocked";
 
-export type TurnSettlementReason =
+type TurnSettlementReason =
   | "no-attribution"
   | "no-change"
   | "open"
@@ -59,6 +60,7 @@ export interface TurnSettlementReport {
   runIds?: string[];
   destinations?: string[];
   patches: number;
+  settled?: CaptureSettledTurn;
 }
 
 export interface TurnSettlementProgress {
@@ -83,19 +85,13 @@ export interface TurnSettlementResult {
   captured: number;
 }
 
-export type TurnEvidenceClosureState = "open" | "provisional" | "authoritative";
+type TurnEvidenceClosureState = "open" | "provisional" | "authoritative";
 
 export interface TurnEvidenceSnapshot {
   rootRunId?: string;
   childRunIds: string[];
   closureState: TurnEvidenceClosureState;
   attributionReady: boolean;
-}
-
-export interface TurnEvidenceCollection {
-  rootRunIds: Set<string>;
-  childRunIds: Set<string>;
-  closureState: TurnEvidenceClosureState;
 }
 
 export interface ProjectedCapture {
@@ -106,11 +102,10 @@ export interface ProjectedCapture {
   attributionReady: boolean;
 }
 
-export type SettlementSourceReadiness =
-  | { status: "delivered"; destinations: [] }
-  | { status: "pending" | "dropped"; destinations: string[] };
-
-export type UnsettledSourceReadiness = Exclude<SettlementSourceReadiness, { status: "delivered" }>;
+export interface SettlementSourceReadiness {
+  status: "delivered" | "pending" | "dropped";
+  destinations: string[];
+}
 
 export interface SettleCapturedTurnsOptions {
   captures: readonly EnumeratedCapture[];
@@ -120,23 +115,35 @@ export interface SettleCapturedTurnsOptions {
   destinations: readonly DeliveryDestination[];
   capture(input: DeliveryCaptureInput): Promise<CaptureWriteResult>;
   readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
+  droppedRunIds(turnId: string): Promise<ReadonlySet<string>>;
+  settledTurn(turnId: string): Promise<CaptureSettledTurn | undefined>;
+  now?: number;
 }
 
-export interface TurnSettlementContext {
+export interface TurnEvidenceSummary {
+  rootRunIds: Set<string>;
+  childRunIds: Set<string>;
+  closureState: TurnEvidenceClosureState;
+}
+
+export interface TurnSettlementState {
   turnId: string;
   rootRunId: string;
   childRunIds: ReadonlySet<string>;
   closureState: TurnEvidenceClosureState;
-  dependencies: readonly CaptureScope[];
-  currentByRunId: ReadonlyMap<string, ProjectedCapture[]>;
-  runEventsById: ReadonlyMap<string, ProjectedCapture[]>;
-  recordedByRunId: ReadonlyMap<string, RecordedRun>;
+  dependencies: CaptureScope[];
   attribution: Attribution | undefined;
-  generated: readonly StoredCapture[];
-  options: SettleCapturedTurnsOptions;
+  recorded: ReadonlyMap<string, RecordedRun>;
+  captureEvents: ReadonlyMap<string, ProjectedCapture[]>;
 }
 
-export type RunSettlementAttempt =
-  | { status: "unchanged" }
-  | { status: "blocked"; destinations: string[] }
-  | { status: "captured"; patch: TurnSettlementPlannedPatch; captured: number };
+export interface RunPatchPlan {
+  metadata: CodingAgentMetadataOptions;
+  added: Attribution;
+  endTime: number | string | undefined;
+}
+
+export interface RunPatchOutcome {
+  patch: TurnSettlementPlannedPatch;
+  published: boolean;
+}

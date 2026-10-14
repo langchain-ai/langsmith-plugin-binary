@@ -25,6 +25,7 @@ import {
   LIFECYCLE_TURN_CLOSURE_STATES,
 } from "./constants.js";
 import type { LifecycleEndTimeWithholdingInput } from "./models.js";
+import { scopeKey, scopeOf } from "../../storage/capture/scope.js";
 
 export function deriveAttributionReadiness(
   value: unknown,
@@ -66,7 +67,7 @@ export function storedAttributionReadiness(
 export function indexCaptureSources(
   sources: readonly StoredCapture[],
 ): ReadonlyMap<string, StoredCapture> {
-  return new Map(sources.map((source) => [captureScopeKey(captureScope(source)), source]));
+  return new Map(sources.map((source) => [scopeKey(scopeOf(source)), source]));
 }
 
 function attributionMetadataReady(projected: Record<string, unknown>): boolean {
@@ -132,7 +133,7 @@ function hasPriorEndTime(
   const visited = new Set<string>();
   while (pending.length > 0) {
     const scope = pending.pop()!;
-    const key = captureScopeKey(scope);
+    const key = scopeKey(scope);
     if (visited.has(key)) continue;
     visited.add(key);
     const previous = sourceByScope.get(key);
@@ -188,7 +189,7 @@ async function hasMissingChildReceipts(
     );
     if (childCaptures.length === 0) return true;
     for (const child of childCaptures) {
-      const scope = captureScope(child);
+      const scope = scopeOf(child);
       for (const destination of destinations) {
         const outcome = await readOutcome(scope, destination.id);
         if (outcome.status === "failed")
@@ -234,17 +235,4 @@ function removeOutgoingEndTime(submission: PreparedRunSubmission): PreparedRunSu
     patch: { fields, values },
     ...(privacyContext === undefined ? {} : { privacyContext }),
   };
-}
-
-function captureScope(record: StoredCapture): CaptureScope {
-  return {
-    integration: record.integration,
-    sessionId: record.sessionId,
-    turnId: record.turnId,
-    eventId: record.eventId,
-  };
-}
-
-function captureScopeKey(scope: CaptureScope): string {
-  return JSON.stringify([scope.integration, scope.sessionId, scope.turnId, scope.eventId]);
 }

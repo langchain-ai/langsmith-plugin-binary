@@ -57,7 +57,7 @@ export async function drainLocked(
     drainCache,
     policy,
     request,
-    attempted: new Set<string>(),
+    attempted: request.attempted ?? new Set<string>(),
     sendable: active,
   };
   let progressed: boolean;

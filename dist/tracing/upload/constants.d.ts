@@ -31,4 +31,5 @@ export declare const UPLOAD_DEADLINE_MESSAGE = "LangSmith upload did not finish 
 export declare const UPLOAD_RECEIPT_MISSING_MESSAGE = "The upload returned no receipt";
 export declare const UPLOAD_ERROR_NAME = "UploadError";
 export declare const UPLOAD_SERVER_ERROR_MIN_STATUS = 500;
+export declare const UPLOAD_UNKNOWN_DESTINATION_MESSAGE = "Unknown upload destination";
 //# sourceMappingURL=constants.d.ts.map

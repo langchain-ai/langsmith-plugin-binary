@@ -22,6 +22,9 @@ import {
   CAPTURE_RECORD_UNSUPPORTED_MESSAGE,
   CAPTURE_RECORD_VERSION,
   CAPTURE_RETRY_LOST_MESSAGE,
+  CAPTURE_ROUTES_INVALID_MESSAGE,
+  CAPTURE_ROUTE_INVALID_MESSAGE,
+  CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE,
   CAPTURE_SKIPPED_WARNING,
   CAPTURE_UNREADABLE_WARNING,
   CAPTURE_VERSION_UNSUPPORTED_MESSAGE,
@@ -29,6 +32,7 @@ import {
 import type {
   CaptureDelivery,
   CaptureDependency,
+  CaptureDestinationRoutes,
   CaptureInput,
   CaptureOutcome,
   CaptureRemoveOptions,
@@ -150,6 +154,9 @@ function buildCaptureRecord(input: CaptureInput): StoredCapture {
           ),
         }),
     ...(dependencies === undefined ? {} : { dependencies }),
+    ...(input.destinationRoutes === undefined
+      ? {}
+      : { destinationRoutes: normalizeDestinationRoutes(input.destinationRoutes) }),
   };
 }
 
@@ -522,6 +529,7 @@ function validateRecord(value: Record<string, unknown>): StoredCapture {
   };
   validateScope(scope);
   const dependencies = normalizeDependencies(value.dependencies, scope);
+  if ("destinationRoutes" in value) normalizeDestinationRoutes(value.destinationRoutes);
   const normalizedPayload = canonicalValue(value.normalizedPayload, new Set<object>());
   const delivery = "delivery" in value ? readDelivery(value.delivery) : undefined;
   return {
@@ -607,6 +615,31 @@ function normalizeDependencies(
     seen.add(key);
     return dependency;
   });
+}
+
+function normalizeDestinationRoutes(value: unknown): CaptureDestinationRoutes {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new TypeError(CAPTURE_ROUTES_INVALID_MESSAGE);
+  const routes: CaptureDestinationRoutes = {};
+  for (const [destination, route] of Object.entries(value)) {
+    validateIdentifier(destination, "destination");
+    if (route === null || typeof route !== "object" || Array.isArray(route))
+      throw new TypeError(CAPTURE_ROUTE_INVALID_MESSAGE);
+    const { projectName, sourceProjectName, ...extra } = route as Record<string, unknown>;
+    if (Object.keys(extra).length > 0) throw new TypeError(CAPTURE_ROUTE_INVALID_MESSAGE);
+    if (typeof projectName !== "string") throw new TypeError(CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE);
+    validateIdentifier(projectName, "route project");
+    if (sourceProjectName !== undefined) {
+      if (typeof sourceProjectName !== "string")
+        throw new TypeError(CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE);
+      validateIdentifier(sourceProjectName, "route project");
+    }
+    routes[destination] = {
+      projectName,
+      ...(sourceProjectName === undefined ? {} : { sourceProjectName }),
+    };
+  }
+  return routes;
 }
 
 function sameScope(record: CaptureScope, scope: CaptureScope): boolean {

@@ -38,4 +38,7 @@ export const CAPTURE_MARKER_VERSION = 1;
 export const CAPTURE_MARKER_REMOVED_REASON = "removed-before-delivery";
 export const CAPTURE_MARKER_INVALID_MESSAGE = "Invalid outcome marker";
 export const CAPTURE_MARKER_INVALID_WARNING = "Removed an unreadable outcome marker:";
+export const CAPTURE_ROUTES_INVALID_MESSAGE = "Invalid capture destination routes";
+export const CAPTURE_ROUTE_INVALID_MESSAGE = "Invalid capture destination route";
+export const CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE = "Invalid capture route project";
 //# sourceMappingURL=constants.js.map

@@ -15,10 +15,10 @@ export async function captureReadiness(scopes, destinations, readOutcome) {
             }
         }
     }
-    if (dropped.size > 0)
-        return { status: "dropped", destinations: [...dropped].toSorted() };
-    if (pending.size > 0)
-        return { status: "pending", destinations: [...pending].toSorted() };
-    return { status: "delivered", destinations: [] };
+    return pending.size > 0
+        ? { status: "pending", destinations: [...pending].toSorted() }
+        : dropped.size > 0
+            ? { status: "dropped", destinations: [...dropped].toSorted() }
+            : { status: "delivered", destinations: [] };
 }
 //# sourceMappingURL=readiness.js.map

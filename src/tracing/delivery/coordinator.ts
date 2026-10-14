@@ -105,7 +105,10 @@ export function createDeliveryCoordinator(
     },
     async drain(request) {
       const writer = snapshotWriter(request.writer);
-      const drainRequest = { writer };
+      const drainRequest = {
+        writer,
+        ...(request.attempted === undefined ? {} : { attempted: request.attempted }),
+      };
       validateDrainRequest(drainRequest);
       const drainCache = createDrainCache(context.captureStore);
       const counts = await drainUnderLock(context, drainRequest, drainCache);

@@ -2,6 +2,7 @@ import type { Client, RunTree } from "langsmith";
 import type { RunCreate, RunUpdate } from "langsmith/schemas";
 import type { CodingAgentIntegration, CodingAgentMetadataMode, CodingAgentMetadataOptions } from "../../metadata/index.js";
 import type { CodingAgentPrivacyContext } from "../../privacy/index.js";
+import type { CaptureDestinationRoute, CaptureDestinationRoutes } from "../../storage/capture/models.js";
 export interface UploadRedactRule {
     pattern: string;
     replace?: string;
@@ -121,6 +122,10 @@ interface UploadDestination {
     readonly id: string;
 }
 export type UploadIngest = NonNullable<Parameters<Client["batchIngestRuns"]>[0]>;
+export interface UploadBatchItem {
+    submission: PreparedRunSubmission;
+    route?: CaptureDestinationRoute;
+}
 interface UploadBatchLimits {
     readonly maxRuns: number;
     readonly maxBytes: number;
@@ -140,9 +145,10 @@ export interface UploadReceipt {
 export interface LangSmithUploadWriter {
     readonly accountFingerprint: string;
     readonly destinations: readonly UploadDestination[];
+    readonly routes: Readonly<CaptureDestinationRoutes>;
     readonly batchLimits: UploadBatchLimits;
-    sendBatch(submissions: readonly PreparedRunSubmission[], destinationId: string): Promise<UploadReceipt[]>;
-    send(submission: PreparedRunSubmission, destinationId: string): Promise<UploadReceipt>;
+    sendBatch(items: readonly UploadBatchItem[], destinationId: string): Promise<UploadReceipt[]>;
+    send(submission: PreparedRunSubmission, destinationId: string, route?: CaptureDestinationRoute): Promise<UploadReceipt>;
 }
 export interface UploadClientCache {
     forSubmission(destination: ResolvedUploadDestination, submission: PreparedRunSubmission): Client;

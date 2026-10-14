@@ -23,10 +23,11 @@ export function projectCapture(record, integration) {
     };
 }
 function captureIsOpen(payload) {
-    if (payload.operation === "post") {
+    if (payload.operation === "post")
         return payload.run.end_time === undefined && payload.run.error === undefined;
-    }
-    return payload.privacyContext.status === "running";
+    if (payload.privacyContext.status === "running")
+        return true;
+    return false;
 }
 export function patchPayload(source, metadata, integration, endTime, causalRunError = false) {
     const context = source.payload.run;
@@ -47,37 +48,32 @@ export function patchPayload(source, metadata, integration, endTime, causalRunEr
             ...(context.trace_id === undefined ? {} : { trace_id: context.trace_id }),
             ...(context.dotted_order === undefined ? {} : { dotted_order: context.dotted_order }),
         },
-        privacyContext: settlementPrivacyContext(source, endTime, causalRunError),
-        patch: settlementPatch(endTime),
+        privacyContext: source.payload.operation === "patch"
+            ? {
+                ...source.payload.privacyContext,
+                ...(causalRunError
+                    ? { status: "error" }
+                    : endTime !== undefined && source.payload.privacyContext.status !== "error"
+                        ? { status: "completed" }
+                        : {}),
+            }
+            : {
+                status: causalRunError ||
+                    source.payload.run.error !== undefined ||
+                    source.payload.privacyContext?.status === "error"
+                    ? "error"
+                    : endTime !== undefined || source.payload.run.end_time !== undefined
+                        ? "completed"
+                        : (source.payload.privacyContext?.status ?? "running"),
+            },
+        patch: endTime === undefined
+            ? { fields: [], values: {} }
+            : { fields: ["end_time"], values: { end_time: endTime } },
     };
     const projected = projectSubmission(submission, integration);
     if (projected.status === "deferred")
         throw new Error("Settlement patch lost thread identity");
     return projected.value;
-}
-function settlementPrivacyContext(source, endTime, causalRunError) {
-    if (source.payload.operation === "patch") {
-        if (causalRunError)
-            return { ...source.payload.privacyContext, status: "error" };
-        if (endTime !== undefined && source.payload.privacyContext.status !== "error") {
-            return { ...source.payload.privacyContext, status: "completed" };
-        }
-        return { ...source.payload.privacyContext };
-    }
-    if (causalRunError ||
-        source.payload.run.error !== undefined ||
-        source.payload.privacyContext?.status === "error") {
-        return { status: "error" };
-    }
-    if (endTime !== undefined || source.payload.run.end_time !== undefined) {
-        return { status: "completed" };
-    }
-    return { status: source.payload.privacyContext?.status ?? "running" };
-}
-function settlementPatch(endTime) {
-    if (endTime === undefined)
-        return { fields: [], values: {} };
-    return { fields: ["end_time"], values: { end_time: endTime } };
 }
 export function addAttribution(metadata, attribution) {
     const layer = CODING_AGENT_INTEGRATION_POLICIES[metadata.integration].fullModePrecedence === "custom-wins"
@@ -105,10 +101,6 @@ export function parseEvidence(value, attributionReady) {
     return result;
 }
 export function closureRank(state) {
-    if (state === "authoritative")
-        return 2;
-    if (state === "provisional")
-        return 1;
-    return 0;
+    return state === "authoritative" ? 2 : state === "provisional" ? 1 : 0;
 }
 //# sourceMappingURL=projection.js.map
