@@ -124,6 +124,9 @@ export interface ResolvedUploadDestinations {
 export interface UploadDestination {
     readonly id: string;
 }
+export interface UploadFailure {
+    status?: unknown;
+}
 export interface UploadReceipt {
     destinationId: string;
     runId: string;

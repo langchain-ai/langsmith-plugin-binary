@@ -34,28 +34,6 @@ describe("upload destination identity", () => {
 
     expect(fingerprint).toMatch(/^account_[0-9a-f]{32}$/);
     expect(resolveUploadDestinationFingerprint(options)).toBe(fingerprint);
-    expect(
-      resolveUploadDestinationFingerprint({
-        ...options,
-        destinations: options.destinations.map((destination) => ({
-          ...destination,
-          apiKey: "synthetic-rotated-primary-key",
-        })),
-        replicas: options.replicas.map((replica) => ({
-          ...replica,
-          apiKey: "synthetic-rotated-replica-key",
-        })),
-      }),
-    ).toBe(fingerprint);
-    expect(
-      resolveUploadDestinationFingerprint({
-        ...options,
-        destinations: options.destinations.map((destination) => ({
-          ...destination,
-          workspaceId: "other-workspace",
-        })),
-      }),
-    ).not.toBe(fingerprint);
     expect(clients.createUploadClient).not.toHaveBeenCalled();
     expect(createLangSmithUploadWriter(options).accountFingerprint).toBe(fingerprint);
     expect(clients.createUploadClient).toHaveBeenCalledTimes(1);

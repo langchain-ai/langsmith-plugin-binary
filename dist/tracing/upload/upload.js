@@ -1,7 +1,7 @@
 import { buildCodingAgentMetadata } from "../../metadata/index.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
 import { resolveUploadDestinations } from "./destinations.js";
-import { UPLOAD_PATCH_FIELDS } from "./constants.js";
+import { UPLOAD_ALREADY_RECEIVED_STATUS, UPLOAD_PATCH_FIELDS } from "./constants.js";
 import { createUploadClientCache } from "./client-cache.js";
 import { redactSdkOmittedFields } from "./redaction.js";
 import { contextForDestination, runIdForDestination } from "./replica-identifiers.js";
@@ -37,7 +37,12 @@ export function createLangSmithUploadWriter(options) {
                     await client.createRun({ ...payload, project_name: destination.projectName }, clientOptions);
                     return { destinationId, runId: submission.run.id, operation: "posted" };
                 }
-                await client.updateRun(runIdForDestination(submission.run.id, destination), payload, clientOptions);
+                await client
+                    .updateRun(runIdForDestination(submission.run.id, destination), payload, clientOptions)
+                    .catch((error) => {
+                    if (!alreadyReceived(error))
+                        throw error;
+                });
                 return { destinationId, runId: submission.run.id, operation: "patched" };
             }
             catch {
@@ -45,6 +50,9 @@ export function createLangSmithUploadWriter(options) {
             }
         },
     });
+}
+function alreadyReceived(error) {
+    return error?.status === UPLOAD_ALREADY_RECEIVED_STATUS;
 }
 function runConfig(context, submission, destination) {
     const metadata = buildCodingAgentMetadata(submission.metadata);

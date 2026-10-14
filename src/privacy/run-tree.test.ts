@@ -440,4 +440,39 @@ describe("coding agent metadata privacy at the SDK wire boundary", () => {
     });
     expect(JSON.stringify(privatePayload)).not.toContain(PRIVATE_MARKER);
   });
+
+  it("keeps an empty tag list on a muted run and adds none when the caller sent none", async () => {
+    client = makeClient();
+    for (const [name, tags] of [
+      ["empty-tags", []],
+      ["no-tags", undefined],
+    ] as const)
+      await createCodingAgentRunTree(
+        {
+          client,
+          name,
+          run_type: "chain",
+          inputs: {},
+          extra: { metadata: metadata(`${name}-thread`) },
+          ...(tags === undefined ? {} : { tags: [...tags] }),
+        },
+        "claude-code",
+        "metadata",
+      ).postRun();
+
+    const tagged = createCodingAgentRunTree(
+      { client, name: "late-tags", run_type: "chain", inputs: {} },
+      "claude-code",
+      "metadata",
+    );
+    tagged.tags = [PRIVATE_MARKER];
+    await tagged.postRun();
+
+    const payloads = operations().map(
+      (operation) => operation["payload"] as Record<string, unknown>,
+    );
+    expect(payloads.find((payload) => payload["name"] === "late-tags")).not.toHaveProperty("tags");
+    expect(payloads.find((payload) => payload["name"] === "empty-tags")?.["tags"]).toEqual([]);
+    expect(payloads.find((payload) => payload["name"] === "no-tags")).not.toHaveProperty("tags");
+  });
 });
