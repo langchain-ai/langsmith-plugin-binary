@@ -1,0 +1,8 @@
+name: Create an Isolated Home
+description: Creates the temporary directory the workflow points HOME and TMPDIR at.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        node -e "require('node:fs').mkdirSync(process.env.TMPDIR, {recursive: true})"
