@@ -51,3 +51,18 @@ export const FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS = 5_000;
 export const FILE_LOCK_COMPATIBLE_STALE_SUFFIX = ".stale";
 export const FILE_LOCK_GATE_CLEANUP_WARNING = "Could not remove a half-created lock folder:";
 export const FILE_LOCK_STALE_GATE_CLEANUP_WARNING = "Could not remove an old lock folder:";
+export const STORAGE_STALE_FILE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+export const STORAGE_STALE_DIRECTORY_WARNING = "Could not remove an old empty folder:";
+export const STORAGE_STALE_REMOVAL_WARNING = "Removed an old leftover file:";
+export const FILE_LOCK_LOST_MESSAGE = "The file lock was taken over before the write finished";
+const STORAGE_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+export const STORAGE_ENGINE_FILE_PATTERNS: readonly RegExp[] = [
+  new RegExp(`^\\.${STORAGE_UUID}(\\.${STORAGE_UUID})?\\.tmp$`, "u"),
+  new RegExp(`^wake\\.active\\.${STORAGE_UUID}(\\.attempt\\.[1-9]\\d*)?\\.json$`, "u"),
+  /^wake\.launching$/u,
+];
+export const STORAGE_CLAIM_FILE = new RegExp(`^${STORAGE_UUID}\\.json$`, "u");
+export const STORAGE_LEGACY_RECEIPTS_DIRECTORY = "receipts";
+export const STORAGE_LEGACY_ATTEMPTS_DIRECTORY = "attempts";
+export const STORAGE_LEGACY_RECEIPT_FILE = /^[0-9a-f]{64}\.json$/u;
+export const STORAGE_LEGACY_ATTEMPT_FILE = /^[1-9]\d*\.json$/u;

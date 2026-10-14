@@ -1,30 +1,29 @@
-import { execFile } from "node:child_process";
 import {
+  chmodSync,
+  existsSync,
   lstatSync,
-  mkdtempSync,
   readFileSync,
+  readdirSync,
   symlinkSync,
   utimesSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import {
+  childEnvironment,
+  execFileAsync,
+  exitCode,
+  moduleUrl,
+  temporaryRoot,
+} from "../../test-support/tracing/delivery.js";
 import { createCaptureStore } from "./capture-store.js";
-import { CAPTURE_RECONSTRUCTION_JOB_KIND } from "./constants.js";
 import type { CaptureInput } from "./models.js";
-import { eventPath, identifierHash, receiptPath } from "./paths.js";
+import { eventPath, identifierHash } from "./paths.js";
 import { ensurePrivateDirectory } from "./utils/atomic-file.js";
-
-const execFileAsync = promisify(execFile);
-
-function temporaryRoot(): string {
-  return mkdtempSync(join(tmpdir(), "plugins-base-capture-"));
-}
 
 function captureInput(eventId = "native-event-1"): CaptureInput {
   return {
@@ -41,55 +40,6 @@ function captureInput(eventId = "native-event-1"): CaptureInput {
   };
 }
 
-function compactableRunInput(
-  eventId: string,
-  eventKind: "run-post" | "run-patch" = "run-post",
-): CaptureInput {
-  return {
-    ...captureInput(eventId),
-    runId: "run-compactable",
-    eventKind,
-    normalizedPayload:
-      eventKind === "run-post"
-        ? {
-            operation: "post",
-            integration: "claude-code",
-            privacyMode: "full",
-            run: {
-              id: "run-compactable",
-              name: "compactable",
-              run_type: "chain",
-              inputs: { prompt: "i".repeat(40_000) },
-              outputs: { answer: "o".repeat(40_000) },
-            },
-          }
-        : {
-            operation: "patch",
-            integration: "claude-code",
-            privacyMode: "full",
-            run: { id: "run-compactable", name: "compactable", run_type: "chain" },
-            privacyContext: { status: "completed" },
-            patch: {
-              fields: ["outputs", "end_time"],
-              values: { outputs: { answer: "o".repeat(40_000) }, end_time: 123 },
-            },
-          },
-  };
-}
-
-function childEnvironment(): NodeJS.ProcessEnv {
-  return {
-    PATH: process.env.PATH,
-    HOME: process.env.HOME,
-    TMPDIR: process.env.TMPDIR,
-    CI: "1",
-  };
-}
-
-function moduleUrl(relativePath: string): string {
-  return pathToFileURL(join(process.cwd(), relativePath)).href;
-}
-
 function createDirectoryLink(target: string, path: string): void {
   symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
 }
@@ -101,7 +51,7 @@ async function runCaptureChild(root: string, input: CaptureInput): Promise<strin
     process.execPath,
     [fileURLToPath(new URL("./fixtures/capture-worker.mjs", import.meta.url)), url, inputArg, root],
     {
-      env: childEnvironment(),
+      env: childEnvironment(process.env.HOME ?? tmpdir()),
       timeout: 10_000,
     },
   );
@@ -109,19 +59,13 @@ async function runCaptureChild(root: string, input: CaptureInput): Promise<strin
 }
 
 describe("immutable capture storage", () => {
-  it("rejects invalid imported timing and delivery counts before writing and after reload", async () => {
+  it("rejects invalid imported timing before writing and after reload", async () => {
     const root = temporaryRoot();
     const store = createCaptureStore(root);
     const input = {
       ...captureInput(),
       sourceAgeStartedAtMs: 123,
-      priorDeliveryAttempts: 2,
     };
-    for (const priorDeliveryAttempts of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, null, "2"]) {
-      await expect(
-        store.capture({ ...input, priorDeliveryAttempts } as CaptureInput),
-      ).resolves.toMatchObject({ status: "failed", code: "SERIALIZATION_FAILED" });
-    }
     for (const sourceAgeStartedAtMs of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, null, "123"]) {
       await expect(
         store.capture({ ...input, sourceAgeStartedAtMs } as CaptureInput),
@@ -131,14 +75,9 @@ describe("immutable capture storage", () => {
     await expect(store.capture(input)).resolves.toMatchObject({ status: "published" });
     const path = eventPath(root, input);
     const saved = JSON.parse(readFileSync(path, "utf8"));
-    await expect(store.read(input)).resolves.toMatchObject({
-      sourceAgeStartedAtMs: 123,
-      priorDeliveryAttempts: 2,
-    });
+    await expect(store.read(input)).resolves.toMatchObject({ sourceAgeStartedAtMs: 123 });
     writeFileSync(path, JSON.stringify({ ...saved, sourceAgeStartedAtMs: -1 }));
     await expect(store.read(input)).rejects.toThrow("Stored source age");
-    writeFileSync(path, JSON.stringify({ ...saved, priorDeliveryAttempts: -1 }));
-    await expect(store.read(input)).rejects.toThrow("prior delivery attempts");
   });
 
   it("keeps event payload and turn evidence together and distinguishes revisions of one run", async () => {
@@ -253,287 +192,6 @@ describe("immutable capture storage", () => {
     });
   });
 
-  it("compacts run payload values while retaining immutable replay identity", async () => {
-    const root = temporaryRoot();
-    const store = createCaptureStore(root);
-    const input = compactableRunInput("compact-post");
-    await expect(store.capture(input)).resolves.toMatchObject({ status: "published" });
-    const original = (await store.read(input))!;
-    const path = eventPath(root, input);
-    const originalSize = readFileSync(path).byteLength;
-
-    await expect(store.compact(input, original)).resolves.toMatchObject({
-      status: "compacted",
-      record: {
-        version: 3,
-        compaction: {
-          version: 1,
-          originalContentDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
-          fields: {
-            inputs: { state: "value", digest: expect.stringMatching(/^[0-9a-f]{64}$/u) },
-            outputs: { state: "value", digest: expect.stringMatching(/^[0-9a-f]{64}$/u) },
-          },
-        },
-      },
-    });
-    await expect(store.compact(input, original)).resolves.toMatchObject({
-      status: "already-compacted",
-    });
-    const compacted = (await store.read(input))!;
-    expect(compacted.normalizedPayload).not.toHaveProperty("run.inputs");
-    expect(compacted.normalizedPayload).not.toHaveProperty("run.outputs");
-    expect(readFileSync(path).byteLength).toBeLessThan(originalSize);
-    await expect(store.capture(input)).resolves.toMatchObject({
-      status: "duplicate",
-      record: {
-        compaction: { originalContentDigest: compacted.compaction?.originalContentDigest },
-      },
-    });
-    await expect(
-      store.capture({ ...input, normalizedPayload: { operation: "post", changed: true } }),
-    ).resolves.toEqual({ status: "conflict" });
-  });
-
-  it("cleans reconstruction snapshots after delivery and preserves capture identity", async () => {
-    const root = temporaryRoot();
-    const store = createCaptureStore(root);
-    const input: CaptureInput = {
-      ...captureInput("reconstruction-cleanup"),
-      runId: "reconstruction:job-1",
-      eventKind: CAPTURE_RECONSTRUCTION_JOB_KIND,
-      normalizedPayload: {
-        jobId: "job-1",
-        sourceSnapshots: [{ sourceRef: "source-1", submission: { run: { id: "run-1" } } }],
-      },
-    };
-    await store.capture(input);
-    const original = (await store.read(input))!;
-    const destination = input.destinationFingerprint;
-
-    await expect(store.compactReconstructionJob(input, original, destination)).resolves.toEqual({
-      status: "not-delivered",
-    });
-    await store.recordOutcome({ ...input, destination, outcome: "delivered" });
-    await expect(
-      store.compactReconstructionJob(input, original, destination),
-    ).resolves.toMatchObject({
-      status: "compacted",
-      record: {
-        version: 2,
-        normalizedPayload: { jobId: "job-1" },
-        sourceSnapshotCleanup: {
-          version: 1,
-          originalContentDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
-        },
-      },
-    });
-    await expect(store.capture(input)).resolves.toMatchObject({
-      status: "duplicate",
-      record: { sourceSnapshotCleanup: { version: 1 } },
-    });
-    await expect(
-      store.capture({ ...input, normalizedPayload: { jobId: "job-1", sourceSnapshots: [] } }),
-    ).resolves.toEqual({ status: "conflict" });
-    await expect(
-      store.compactReconstructionJob(input, original, destination),
-    ).resolves.toMatchObject({ status: "already-compacted" });
-
-    unlinkSync(receiptPath(root, input, destination));
-    await expect(store.compactReconstructionJob(input, original, destination)).resolves.toEqual({
-      status: "not-delivered",
-    });
-  });
-
-  it("keeps reconstruction snapshots for dropped or wrong-scope receipts", async () => {
-    const root = temporaryRoot();
-    const store = createCaptureStore(root);
-    const input: CaptureInput = {
-      ...captureInput("reconstruction-wrong-scope"),
-      runId: "reconstruction:wrong-scope",
-      eventKind: CAPTURE_RECONSTRUCTION_JOB_KIND,
-      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
-    };
-    await store.capture(input);
-    const original = (await store.read(input))!;
-    const destination = input.destinationFingerprint;
-    await store.recordOutcome({ ...input, destination, outcome: "delivered" });
-    const path = receiptPath(root, input, destination);
-    const receipt = JSON.parse(readFileSync(path, "utf8"));
-    receipt.sessionId = "another-session";
-    writeFileSync(path, JSON.stringify(receipt));
-
-    await expect(store.compactReconstructionJob(input, original, destination)).resolves.toEqual({
-      status: "not-delivered",
-    });
-    await expect(store.read(input)).resolves.toMatchObject({
-      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
-    });
-
-    const droppedInput: CaptureInput = {
-      ...input,
-      eventId: "reconstruction-dropped",
-    };
-    await store.capture(droppedInput);
-    const droppedOriginal = (await store.read(droppedInput))!;
-    await store.recordOutcome({
-      ...droppedInput,
-      destination,
-      outcome: "dropped",
-      reason: "expired",
-    });
-    await expect(
-      store.compactReconstructionJob(droppedInput, droppedOriginal, destination),
-    ).resolves.toEqual({ status: "not-delivered" });
-    await expect(store.read(droppedInput)).resolves.toMatchObject({
-      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
-    });
-  });
-
-  it("rejects malformed reconstruction cleanup markers", async () => {
-    const root = temporaryRoot();
-    const store = createCaptureStore(root);
-    const input: CaptureInput = {
-      ...captureInput("reconstruction-invalid-marker"),
-      runId: "reconstruction:invalid-marker",
-      eventKind: CAPTURE_RECONSTRUCTION_JOB_KIND,
-      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
-    };
-    await store.capture(input);
-    const original = (await store.read(input))!;
-    const destination = input.destinationFingerprint;
-    await store.recordOutcome({ ...input, destination, outcome: "delivered" });
-    await store.compactReconstructionJob(input, original, destination);
-    const path = eventPath(root, input);
-    const compacted = JSON.parse(readFileSync(path, "utf8"));
-
-    for (const invalid of [
-      {
-        ...compacted,
-        sourceSnapshotCleanup: { ...compacted.sourceSnapshotCleanup, originalContentDigest: "bad" },
-      },
-      {
-        ...compacted,
-        normalizedPayload: { ...compacted.normalizedPayload, sourceSnapshots: [] },
-      },
-      { ...compacted, eventKind: "tool-result" },
-    ]) {
-      writeFileSync(path, JSON.stringify(invalid));
-      await expect(store.read(input)).rejects.toThrow(
-        "Invalid reconstruction source snapshot cleanup marker",
-      );
-    }
-  });
-
-  it("limits reconstruction cleanup to the capture destination and job kind", async () => {
-    const root = temporaryRoot();
-    const store = createCaptureStore(root);
-    const reconstructionInput: CaptureInput = {
-      ...captureInput("reconstruction-wrong-destination"),
-      runId: "reconstruction:wrong-destination",
-      eventKind: CAPTURE_RECONSTRUCTION_JOB_KIND,
-      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
-    };
-    await store.capture(reconstructionInput);
-    const originalReconstruction = (await store.read(reconstructionInput))!;
-    await store.recordOutcome({
-      ...reconstructionInput,
-      destination: "destination-b",
-      outcome: "delivered",
-    });
-    await expect(
-      store.compactReconstructionJob(reconstructionInput, originalReconstruction, "destination-b"),
-    ).resolves.toMatchObject({ status: "failed" });
-
-    const ordinaryInput = {
-      ...captureInput("ordinary-source-snapshots"),
-      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
-    };
-    await store.capture(ordinaryInput);
-    const originalOrdinary = (await store.read(ordinaryInput))!;
-    await store.recordOutcome({
-      ...ordinaryInput,
-      destination: ordinaryInput.destinationFingerprint,
-      outcome: "delivered",
-    });
-    await expect(
-      store.compactReconstructionJob(
-        ordinaryInput,
-        originalOrdinary,
-        ordinaryInput.destinationFingerprint,
-      ),
-    ).resolves.toMatchObject({ status: "failed" });
-    await expect(store.read(reconstructionInput)).resolves.toMatchObject({
-      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
-    });
-    await expect(store.read(ordinaryInput)).resolves.toMatchObject({
-      normalizedPayload: { sourceSnapshots: [{ sourceRef: "source-1" }] },
-    });
-  });
-
-  it("compacts only present patch values and preserves non-payload patch fields", async () => {
-    const root = temporaryRoot();
-    const store = createCaptureStore(root);
-    const input = compactableRunInput("compact-patch", "run-patch");
-    await store.capture(input);
-    const original = (await store.read(input))!;
-    const compacted = await store.compact(input, original);
-    expect(compacted).toMatchObject({
-      status: "compacted",
-      record: {
-        normalizedPayload: { patch: { fields: ["end_time"], values: { end_time: 123 } } },
-        compaction: {
-          fields: {
-            inputs: { state: "absent" },
-            outputs: { state: "value" },
-          },
-        },
-      },
-    });
-    if (compacted.status === "compacted")
-      expect(compacted.record.normalizedPayload).not.toHaveProperty("patch.values.outputs");
-  });
-
-  it("rejects malformed compacted field markers and leaves unrelated records unchanged", async () => {
-    const root = temporaryRoot();
-    const store = createCaptureStore(root);
-    const input = compactableRunInput("compact-malformed");
-    await store.capture(input);
-    const original = (await store.read(input))!;
-    await store.compact(input, original);
-    const path = eventPath(root, input);
-    const compacted = JSON.parse(readFileSync(path, "utf8"));
-    compacted.compaction.fields.inputs.digest = "bad";
-    writeFileSync(path, JSON.stringify(compacted));
-    await expect(store.read(input)).rejects.toThrow("Invalid compacted capture field");
-
-    const unrelated = captureInput("unrelated-kind");
-    await store.capture(unrelated);
-    const record = (await store.read(unrelated))!;
-    await expect(store.compact(unrelated, record)).resolves.toEqual({ status: "changed" });
-    await expect(store.read(unrelated)).resolves.toMatchObject({ version: 2 });
-  });
-
-  it("lets reads observe either side of an atomic compaction and keeps one receipt per record", async () => {
-    const root = temporaryRoot();
-    const store = createCaptureStore(root);
-    const input = compactableRunInput("compact-race");
-    await store.capture(input);
-    const original = (await store.read(input))!;
-    const reads = Array.from({ length: 24 }, () => store.read(input));
-    const [compaction, ...observed] = await Promise.all([store.compact(input, original), ...reads]);
-    expect(compaction.status).toBe("compacted");
-    expect(observed).toHaveLength(24);
-    expect(observed.every((record) => record?.version === 2 || record?.version === 3)).toBe(true);
-    const receipts = await Promise.all([
-      store.recordOutcome({ ...input, destination: "project-a", outcome: "delivered" }),
-      store.recordOutcome({ ...input, destination: "project-a", outcome: "delivered" }),
-    ]);
-    expect(receipts).toHaveLength(2);
-    expect(receipts.map(({ status }) => status)).toEqual(
-      expect.arrayContaining(["duplicate", "recorded"]),
-    );
-  });
-
   it("enumerates committed events with their persisted capture times", async () => {
     const root = temporaryRoot();
     const store = createCaptureStore(root);
@@ -557,19 +215,17 @@ describe("immutable capture storage", () => {
     });
   });
 
-  it("enumerates only the requested turn and validates its live event files", async () => {
+  it("enumerates only the requested turn", async () => {
     const root = temporaryRoot();
     const store = createCaptureStore(root);
     const first = captureInput("turn-one-event");
     const otherTurn = { ...captureInput("turn-two-event"), turnId: "turn-2" };
     await store.capture(first);
     await store.capture(otherTurn);
-    writeFileSync(eventPath(root, otherTurn), "invalid record");
-
     await expect(
       store.enumerateTurn(first.integration, first.sessionId, first.turnId),
     ).resolves.toMatchObject([{ record: { eventId: first.eventId, runId: first.runId } }]);
-    await expect(store.enumerate(first.integration, first.sessionId)).rejects.toThrow();
+    await expect(store.enumerate(first.integration, first.sessionId)).resolves.toHaveLength(2);
   });
 
   it("discovers session IDs from validated records instead of directory hashes", async () => {
@@ -628,7 +284,7 @@ describe("immutable capture storage", () => {
     ]);
   });
 
-  it("rejects a symlinked foreign session directory before following it", async () => {
+  it("does not follow a symlinked session directory", async () => {
     const input = captureInput();
     const outsideRoot = temporaryRoot();
     await createCaptureStore(outsideRoot).capture(input);
@@ -655,10 +311,10 @@ describe("immutable capture storage", () => {
 
     await expect(
       createCaptureStore(linkedRoot).enumerateSessions(input.integration),
-    ).rejects.toThrow("Invalid capture session directory");
+    ).resolves.toEqual([]);
   });
 
-  it("rejects a record whose session ID does not match its hashed directory", async () => {
+  it("removes a record whose session ID does not match its hashed directory", async () => {
     const input = captureInput();
     const root = temporaryRoot();
     const store = createCaptureStore(root);
@@ -666,21 +322,57 @@ describe("immutable capture storage", () => {
     const recordPath = eventPath(root, input);
     const record = (await store.read(input))!;
     writeFileSync(recordPath, JSON.stringify({ ...record, sessionId: "invented-session" }));
-    await expect(store.enumerateSessions(input.integration)).rejects.toThrow(
-      "Capture event namespace does not match",
-    );
+    await expect(store.enumerateSessions(input.integration)).resolves.toEqual([]);
+    expect(existsSync(recordPath)).toBe(false);
   });
 
-  it("fails enumeration when a committed event is malformed", async () => {
+  it("removes a malformed event and ignores files that are not saved events", async () => {
     const root = temporaryRoot();
     const input = captureInput();
     const store = createCaptureStore(root);
     await store.capture(input);
     const record = (await store.read(input))!;
-    writeFileSync(eventPath(root, input), JSON.stringify({ ...record, version: 1 }));
-    await expect(store.enumerate(input.integration, input.sessionId)).rejects.toThrow(
-      "Unsupported capture record",
+    const kept = { ...input, eventId: "kept" };
+    await store.capture(kept);
+    writeFileSync(eventPath(root, input), `${JSON.stringify(record).slice(0, 40)}`);
+    writeFileSync(join(dirname(eventPath(root, input)), ".DS_Store"), "x");
+    writeFileSync(join(dirname(eventPath(root, input)), "notes.txt"), "x");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(store.enumerate(input.integration, input.sessionId)).resolves.toMatchObject([
+      { record: { eventId: "kept" } },
+    ]);
+    expect(existsSync(eventPath(root, input))).toBe(false);
+    expect(existsSync(join(dirname(eventPath(root, input)), ".DS_Store"))).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
+    writeFileSync(
+      eventPath(root, kept),
+      JSON.stringify({ ...(await store.read(kept)), runId: "" }),
     );
+    await expect(store.enumerate(input.integration, input.sessionId)).resolves.toEqual([]);
+    expect(existsSync(eventPath(root, kept))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it("leaves a record it cannot judge in place and warns", async () => {
+    const root = temporaryRoot();
+    const input = captureInput();
+    const store = createCaptureStore(root);
+    await store.capture(input);
+    const path = eventPath(root, input);
+    const record = (await store.read(input))!;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    writeFileSync(path, JSON.stringify({ ...record, version: 3 }));
+    await expect(store.enumerate(input.integration, input.sessionId)).resolves.toEqual([]);
+    expect(existsSync(path)).toBe(true);
+    if (process.platform !== "win32") {
+      writeFileSync(path, JSON.stringify(record));
+      chmodSync(path, 0o000);
+      await expect(store.enumerate(input.integration, input.sessionId)).resolves.toEqual([]);
+      expect(existsSync(path)).toBe(true);
+      chmodSync(path, 0o600);
+    }
+    expect(warn).toHaveBeenCalledTimes(process.platform === "win32" ? 1 : 2);
+    warn.mockRestore();
   });
 
   it("rejects symlinked directories during event enumeration", async () => {
@@ -747,6 +439,9 @@ describe("immutable capture storage", () => {
     const record = await store.read(input);
     writeFileSync(path, JSON.stringify({ ...record, sessionId: "another-session" }));
     await expect(store.read(input)).rejects.toThrow("Capture namespace does not match");
+    await expect(store.readOutcome(input, "destination-a")).resolves.toMatchObject({
+      status: "failed",
+    });
   });
 
   it("keeps each destination pending until its own immutable terminal receipt", async () => {
@@ -789,32 +484,92 @@ describe("immutable capture storage", () => {
     });
   });
 
-  it("rejects malformed persisted receipt fields", async () => {
+  it("rejects a delivery state that was damaged on disk", async () => {
     const root = temporaryRoot();
     const store = createCaptureStore(root);
     const input = captureInput();
-    const destination = "project-a";
     await store.capture(input);
-    await store.recordOutcome({
-      ...input,
-      destination,
-      outcome: "delivered",
-      reason: "completed",
-    });
-    const result = await store.readOutcome(input, destination);
-    if (result.status !== "settled") throw new Error("Expected a settled receipt");
-    const path = receiptPath(root, input, destination);
-    const malformedReceipts = [
-      { ...result.receipt, reason: "" },
-      { ...result.receipt, recordedAt: "invalid" },
-    ];
-    for (const receipt of malformedReceipts) {
-      writeFileSync(path, JSON.stringify(receipt));
-      await expect(store.readOutcome(input, destination)).resolves.toMatchObject({
+    await store.recordOutcome({ ...input, destination: "project-a", outcome: "delivered" });
+    const path = eventPath(root, input);
+    const saved = JSON.parse(readFileSync(path, "utf8")) as {
+      delivery: { outcomes: Record<string, Record<string, unknown>> };
+    };
+    for (const damage of [{ reason: "" }, { recordedAt: "invalid" }, { outcome: "lost" }]) {
+      const outcomes = { "project-a": { ...saved.delivery.outcomes["project-a"], ...damage } };
+      writeFileSync(path, JSON.stringify({ ...saved, delivery: { ...saved.delivery, outcomes } }));
+      await expect(store.readOutcome(input, "project-a")).resolves.toMatchObject({
         status: "failed",
       });
     }
   });
+
+  it("saves delivery failures per destination inside the saved event", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input = captureInput();
+    await store.capture(input);
+    await store.recordRetry(input, "project-a", { failures: 2, notBeforeMs: 5_000 });
+    await store.recordRetry(input, "project-b", { failures: 1, notBeforeMs: 1_000 });
+    expect((await store.read(input))?.delivery?.retries).toEqual({
+      "project-a": { failures: 2, notBeforeMs: 5_000 },
+      "project-b": { failures: 1, notBeforeMs: 1_000 },
+    });
+    await expect(store.capture(input)).resolves.toMatchObject({ status: "duplicate" });
+    expect((await store.read(input))?.delivery?.retries["project-a"]?.failures).toBe(2);
+    await expect(
+      store.recordRetry({ ...input, eventId: "missing" }, "project-a", {
+        failures: 1,
+        notBeforeMs: 1,
+      }),
+    ).rejects.toThrow("disappeared");
+  });
+
+  it("keeps one outcome per destination when the same outcome is recorded at once", async () => {
+    const store = createCaptureStore(temporaryRoot());
+    const input = captureInput();
+    await store.capture(input);
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        store.recordOutcome({ ...input, destination: "project-a", outcome: "delivered" }),
+      ),
+    );
+    expect(results.filter(({ status }) => status === "recorded")).toHaveLength(1);
+    expect(results.filter(({ status }) => status === "duplicate")).toHaveLength(5);
+  });
+
+  it("removes a saved event with its empty folders and tolerates a repeat", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    const input = captureInput();
+    await store.capture(input);
+    await store.remove(input, { forgetTurn: true });
+    await store.remove(input, { forgetTurn: true });
+    await expect(store.read(input)).resolves.toBeUndefined();
+    expect(readdirSync(root)).toEqual([]);
+    await expect(store.capture(input)).resolves.toMatchObject({ status: "published" });
+  });
+
+  it("keeps a sibling event when another event of the same turn is removed", async () => {
+    const root = temporaryRoot();
+    const store = createCaptureStore(root);
+    await store.capture(captureInput("first"));
+    await store.capture(captureInput("second"));
+    await store.remove(captureInput("first"));
+    await expect(store.read(captureInput("second"))).resolves.toMatchObject({ eventId: "second" });
+  });
+
+  it("saves events while the same turn is being removed", async () => {
+    const store = createCaptureStore(temporaryRoot());
+    for (let round = 0; round < 10; round += 1) {
+      const results = await Promise.all([
+        store.capture(captureInput(`kept-${round}`)),
+        store
+          .capture(captureInput(`gone-${round}`))
+          .then(() => store.remove(captureInput(`gone-${round}`))),
+      ]);
+      expect(results[0]).toMatchObject({ status: "published" });
+    }
+  }, 60_000);
 
   it("reports serialization failures without publishing a partial event", async () => {
     const store = createCaptureStore(temporaryRoot());
@@ -874,26 +629,6 @@ describe("immutable capture storage", () => {
     await expect(createCaptureStore(linkedRoot).read(input)).rejects.toThrow(
       "Capture path contains a non-directory",
     );
-  });
-
-  it("rejects outcome reads through a symlinked receipt directory", async () => {
-    const input = captureInput();
-    const destination = "project-a";
-    const root = temporaryRoot();
-    const store = createCaptureStore(root);
-    await store.capture(input);
-    const outsideRoot = temporaryRoot();
-    const outsideStore = createCaptureStore(outsideRoot);
-    await outsideStore.capture(input);
-    await outsideStore.recordOutcome({ ...input, destination, outcome: "delivered" });
-    const receiptDirectory = dirname(receiptPath(root, input, destination));
-    const receiptsRoot = dirname(receiptDirectory);
-    const outsideReceiptsRoot = dirname(dirname(receiptPath(outsideRoot, input, destination)));
-    createDirectoryLink(outsideReceiptsRoot, receiptsRoot);
-    await expect(store.readOutcome(input, destination)).resolves.toMatchObject({
-      status: "failed",
-      code: "STORAGE_FAILED",
-    });
   });
 
   it("rejects file links when no-follow flags are unavailable", async () => {
@@ -978,12 +713,12 @@ describe("immutable capture storage", () => {
         contents,
       ],
       {
-        env: childEnvironment(),
+        env: childEnvironment(process.env.HOME ?? tmpdir()),
         timeout: 10_000,
       },
     )
       .then(() => ({ code: 0 }))
-      .catch((error: unknown) => ({ code: errorCode(error) }));
+      .catch((error: unknown) => ({ code: exitCode(error) }));
     expect(child.code).toBe(71);
     expect(() => readFileSync(path)).toThrow();
     await expect(createCaptureStore(root).capture(input)).resolves.toMatchObject({
@@ -994,12 +729,3 @@ describe("immutable capture storage", () => {
     });
   }, 20_000);
 });
-
-function errorCode(error: unknown): number | undefined {
-  return error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    typeof error.code === "number"
-    ? error.code
-    : undefined;
-}

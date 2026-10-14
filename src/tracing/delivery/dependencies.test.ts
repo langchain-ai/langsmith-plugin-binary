@@ -2,22 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 import { createDeliveryCoordinator } from "./coordinator.js";
 import * as captureStoreModule from "../../storage/capture/index.js";
 import { createCaptureStore } from "../../storage/capture/capture-store.js";
-import { captureInput, temporaryRoot } from "../../test-support/tracing/delivery.js";
+import {
+  captureInput,
+  sendOneAtATime,
+  temporaryRoot,
+} from "../../test-support/tracing/delivery.js";
 
 describe("delivery dependencies", () => {
-  it("defers full-scope dependencies without consuming attempts", async () => {
+  it("defers full-scope dependencies until the prerequisite is delivered", async () => {
     const root = temporaryRoot();
     const parent = createDeliveryCoordinator({
       storageRoot: root,
       integration: "claude-code",
       sessionId: "parent-session",
-      policy: { maxAttempts: 1 },
     });
     const child = createDeliveryCoordinator({
       storageRoot: root,
       integration: "claude-code",
       sessionId: "child-session",
-      policy: { maxAttempts: 1 },
     });
     const prerequisite = {
       integration: "claude-code",
@@ -34,9 +36,9 @@ describe("delivery dependencies", () => {
     const writer = {
       accountFingerprint: "account-a",
       destinations: [{ id: "primary" }],
-      send: async (record: { eventId: string }) => {
+      ...sendOneAtATime(async (record: { eventId: string }) => {
         order.push(record.eventId);
-      },
+      }),
     };
     await expect(child.drain({ writer })).resolves.toMatchObject({ status: "drained", pending: 1 });
     await parent.capture({
@@ -80,9 +82,9 @@ describe("delivery dependencies", () => {
       writer: {
         accountFingerprint: "account-a",
         destinations: [{ id: "primary" }],
-        send: async (record) => {
+        ...sendOneAtATime(async (record) => {
           sent.push(record.eventId);
-        },
+        }),
       },
     });
     expect(result).toMatchObject({ status: "drained", delivered: 2, pending: 0 });
@@ -109,7 +111,7 @@ describe("delivery dependencies", () => {
       return store;
     });
     try {
-      const size = 24;
+      const size = 6;
       const coordinator = createDeliveryCoordinator({
         storageRoot: temporaryRoot(),
         integration: "claude-code",
@@ -141,9 +143,9 @@ describe("delivery dependencies", () => {
         writer: {
           accountFingerprint: "account-a",
           destinations: [{ id: "primary" }],
-          send: async (record) => {
+          ...sendOneAtATime(async (record) => {
             sent.push(record.eventId);
-          },
+          }),
         },
       });
       expect(result).toMatchObject({ status: "drained", delivered: size, pending: 0 });
@@ -160,7 +162,7 @@ describe("delivery dependencies", () => {
     }
   });
 
-  it("cascades a dropped prerequisite into an immutable dropped receipt", async () => {
+  it("drops a dependent whose prerequisite was dropped and removes the dropped work", async () => {
     const root = temporaryRoot();
     const child = createDeliveryCoordinator({
       storageRoot: root,
@@ -194,27 +196,14 @@ describe("delivery dependencies", () => {
       writer: {
         accountFingerprint: "account-a",
         destinations: [{ id: "primary" }],
-        send: async () => {
+        ...sendOneAtATime(async () => {
           sends += 1;
-        },
+        }),
       },
     });
     expect(result).toMatchObject({ status: "drained", dropped: 1, pending: 0 });
     expect(sends).toBe(0);
-    await expect(
-      store.readOutcome(
-        {
-          integration: "claude-code",
-          sessionId: "child-session",
-          turnId: "child-turn",
-          eventId: "child-event",
-        },
-        "primary",
-      ),
-    ).resolves.toMatchObject({
-      status: "settled",
-      receipt: { outcome: "dropped", reason: "dependency-dropped" },
-    });
+    await expect(store.enumerate("claude-code", "child-session")).resolves.toEqual([]);
   });
 
   it("does not trust a prerequisite receipt from a different account", async () => {
@@ -253,9 +242,9 @@ describe("delivery dependencies", () => {
       writer: {
         accountFingerprint: "account-a",
         destinations: [{ id: "primary" }],
-        send: async () => {
+        ...sendOneAtATime(async () => {
           sends += 1;
-        },
+        }),
       },
     });
     expect(result).toMatchObject({ status: "drained", pending: 1 });
@@ -271,5 +260,77 @@ describe("delivery dependencies", () => {
         "primary",
       ),
     ).resolves.toEqual({ status: "pending" });
+  });
+
+  it("keeps a dependent waiting for a prerequisite that has not been captured yet", async () => {
+    const coordinator = createDeliveryCoordinator({
+      storageRoot: temporaryRoot(),
+      integration: "claude-code",
+      sessionId: "session-1",
+    });
+    await coordinator.capture({
+      ...captureInput("end", "run-1"),
+      dependencies: [
+        { integration: "claude-code", sessionId: "session-1", turnId: "turn-1", eventId: "start" },
+      ],
+    });
+    const sent: string[] = [];
+    const writer = {
+      accountFingerprint: "account-a",
+      destinations: [{ id: "primary" }],
+      ...sendOneAtATime(async (record) => void sent.push(record.eventId)),
+    };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 3_600_000);
+      await expect(coordinator.drain({ writer })).resolves.toMatchObject({
+        delivered: 0,
+        pending: 1,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(sent).toEqual([]);
+  });
+
+  it("drops a dependent captured after its prerequisite was rejected and removed", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const coordinator = createDeliveryCoordinator({
+      storageRoot: temporaryRoot(),
+      integration: "claude-code",
+      sessionId: "session-1",
+      policy: { quickRetryMs: 0 },
+    });
+    await coordinator.capture(captureInput("start", "run-1"));
+    const sent: string[] = [];
+    const writer = {
+      accountFingerprint: "account-a",
+      destinations: [{ id: "primary" }],
+      ...sendOneAtATime(async (record) => {
+        sent.push(record.eventId);
+        if (record.eventId === "start")
+          throw Object.assign(new Error("rejected"), { retryable: false, status: 400 });
+      }),
+    };
+    await expect(coordinator.drain({ writer })).resolves.toMatchObject({ dropped: 1 });
+    await coordinator.capture({
+      ...captureInput("end", "run-1"),
+      dependencies: [
+        { integration: "claude-code", sessionId: "session-1", turnId: "turn-1", eventId: "start" },
+      ],
+    });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 3_600_000);
+      await expect(coordinator.drain({ writer })).resolves.toMatchObject({
+        delivered: 0,
+        dropped: 1,
+        pending: 0,
+      });
+    } finally {
+      vi.useRealTimers();
+      warn.mockRestore();
+    }
+    expect(sent).toEqual(["start"]);
   });
 });

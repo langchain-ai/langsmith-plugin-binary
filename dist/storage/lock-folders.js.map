@@ -1,0 +1,1 @@
+{"version":3,"file":"lock-folders.js","sourceRoot":"","sources":["../../src/storage/lock-folders.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,oBAAoB,EAAE,MAAM,2BAA2B,CAAC;AACjE,OAAO,EAAE,0BAA0B,EAAE,MAAM,gBAAgB,CAAC;AAE5D,MAAM,CAAC,KAAK,UAAU,sBAAsB,CAAC,QAAgB,EAAE,IAAY;IACzE,MAAM,oBAAoB,CAAC,GAAG,QAAQ,GAAG,0BAA0B,EAAE,EAAE,IAAI,CAAC,CAAC;AAC/E,CAAC"}

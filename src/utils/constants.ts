@@ -6,3 +6,6 @@ export const FILE_EXISTS_CODE = "EEXIST";
 export const PERMISSION_DENIED_CODE = "EPERM";
 export const FILE_ACCESS_DENIED_CODE = "EACCES";
 export const FILE_BUSY_CODE = "EBUSY";
+export const DIRECTORY_NOT_EMPTY_CODE = "ENOTEMPTY";
+export const INVALID_ARGUMENT_CODE = "EINVAL";
+export const TEMPLATE_PLACEHOLDER = /\{(\w+)\}/gu;

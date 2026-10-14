@@ -5,11 +5,6 @@ import { storedAttributionReadiness } from "../lifecycle/closure.js";
 import { projectSubmission } from "../lifecycle/projection.js";
 export function projectCapture(record, integration) {
     const rawPayload = canonicalJsonObject(record.normalizedPayload, "Stored run payload");
-    if (record.compaction?.fields.inputs.state === "value") {
-        const run = requirePlainRecord(rawPayload["run"], "Stored compacted run");
-        if (!Object.hasOwn(run, "inputs"))
-            run["inputs"] = {};
-    }
     const submission = projectSubmission({ ...rawPayload, metadata: record.metadataProvenance }, integration);
     if (submission.status === "deferred")
         return undefined;

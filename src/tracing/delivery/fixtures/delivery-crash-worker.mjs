@@ -9,7 +9,8 @@ await c.drain({
   writer: {
     accountFingerprint: "account-a",
     destinations: [{ id: "primary" }],
-    send: async (record) => {
+    batchLimits: { maxRecords: 1, maxBytes: Infinity },
+    sendBatch: async ([record]) => {
       writeFileSync(process.argv[4], record.runId);
       process.exit(71);
     },

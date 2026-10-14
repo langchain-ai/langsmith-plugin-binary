@@ -14,6 +14,9 @@ export declare const UPLOAD_REPLICA_IDENTITY_UPDATE_FIELDS: ReadonlySet<string>;
 export declare const UPLOAD_REPLICA_PATCH_UPDATE_FIELDS: ReadonlySet<string>;
 export declare const UPLOAD_PATCH_FIELDS: ReadonlySet<NormalizedRunPatchField>;
 export declare const UPLOAD_REDACTED_FIELDS: readonly ["inputs", "outputs"];
+export declare const UPLOAD_FAILED_MESSAGE = "LangSmith upload failed";
+export declare const UPLOAD_RETRYABLE_STATUSES: readonly number[];
+export declare const UPLOAD_SDK_MAX_RETRIES = 0;
 export declare const UPLOAD_BUN_RUNTIME = "bun";
 export declare const UPLOAD_NODE_RUNTIME = "node";
 export declare const UPLOAD_DOTTED_ORDER_SEGMENT: RegExp;
@@ -23,8 +26,9 @@ export declare const UPLOAD_BATCH_LIMITS: {
     readonly maxRuns: 100;
     readonly maxBytes: number;
 };
-export declare const UPLOAD_FAILED_MESSAGE = "LangSmith upload failed";
 export declare const UPLOAD_ALREADY_RECEIVED_MESSAGE = "already received";
 export declare const UPLOAD_DEADLINE_MESSAGE = "LangSmith upload did not finish in time";
 export declare const UPLOAD_RECEIPT_MISSING_MESSAGE = "The upload returned no receipt";
+export declare const UPLOAD_ERROR_NAME = "UploadError";
+export declare const UPLOAD_SERVER_ERROR_MIN_STATUS = 500;
 //# sourceMappingURL=constants.d.ts.map

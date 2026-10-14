@@ -7,6 +7,7 @@ import type { CodingAgentMetadataOptions } from "../../metadata/index.js";
 import { createLangSmithUploadWriter } from "./index.js";
 import { createUploadClient } from "./client.js";
 import { UPLOAD_REQUEST_TIMEOUT_MS } from "./constants.js";
+import { UploadError } from "./errors.js";
 import { resolveUploadDestinationFingerprint } from "./identity.js";
 import type {
   LangSmithUploadDestinationConfig,
@@ -22,6 +23,12 @@ const CONFLICT_KEY = "synthetic-conflict-key";
 const OTHER_CONFLICT_KEY = "synthetic-other-conflict-key";
 const DUPLICATE_CREATE_KEY = "synthetic-duplicate-create-key";
 const MISSING_KEY = "synthetic-missing-key";
+const STATUS_KEYS = {
+  503: "synthetic-503-key",
+  429: "synthetic-429-key",
+  409: "synthetic-409-key",
+  408: "synthetic-408-key",
+} as const;
 const PRIVATE_MARKER = "synthetic-private-upload-marker";
 
 let server: ReturnType<typeof createServer>;
@@ -153,6 +160,14 @@ function recordRequest(request: IncomingMessage, response: ServerResponse): void
     if (request.headers["x-api-key"] === MISSING_KEY) {
       response.writeHead(404, { "content-type": "application/json" });
       response.end(JSON.stringify({ detail: "Run not found" }));
+      return;
+    }
+    const status = Object.entries(STATUS_KEYS).find(
+      ([, key]) => key === request.headers["x-api-key"],
+    );
+    if (status !== undefined) {
+      response.writeHead(Number(status[0]), { "content-type": "application/json" });
+      response.end("{}");
       return;
     }
     if (request.headers["x-api-key"] === FAILING_KEY) {
@@ -476,6 +491,50 @@ describe("bound LangSmith upload writer", () => {
       expect(JSON.stringify(request.payload)).not.toContain(PRIVATE_MARKER);
     }
     expect(requests.map(({ payload }) => payload["id"])).toEqual([RUN_ID, RUN_ID]);
+  });
+
+  it("tells apart failures worth retrying from ones the service rejects for good", async () => {
+    const cases = [
+      [STATUS_KEYS[503], true],
+      [STATUS_KEYS[429], true],
+      [STATUS_KEYS[409], true],
+      [STATUS_KEYS[408], true],
+      [FAILING_KEY, false],
+      [MISSING_KEY, false],
+    ] as const;
+    for (const [key, retryable] of cases) {
+      const writer = createLangSmithUploadWriter({
+        redact: true,
+        destinations: [destination(key, "primary-project", "primary-workspace")],
+      });
+      const failure = await writer
+        .send(submission(), destinationByIndex(writer.destinations, 0))
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(UploadError);
+      expect((failure as UploadError).retryable).toBe(retryable);
+      expect((failure as UploadError).status).toEqual(expect.any(Number));
+    }
+    const unreachable = createLangSmithUploadWriter({
+      redact: true,
+      destinations: [
+        { apiKey: PRIMARY_KEY, apiUrl: "http://127.0.0.1:1/api/v1", projectName: "p" },
+      ],
+    });
+    const failure = await unreachable
+      .send(submission(), destinationByIndex(unreachable.destinations, 0))
+      .catch((error: unknown) => error);
+    expect((failure as UploadError).retryable).toBe(true);
+  });
+
+  it("sends a failing upload once and leaves retrying to the delivery backoff", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: true,
+      destinations: [destination(STATUS_KEYS[503], "primary-project", "primary-workspace")],
+    });
+    await expect(
+      writer.send(submission(), destinationByIndex(writer.destinations, 0)),
+    ).rejects.toThrow("LangSmith upload failed");
+    expect(requests).toHaveLength(1);
   });
 
   describe("batch ingest, so token counts are not doubled", () => {

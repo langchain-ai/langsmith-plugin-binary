@@ -537,3 +537,24 @@ it("waits at least three seconds of silence before taking over a claim", async (
     cleanupArea(area);
   }
 });
+
+it("lets a holder confirm its claim is still its own before it commits a write", async () => {
+  const area = createArea();
+  const claimDirectory = `${area.lockPath}${FILE_LOCK_DIRECTORY_SUFFIX}`;
+  const checks: string[] = [];
+  const check = (lock: { assertHeld(): Promise<void> }) =>
+    lock.assertHeld().then(
+      () => checks.push("held"),
+      (error: Error) => checks.push(error.message),
+    );
+  try {
+    await withFileLock(area.lockPath, async (lock) => {
+      await check(lock);
+      for (const name of readdirSync(claimDirectory)) unlinkSync(join(claimDirectory, name));
+      await check(lock);
+    }).catch(() => undefined);
+    expect(checks).toEqual(["held", expect.stringContaining("taken over")]);
+  } finally {
+    cleanupArea(area);
+  }
+});

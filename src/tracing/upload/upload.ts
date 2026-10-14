@@ -19,12 +19,11 @@ import type {
 import { resolveUploadDestinations } from "./destinations.js";
 import {
   UPLOAD_BATCH_LIMITS,
-  UPLOAD_FAILED_MESSAGE,
   UPLOAD_PATCH_FIELDS,
   UPLOAD_RECEIPT_MISSING_MESSAGE,
 } from "./constants.js";
 import { createUploadClientCache } from "./client-cache.js";
-import { isAlreadyReceived } from "./errors.js";
+import { UploadError, isAlreadyReceived } from "./errors.js";
 import { redactSdkOmittedFields } from "./redaction.js";
 import { applyRuntimeMetadata } from "./runtime-metadata.js";
 import { contextForDestination, runIdForDestination } from "./replica-identifiers.js";
@@ -58,7 +57,7 @@ export function createLangSmithUploadWriter(
           ignoreAlreadyReceived,
         );
       } catch (error) {
-        throw new Error(UPLOAD_FAILED_MESSAGE, { cause: error });
+        throw new UploadError(error);
       }
     }
     return prepared.map(({ submission, operation }) => ({

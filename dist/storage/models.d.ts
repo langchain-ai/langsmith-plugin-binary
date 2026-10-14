@@ -21,12 +21,13 @@ export interface LegacyDirectoryFileLockGate {
     birthtimeMs: number;
 }
 export interface FileLockHandle {
+    assertHeld(): Promise<void>;
     release(): Promise<void>;
 }
 export interface FileLockOptions {
     timeoutMs?: number;
 }
-export type FileLockCallback<T> = () => T | Promise<T>;
+export type FileLockCallback<T> = (handle: FileLockHandle) => T | Promise<T>;
 export interface ClaimAttempt {
     filePath: string;
     claimDirectory: string;

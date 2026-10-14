@@ -15,6 +15,7 @@ import {
   FILE_LOCK_ENCODING,
   FILE_LOCK_EXCLUSIVE_FLAG,
   FILE_LOCK_FILE_MODE,
+  FILE_LOCK_LOST_MESSAGE,
   FILE_LOCK_NEGATIVE_TICKET_LIMIT,
   FILE_LOCK_POLL_INTERVAL_MS,
   FILE_LOCK_RELEASE_MESSAGE,
@@ -194,6 +195,10 @@ function hasClaimState(
 function makeHandle(claimDirectory: string, claim: FileLockClaim): FileLockHandle {
   let releasePromise: Promise<void> | undefined;
   return {
+    async assertHeld() {
+      if ((await modifiedAt(claimPath(claimDirectory, claim.id))) === undefined)
+        throw new Error(FILE_LOCK_LOST_MESSAGE);
+    },
     release() {
       stopHeartbeat(claim.id);
       releasePromise ??= removeFile(claimPath(claimDirectory, claim.id)).then((removed) => {
@@ -206,11 +211,17 @@ function makeHandle(claimDirectory: string, claim: FileLockClaim): FileLockHandl
 
 async function beginClaim(filePath: string): Promise<BegunFileLock> {
   const claimDirectory = `${resolve(filePath)}${FILE_LOCK_DIRECTORY_SUFFIX}`;
-  await assertSafeClaimDirectory(claimDirectory);
-  await mkdir(claimDirectory, { recursive: true, mode: FILE_LOCK_DIRECTORY_MODE });
-  await assertSafeClaimDirectory(claimDirectory);
-  await chmod(claimDirectory, FILE_LOCK_DIRECTORY_MODE);
-  return { claimDirectory, claim: await createClaim(claimDirectory) };
+  for (;;) {
+    try {
+      await assertSafeClaimDirectory(claimDirectory);
+      await mkdir(claimDirectory, { recursive: true, mode: FILE_LOCK_DIRECTORY_MODE });
+      await assertSafeClaimDirectory(claimDirectory);
+      await chmod(claimDirectory, FILE_LOCK_DIRECTORY_MODE);
+      return { claimDirectory, claim: await createClaim(claimDirectory) };
+    } catch (error) {
+      if (errorCode(error) !== FILE_MISSING_CODE) throw error;
+    }
+  }
 }
 
 async function assertSafeClaimDirectory(claimDirectory: string): Promise<void> {
@@ -375,6 +386,7 @@ export async function acquireCompatibleDirectoryFileLock(
   const sharedHandle = makeHandle(acquired.claimDirectory, acquired.claim);
   let releasePromise: Promise<void> | undefined;
   return {
+    assertHeld: () => sharedHandle.assertHeld(),
     release() {
       releasePromise ??= (async () => {
         const errors: unknown[] = [];
@@ -436,9 +448,10 @@ export async function withFileLock<T>(
   const deadline = performance.now() + waitMs;
   const acquired = await acquireClaim(filePath, true, deadline);
   if (!acquired) throw new Error(FILE_LOCK_ACQUIRE_MESSAGE);
+  const handle = makeHandle(acquired.claimDirectory, acquired.claim);
   try {
-    return await callback();
+    return await callback(handle);
   } finally {
-    await makeHandle(acquired.claimDirectory, acquired.claim).release();
+    await handle.release();
   }
 }

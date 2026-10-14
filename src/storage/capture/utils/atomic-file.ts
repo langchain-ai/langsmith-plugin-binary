@@ -1,10 +1,36 @@
+import { errorCode } from "../../../utils/errors.js";
 import { constants as fsConstants } from "node:fs";
 import { chmod, link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { randomUUID } from "node:crypto";
-import { CAPTURE_DIRECTORY_MODE, CAPTURE_FILE_MODE } from "../constants.js";
+import {
+  CAPTURE_DIRECTORY_MODE,
+  CAPTURE_DIRECTORY_SETUP_ATTEMPTS,
+  CAPTURE_FILE_MODE,
+  CAPTURE_REMOVED_DIRECTORY_CODES,
+} from "../constants.js";
+import { FILE_MISSING_CODE, FILE_EXISTS_CODE, WINDOWS_PLATFORM } from "../../../utils/constants.js";
 
 export async function ensurePrivateDirectory(root: string, segments: string[]): Promise<string> {
+  return retryRemovedDirectory(() => createPrivateDirectory(root, segments));
+}
+
+export async function retryRemovedDirectory<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const code = errorCode(error);
+      if (
+        !CAPTURE_REMOVED_DIRECTORY_CODES.some((removed) => removed === code) ||
+        attempt >= CAPTURE_DIRECTORY_SETUP_ATTEMPTS
+      )
+        throw error;
+    }
+  }
+}
+
+async function createPrivateDirectory(root: string, segments: string[]): Promise<string> {
   await mkdir(root, { recursive: true, mode: CAPTURE_DIRECTORY_MODE });
   const rootInfo = await lstat(root);
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
@@ -15,7 +41,7 @@ export async function ensurePrivateDirectory(root: string, segments: string[]): 
     try {
       await mkdir(current, { mode: CAPTURE_DIRECTORY_MODE });
     } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
+      if (errorCode(error) !== FILE_EXISTS_CODE) throw error;
     }
     const info = await lstat(current);
     if (!info.isDirectory() || info.isSymbolicLink())
@@ -49,11 +75,11 @@ export async function publishExclusive(
     await syncDirectory(directory);
     return true;
   } catch (error) {
-    if (errorCode(error) === "EEXIST") return false;
+    if (errorCode(error) === FILE_EXISTS_CODE) return false;
     throw error;
   } finally {
     await unlink(stagingPath).catch((error: unknown) => {
-      if (errorCode(error) !== "ENOENT") throw error;
+      if (errorCode(error) !== FILE_MISSING_CODE) throw error;
     });
   }
 }
@@ -62,6 +88,7 @@ export async function replacePrivateFile(
   root: string,
   path: string,
   contents: string,
+  beforeCommit?: () => Promise<void>,
 ): Promise<void> {
   if (!(await hasRealParentDirectories(root, path)))
     throw new Error("Capture record parent directory is missing");
@@ -93,6 +120,7 @@ export async function replacePrivateFile(
     ) {
       throw new Error("Capture record changed during replacement");
     }
+    await beforeCommit?.();
     await rename(stagingPath, path);
     await syncDirectory(directory);
   } catch (error) {
@@ -111,7 +139,7 @@ export async function replacePrivateFile(
     try {
       await unlink(stagingPath);
     } catch (error) {
-      if (errorCode(error) !== "ENOENT") cleanupErrors.push(error);
+      if (errorCode(error) !== FILE_MISSING_CODE) cleanupErrors.push(error);
     }
   }
   if (operationFailed && cleanupErrors.length > 0)
@@ -123,7 +151,7 @@ export async function replacePrivateFile(
 }
 
 function hasPrivateFileMode(mode: number): boolean {
-  return process.platform === "win32" || (mode & 0o077) === 0;
+  return process.platform === WINDOWS_PLATFORM || (mode & 0o077) === 0;
 }
 
 export async function readPrivateFile(root: string, path: string): Promise<string | undefined> {
@@ -135,7 +163,7 @@ export async function readPrivateFile(root: string, path: string): Promise<strin
       throw new Error("Capture record must be a regular file");
     handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
   } catch (error) {
-    if (errorCode(error) === "ENOENT") return undefined;
+    if (errorCode(error) === FILE_MISSING_CODE) return undefined;
     throw error;
   }
   try {
@@ -166,7 +194,7 @@ async function hasRealParentDirectories(root: string, path: string): Promise<boo
     try {
       info = await lstat(directory);
     } catch (error) {
-      if (errorCode(error) === "ENOENT") return false;
+      if (errorCode(error) === FILE_MISSING_CODE) return false;
       throw error;
     }
     if (!info.isDirectory() || info.isSymbolicLink())
@@ -176,7 +204,7 @@ async function hasRealParentDirectories(root: string, path: string): Promise<boo
 }
 
 async function syncDirectory(path: string): Promise<void> {
-  if (process.platform === "win32") return;
+  if (process.platform === WINDOWS_PLATFORM) return;
   const handle = await open(
     path,
     fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | (fsConstants.O_NOFOLLOW ?? 0),
@@ -186,13 +214,4 @@ async function syncDirectory(path: string): Promise<void> {
   } finally {
     await handle.close();
   }
-}
-
-function errorCode(error: unknown): string | undefined {
-  return error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    typeof error.code === "string"
-    ? error.code
-    : undefined;
 }

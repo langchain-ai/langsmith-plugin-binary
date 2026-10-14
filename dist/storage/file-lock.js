@@ -4,7 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { isPlainRecord } from "../utils/validation/objects.js";
-import { FILE_LOCK_ACQUIRE_MESSAGE, FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE, FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE, FILE_LOCK_CLAIM_VERSION, FILE_LOCK_CLAIM_EXTENSION, FILE_LOCK_DIRECTORY_MODE, FILE_LOCK_DIRECTORY_SUFFIX, FILE_LOCK_ENCODING, FILE_LOCK_EXCLUSIVE_FLAG, FILE_LOCK_FILE_MODE, FILE_LOCK_NEGATIVE_TICKET_LIMIT, FILE_LOCK_POLL_INTERVAL_MS, FILE_LOCK_RELEASE_MESSAGE, FILE_LOCK_RENAME_RETRY_TIMEOUT_MS, FILE_LOCK_STALE_CLAIM_MS, FILE_LOCK_TEMP_PREFIX, FILE_LOCK_TEMP_SUFFIX, FILE_LOCK_TICKET_LIMIT_MESSAGE, FILE_LOCK_TRY_CHOOSING_WAIT_MS, FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE, FILE_LOCK_UNSELECTED_TICKET, } from "./constants.js";
+import { FILE_LOCK_ACQUIRE_MESSAGE, FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE, FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE, FILE_LOCK_CLAIM_VERSION, FILE_LOCK_CLAIM_EXTENSION, FILE_LOCK_DIRECTORY_MODE, FILE_LOCK_DIRECTORY_SUFFIX, FILE_LOCK_ENCODING, FILE_LOCK_EXCLUSIVE_FLAG, FILE_LOCK_FILE_MODE, FILE_LOCK_LOST_MESSAGE, FILE_LOCK_NEGATIVE_TICKET_LIMIT, FILE_LOCK_POLL_INTERVAL_MS, FILE_LOCK_RELEASE_MESSAGE, FILE_LOCK_RENAME_RETRY_TIMEOUT_MS, FILE_LOCK_STALE_CLAIM_MS, FILE_LOCK_TEMP_PREFIX, FILE_LOCK_TEMP_SUFFIX, FILE_LOCK_TICKET_LIMIT_MESSAGE, FILE_LOCK_TRY_CHOOSING_WAIT_MS, FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE, FILE_LOCK_UNSELECTED_TICKET, } from "./constants.js";
 import { errorCode } from "../utils/errors.js";
 import { FileLockTimeoutError } from "./errors.js";
 import { FILE_EXISTS_CODE, FILE_MISSING_CODE, PERMISSION_DENIED_CODE } from "../utils/constants.js";
@@ -154,6 +154,10 @@ function hasClaimState(claims, id, choosing, ticket) {
 function makeHandle(claimDirectory, claim) {
     let releasePromise;
     return {
+        async assertHeld() {
+            if ((await modifiedAt(claimPath(claimDirectory, claim.id))) === undefined)
+                throw new Error(FILE_LOCK_LOST_MESSAGE);
+        },
         release() {
             stopHeartbeat(claim.id);
             releasePromise ??= removeFile(claimPath(claimDirectory, claim.id)).then((removed) => {
@@ -166,11 +170,19 @@ function makeHandle(claimDirectory, claim) {
 }
 async function beginClaim(filePath) {
     const claimDirectory = `${resolve(filePath)}${FILE_LOCK_DIRECTORY_SUFFIX}`;
-    await assertSafeClaimDirectory(claimDirectory);
-    await mkdir(claimDirectory, { recursive: true, mode: FILE_LOCK_DIRECTORY_MODE });
-    await assertSafeClaimDirectory(claimDirectory);
-    await chmod(claimDirectory, FILE_LOCK_DIRECTORY_MODE);
-    return { claimDirectory, claim: await createClaim(claimDirectory) };
+    for (;;) {
+        try {
+            await assertSafeClaimDirectory(claimDirectory);
+            await mkdir(claimDirectory, { recursive: true, mode: FILE_LOCK_DIRECTORY_MODE });
+            await assertSafeClaimDirectory(claimDirectory);
+            await chmod(claimDirectory, FILE_LOCK_DIRECTORY_MODE);
+            return { claimDirectory, claim: await createClaim(claimDirectory) };
+        }
+        catch (error) {
+            if (errorCode(error) !== FILE_MISSING_CODE)
+                throw error;
+        }
+    }
 }
 async function assertSafeClaimDirectory(claimDirectory) {
     let stat;
@@ -310,6 +322,7 @@ export async function acquireCompatibleDirectoryFileLock(filePath, options) {
     const sharedHandle = makeHandle(acquired.claimDirectory, acquired.claim);
     let releasePromise;
     return {
+        assertHeld: () => sharedHandle.assertHeld(),
         release() {
             releasePromise ??= (async () => {
                 const errors = [];
@@ -368,11 +381,12 @@ export async function withFileLock(filePath, callback, options) {
     const acquired = await acquireClaim(filePath, true, deadline);
     if (!acquired)
         throw new Error(FILE_LOCK_ACQUIRE_MESSAGE);
+    const handle = makeHandle(acquired.claimDirectory, acquired.claim);
     try {
-        return await callback();
+        return await callback(handle);
     }
     finally {
-        await makeHandle(acquired.claimDirectory, acquired.claim).release();
+        await handle.release();
     }
 }
 //# sourceMappingURL=file-lock.js.map

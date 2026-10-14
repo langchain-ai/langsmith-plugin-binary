@@ -1,11 +1,30 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import type { CaptureScope } from "../../storage/capture/models.js";
-import type { DeliveryCaptureInput } from "../../tracing/delivery/models.js";
+import type { CaptureScope, StoredCapture } from "../../storage/capture/models.js";
+import type {
+  DeliveryCaptureInput,
+  DeliveryDestination,
+  DeliveryWriter,
+} from "../../tracing/delivery/models.js";
+
+export function sendOneAtATime(
+  send: (
+    record: StoredCapture,
+    destination: DeliveryDestination,
+    accountFingerprint: string,
+  ) => Promise<void>,
+): Pick<DeliveryWriter, "batchLimits" | "sendBatch"> {
+  return {
+    batchLimits: { maxRecords: 1, maxBytes: Infinity },
+    sendBatch: async (records, destination, accountFingerprint) => {
+      for (const record of records) await send(record, destination, accountFingerprint);
+    },
+  };
+}
 
 export const execFileAsync = promisify(execFile);
 
@@ -59,4 +78,16 @@ export function exitCode(error: unknown): number | undefined {
     typeof error.code === "number"
     ? error.code
     : undefined;
+}
+
+export function pathsUnder(root: string): string[] {
+  return readdirSync(root, { recursive: true, withFileTypes: true }).map((entry) =>
+    join(entry.parentPath, entry.name),
+  );
+}
+
+export function filesUnder(root: string): string[] {
+  return readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name));
 }

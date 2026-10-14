@@ -101,3 +101,9 @@ export function requireNonNegativeInteger(value: unknown, name: string): number 
     throw new TypeError(`${name} must be a non-negative safe integer`);
   return value;
 }
+
+export function parseJsonObject(contents: string, message: string): Record<string, unknown> {
+  const value: unknown = JSON.parse(contents);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(message);
+  return value as Record<string, unknown>;
+}

@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import { Client } from "langsmith";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ROOT_ID } from "../../test-support/constants.js";
+import { UploadError } from "./errors.js";
 import { createLangSmithUploadWriter } from "./index.js";
 
 const limits = vi.hoisted(() => ({ deadlineMs: 300 }));
@@ -57,12 +58,14 @@ async function sendFailure(): Promise<unknown> {
 it("gives up on a request the service never answers even when the deadline is far away", async () => {
   limits.deadlineMs = 60_000;
   const failure = await sendFailure();
-  expect((failure as Error).message).toBe("LangSmith upload failed");
+  expect(failure).toBeInstanceOf(UploadError);
+  expect((failure as UploadError).retryable).toBe(true);
 }, 4_000);
 
 it("also gives up when the SDK never settles, such as a stuck serialization", async () => {
   limits.deadlineMs = 300;
   vi.spyOn(Client.prototype, "batchIngestRuns").mockReturnValue(new Promise(() => undefined));
   const failure = await sendFailure();
-  expect((failure as Error).message).toBe("LangSmith upload failed");
+  expect(failure).toBeInstanceOf(UploadError);
+  expect((failure as UploadError).retryable).toBe(true);
 });

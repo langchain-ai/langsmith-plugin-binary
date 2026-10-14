@@ -1,7 +1,7 @@
 import type { CodingAgentIntegration, CodingAgentMetadataOptions } from "../../metadata/index.js";
-import type { CaptureDependency, EnumeratedCapture, CaptureScope, CompactedCapturePayload, CaptureStore, CaptureWriteResult, JsonValue, OutcomeReadResult, StoredCapture } from "../../storage/capture/models.js";
+import type { CaptureDependency, CaptureScope, CaptureWriteResult, OutcomeReadResult, StoredCapture } from "../../storage/capture/models.js";
 import type { DeliveryDestination, DeliveryDrainResult, DeliveryPolicy } from "../delivery/models.js";
-import type { NormalizedRunSnapshot, PreparedRunPatchSubmission, PreparedRunPostSubmission, RedactedRunField } from "../upload/models.js";
+import type { PreparedRunPatchSubmission, PreparedRunPostSubmission } from "../upload/models.js";
 import type { LangSmithUploadWriterOptions, PreparedRunSubmission } from "../upload/index.js";
 import type { TurnSettlementReport } from "../settlement/models.js";
 import type { CodingAgentPrivacyStatus } from "../../privacy/index.js";
@@ -10,47 +10,6 @@ export interface ProjectedSubmission {
     payload: ProjectedPayload;
     metadata: CodingAgentMetadataOptions;
     privacyStatus: CodingAgentPrivacyStatus;
-}
-export type LifecycleSnapshotCaptureInput = Omit<LifecycleCaptureInput, "submission"> & {
-    submission: PreparedRunPostSubmission;
-};
-export interface LifecycleSnapshotState {
-    post: StoredCapture;
-    head: StoredCapture;
-    run: NormalizedRunSnapshot;
-    metadataProvenance: JsonValue;
-    turnEvidence: JsonValue;
-    privacyMode: PreparedRunPostSubmission["privacyMode"];
-    redactedFields: readonly RedactedRunField[];
-    inputOutputStates: CompactedCapturePayload["fields"];
-    privacyStatus: CodingAgentPrivacyStatus;
-    revisionCount: number;
-    snapshotDependencies: readonly CaptureDependency[];
-}
-export interface LifecycleSnapshotCaptureOptions {
-    storageRoot: string;
-    integration: CodingAgentIntegration;
-    sessionId: string;
-    destinationFingerprint: string;
-    store: CaptureStore;
-    capture: (input: LifecycleCaptureInput) => Promise<LifecycleCaptureResult>;
-    wake: () => unknown | Promise<unknown>;
-}
-export interface CompactSettledCapturesOptions {
-    storageRoot: string;
-    integration: CodingAgentIntegration;
-    sessionId: string;
-    destinationFingerprint: string;
-    store: CaptureStore;
-    destinations: readonly DeliveryDestination[];
-    settledTurnIds: readonly string[];
-    eligibleCaptures: readonly EnumeratedCapture[];
-    readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
-}
-export interface RunRetentionGroup {
-    turnId: string;
-    runId: string;
-    records: StoredCapture[];
 }
 export type LifecycleTurnClosureState = "open" | "provisional" | "authoritative";
 export interface LifecycleTurnEvidence {
@@ -102,7 +61,6 @@ export interface LifecycleCaptureInput {
     turnEvidence: LifecycleTurnEvidence;
     dependencies?: CaptureDependency[];
     sourceAgeStartedAtMs?: number;
-    priorDeliveryAttempts?: number;
 }
 export interface LifecycleEndTimeWithholdingInput {
     record: StoredCapture;
@@ -135,7 +93,6 @@ export type LifecycleDrainResult = {
 export interface LifecycleBridge {
     readonly accountFingerprint: string;
     capture(input: LifecycleCaptureInput): Promise<LifecycleCaptureResult>;
-    captureSnapshot(input: LifecycleSnapshotCaptureInput): Promise<LifecycleCaptureResult>;
     drain(input?: LifecycleDrainInput): Promise<LifecycleDrainResult>;
 }
 //# sourceMappingURL=models.d.ts.map
