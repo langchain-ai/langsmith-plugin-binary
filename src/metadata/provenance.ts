@@ -3,11 +3,11 @@ import {
   ownDataField,
   requirePlainRecord,
 } from "../utils/validation/objects.js";
-import { CODING_AGENT_AGENT_TYPES, CODING_AGENT_RUN_TYPES } from "./schema-constants.js";
+import { CODING_AGENT_AGENT_TYPES, CODING_AGENT_RUN_TYPES } from "./constants.js";
 import {
   CODING_AGENT_METADATA_PROJECTION_FIELDS,
   CODING_AGENT_METADATA_PROVENANCE_FIELDS,
-} from "./metadata-export-constants.js";
+} from "./constants.js";
 import { buildCodingAgentMetadata } from "./builder.js";
 import type {
   CodingAgentIntegration,

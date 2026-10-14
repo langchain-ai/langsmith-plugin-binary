@@ -4,6 +4,7 @@ import { resolveUploadDestinations } from "./destinations.js";
 import { UPLOAD_ALREADY_RECEIVED_STATUS, UPLOAD_PATCH_FIELDS } from "./constants.js";
 import { createUploadClientCache } from "./client-cache.js";
 import { redactSdkOmittedFields } from "./redaction.js";
+import { applyRuntimeMetadata } from "./runtime-metadata.js";
 import { contextForDestination, runIdForDestination } from "./replica-identifiers.js";
 import { applyReplicaPatchUpdates } from "./replica-updates.js";
 export function createLangSmithUploadWriter(options) {
@@ -26,6 +27,7 @@ export function createLangSmithUploadWriter(options) {
             if (submission.operation === "patch") {
                 applyReplicaPatchUpdates(payload, destination, submission.privacyMode);
             }
+            applyRuntimeMetadata(payload, submission.privacyMode);
             redactSdkOmittedFields(payload, destination.anonymizer);
             const clientOptions = {
                 apiKey: destination.apiKey,

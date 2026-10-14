@@ -72,7 +72,6 @@ export type UploadAnonymizer = <T>(data: T) => T;
 export interface UploadClientOptions extends Omit<LangSmithUploadDestinationConfig, "projectName"> {
   anonymizer?: UploadAnonymizer;
   redactedFields?: readonly RedactedRunField[];
-  includeRuntimeMetadata?: boolean;
 }
 
 export interface PreparedRunSubmissionBase {
@@ -119,9 +118,7 @@ export interface LangSmithUploadIdentityOptions {
   redactExtraRules?: readonly UploadRedactRule[];
 }
 
-export interface LangSmithUploadWriterOptions extends LangSmithUploadIdentityOptions {
-  includeRuntimeMetadata?: boolean;
-}
+export type LangSmithUploadWriterOptions = LangSmithUploadIdentityOptions;
 
 export interface ResolvedUploadDestinationIdentity {
   id: string;
@@ -141,7 +138,6 @@ export interface ResolvedUploadDestinationIdentities {
 export interface ResolvedUploadDestination extends ResolvedUploadDestinationIdentity {
   anonymizer?: UploadAnonymizer;
   client: Client;
-  includeRuntimeMetadata?: boolean;
 }
 
 export interface ResolvedUploadDestinations {
@@ -174,4 +170,8 @@ export interface LangSmithUploadWriter {
 
 export interface UploadClientCache {
   forSubmission(destination: ResolvedUploadDestination, submission: PreparedRunSubmission): Client;
+}
+
+export interface RuntimeMetadataPayload {
+  extra?: Record<string, unknown>;
 }

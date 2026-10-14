@@ -51,3 +51,5 @@ export const UPLOAD_PATCH_FIELDS: ReadonlySet<NormalizedRunPatchField> = new Set
 ] as const);
 
 export const UPLOAD_REDACTED_FIELDS = ["inputs", "outputs"] as const;
+export const UPLOAD_BUN_RUNTIME = "bun";
+export const UPLOAD_NODE_RUNTIME = "node";
