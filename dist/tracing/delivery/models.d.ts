@@ -61,5 +61,14 @@ export interface DeliveryPendingCandidate {
     scope: CaptureScope;
     pending: DeliveryDestination[];
 }
+export interface DeliveryDrainPassContext {
+    attempted: Set<string>;
+    attemptStore: DeliveryAttemptStore;
+    policy: DeliveryPolicy;
+    request: DrainOptions;
+    drainCache: DeliveryDrainCache;
+    counts: DeliveryDrainCounts;
+    now: number;
+}
 export type DeliveryDependencyState = "ready" | "pending" | "dropped";
 //# sourceMappingURL=models.d.ts.map
