@@ -1,0 +1,1 @@
+{"version":3,"file":"errors.js","sourceRoot":"","sources":["../../../src/tracing/engine/errors.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,iDAAiD,EAAE,MAAM,gBAAgB,CAAC;AAEnF,MAAM,OAAO,6BAA8B,SAAQ,KAAK;IACtD;QACE,KAAK,CAAC,iDAAiD,CAAC,CAAC;QACzD,IAAI,CAAC,IAAI,GAAG,+BAA+B,CAAC;IAC9C,CAAC;CACF"}
