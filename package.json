@@ -63,6 +63,10 @@
     "./tracing": {
       "types": "./dist/tracing/index.d.ts",
       "default": "./dist/tracing/index.js"
+    },
+    "./tracing/lifecycle": {
+      "types": "./dist/tracing/lifecycle/index.d.ts",
+      "default": "./dist/tracing/lifecycle/index.js"
     }
   },
   "publishConfig": {
