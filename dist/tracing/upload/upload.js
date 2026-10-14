@@ -1,60 +1,104 @@
 import { buildCodingAgentMetadata } from "../../metadata/index.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
 import { resolveUploadDestinations } from "./destinations.js";
-import { UPLOAD_ALREADY_RECEIVED_STATUS, UPLOAD_PATCH_FIELDS } from "./constants.js";
+import { UPLOAD_BATCH_LIMITS, UPLOAD_FAILED_MESSAGE, UPLOAD_PATCH_FIELDS, UPLOAD_RECEIPT_MISSING_MESSAGE, } from "./constants.js";
 import { createUploadClientCache } from "./client-cache.js";
+import { isAlreadyReceived } from "./errors.js";
 import { redactSdkOmittedFields } from "./redaction.js";
 import { applyRuntimeMetadata } from "./runtime-metadata.js";
 import { contextForDestination, runIdForDestination } from "./replica-identifiers.js";
 import { applyReplicaPatchUpdates } from "./replica-updates.js";
+import { withDeadline } from "./deadline.js";
+import { startTimeText } from "./timestamps.js";
 export function createLangSmithUploadWriter(options) {
     const resolved = resolveUploadDestinations(options);
     const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
     const byId = new Map(resolved.destinations.map((destination) => [destination.id, destination]));
     const clients = createUploadClientCache();
+    async function sendBatch(submissions, destinationId) {
+        const destination = byId.get(destinationId);
+        if (!destination)
+            throw new TypeError("Unknown upload destination");
+        const prepared = submissions.map((submission) => prepareItem(clients, destination, submission));
+        const clientOptions = {
+            apiKey: destination.apiKey,
+            apiUrl: destination.apiUrl,
+            ...(destination.workspaceId === undefined ? {} : { workspaceId: destination.workspaceId }),
+        };
+        for (const [client, group] of segmentByClient(prepared)) {
+            try {
+                await withDeadline(client.batchIngestRuns(ingestFor(group), clientOptions)).catch(ignoreAlreadyReceived);
+            }
+            catch (error) {
+                throw new Error(UPLOAD_FAILED_MESSAGE, { cause: error });
+            }
+        }
+        return prepared.map(({ submission, operation }) => ({
+            destinationId,
+            runId: submission.run.id,
+            operation,
+        }));
+    }
     return Object.freeze({
         accountFingerprint: resolved.accountFingerprint,
         destinations: Object.freeze(destinations),
+        batchLimits: UPLOAD_BATCH_LIMITS,
+        sendBatch,
         async send(submission, destinationId) {
-            const destination = byId.get(destinationId);
-            if (!destination)
-                throw new TypeError("Unknown upload destination");
-            validateSubmission(submission);
-            const client = clients.forSubmission(destination, submission);
-            const payload = submission.operation === "post"
-                ? preparePostRunPayload(submission, destination)
-                : preparePatchRunPayload(submission, destination);
-            if (submission.operation === "patch") {
-                applyReplicaPatchUpdates(payload, destination, submission.privacyMode);
-            }
-            applyRuntimeMetadata(payload, submission.privacyMode);
-            redactSdkOmittedFields(payload, destination.anonymizer);
-            const clientOptions = {
-                apiKey: destination.apiKey,
-                apiUrl: destination.apiUrl,
-                ...(destination.workspaceId === undefined ? {} : { workspaceId: destination.workspaceId }),
-            };
-            try {
-                if (submission.operation === "post") {
-                    await client.createRun({ ...payload, project_name: destination.projectName }, clientOptions);
-                    return { destinationId, runId: submission.run.id, operation: "posted" };
-                }
-                await client
-                    .updateRun(runIdForDestination(submission.run.id, destination), payload, clientOptions)
-                    .catch((error) => {
-                    if (!alreadyReceived(error))
-                        throw error;
-                });
-                return { destinationId, runId: submission.run.id, operation: "patched" };
-            }
-            catch {
-                throw new Error("LangSmith upload failed");
-            }
+            const [receipt] = await sendBatch([submission], destinationId);
+            if (receipt === undefined)
+                throw new Error(UPLOAD_RECEIPT_MISSING_MESSAGE);
+            return receipt;
         },
     });
 }
-function alreadyReceived(error) {
-    return error?.status === UPLOAD_ALREADY_RECEIVED_STATUS;
+function prepareItem(clients, destination, submission) {
+    validateSubmission(submission);
+    const client = clients.forSubmission(destination, submission);
+    const payload = submission.operation === "post"
+        ? preparePostRunPayload(submission, destination)
+        : preparePatchRunPayload(submission, destination);
+    if (submission.operation === "patch") {
+        applyReplicaPatchUpdates(payload, destination, submission.privacyMode);
+    }
+    applyRuntimeMetadata(payload, submission.privacyMode);
+    redactSdkOmittedFields(payload, destination.anonymizer);
+    return {
+        client,
+        submission,
+        payload,
+        destination,
+        operation: submission.operation === "post" ? "posted" : "patched",
+    };
+}
+function segmentByClient(items) {
+    const segments = [];
+    for (const item of items) {
+        const last = segments.at(-1);
+        if (last !== undefined && last[0] === item.client)
+            last[1].push(item);
+        else
+            segments.push([item.client, [item]]);
+    }
+    return segments;
+}
+function ingestFor(items) {
+    const runCreates = [];
+    const runUpdates = [];
+    for (const { payload, submission, destination, operation } of items) {
+        if (operation === "posted") {
+            runCreates.push({ ...payload, session_name: destination.projectName });
+        }
+        else {
+            const id = runIdForDestination(submission.run.id, destination);
+            runUpdates.push({ ...payload, id });
+        }
+    }
+    return { runCreates, runUpdates };
+}
+function ignoreAlreadyReceived(error) {
+    if (!isAlreadyReceived(error))
+        throw error;
 }
 function runConfig(context, submission, destination) {
     const metadata = buildCodingAgentMetadata(submission.metadata);
@@ -99,7 +143,11 @@ function preparePostRunPayload(submission, destination) {
     const run = createCodingAgentRunTree(config, submission.integration, submission.privacyMode, submission.privacyContext);
     if (source.events !== undefined)
         run.events = source.events;
-    return JSON.parse(JSON.stringify(run.toJSON()));
+    const create = JSON.parse(JSON.stringify(run.toJSON()));
+    const startTime = startTimeText(source.start_time, create.dotted_order);
+    if (startTime !== undefined)
+        create.start_time = startTime;
+    return create;
 }
 function preparePatchRunPayload(submission, destination) {
     const config = runConfig(submission.run, submission, destination);
@@ -128,6 +176,11 @@ function preparePatchRunPayload(submission, destination) {
     const update = {
         extra: snapshot["extra"],
         session_name: destination.projectName,
+        trace_id: snapshot["trace_id"],
+        dotted_order: snapshot["dotted_order"],
+        ...(snapshot["parent_run_id"] === undefined
+            ? {}
+            : { parent_run_id: snapshot["parent_run_id"] }),
     };
     for (const field of submission.patch.fields) {
         const value = snapshot[field];

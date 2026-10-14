@@ -1,4 +1,5 @@
 import { Client } from "langsmith";
+import { UPLOAD_REQUEST_TIMEOUT_MS } from "./constants.js";
 import type { UploadClientOptions } from "./models.js";
 
 export function createUploadClient(options: UploadClientOptions): Client {
@@ -8,6 +9,8 @@ export function createUploadClient(options: UploadClientOptions): Client {
     apiUrl,
     workspaceId: workspaceId ?? "",
     autoBatchTracing: false,
+    manualFlushMode: true,
+    timeout_ms: UPLOAD_REQUEST_TIMEOUT_MS,
     disablePromptCache: true,
     debug: false,
     omitTracedRuntimeInfo: true,

@@ -1,4 +1,5 @@
 import type { LocalRequest } from "../../test-support/models/upload.js";
+import { runUnits } from "../../test-support/tracing/ingest.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { computeRunIdForSecondaryReplica } from "langsmith";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,7 +11,7 @@ import type {
   LangSmithUploadReplicaConfig,
   PreparedRunPatchSubmission,
   PreparedRunPostSubmission,
-  UploadDestination,
+  LangSmithUploadWriter,
 } from "./models.js";
 
 const PRIMARY_KEY = "synthetic-replica-primary-key";
@@ -114,7 +115,7 @@ function patchSubmission(
   };
 }
 
-function destinationId(destinations: readonly UploadDestination[]): string {
+function destinationId(destinations: LangSmithUploadWriter["destinations"]): string {
   const resolved = destinations[0];
   if (!resolved) throw new Error("Missing upload destination");
   return resolved.id;
@@ -129,20 +130,23 @@ function recordRequest(request: IncomingMessage, response: ServerResponse): void
   request.on("end", () => {
     const payload = body.length === 0 ? {} : (JSON.parse(body) as Record<string, unknown>);
     const apiKey = headerValue(request.headers["x-api-key"]);
-    requests.push({
-      method: request.method ?? "",
-      path: request.url ?? "",
-      apiKey,
-      workspaceId: headerValue(request.headers["x-tenant-id"]),
-      payload,
-    });
-    if (request.method === "POST" && typeof payload["id"] === "string") {
-      storedRuns.set(`${apiKey}:${payload["id"]}`, payload);
-    } else if (request.method === "PATCH") {
-      const runId = decodeURIComponent((request.url ?? "").split("/").at(-1) ?? "");
-      const key = `${apiKey}:${runId}`;
-      const previous = storedRuns.get(key);
-      if (previous) storedRuns.set(key, { ...previous, ...payload });
+    for (const unit of runUnits(request.method ?? "", request.url ?? "", payload)) {
+      requests.push({
+        method: unit.method,
+        path: unit.path,
+        wire: unit.wire,
+        apiKey,
+        workspaceId: headerValue(request.headers["x-tenant-id"]),
+        payload: unit.payload,
+      });
+      if (unit.method === "POST" && typeof unit.payload["id"] === "string") {
+        storedRuns.set(`${apiKey}:${unit.payload["id"]}`, unit.payload);
+      } else if (unit.method === "PATCH") {
+        const runId = decodeURIComponent(unit.path.split("/").at(-1) ?? "");
+        const key = `${apiKey}:${runId}`;
+        const previous = storedRuns.get(key);
+        if (previous) storedRuns.set(key, { ...previous, ...unit.payload });
+      }
     }
     response.writeHead(200, { "content-type": "application/json" });
     response.end("{}");
