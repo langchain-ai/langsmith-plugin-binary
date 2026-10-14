@@ -1,5 +1,8 @@
-import { CODING_AGENT_INTEGRATION_POLICIES } from "./integration-constants.js";
-import { METADATA_MODE_NAME, METADATA_MODE_STATUS_VALUES } from "./metadata-export-constants.js";
+import {
+  CODING_AGENT_INTEGRATION_POLICIES,
+  METADATA_MODE_NAME,
+  METADATA_MODE_STATUS_VALUES,
+} from "./constants.js";
 import { CODING_AGENT_V1_CONTRACT } from "./contract.js";
 import { trustedCodingAgentMetadata } from "./builder.js";
 import type { CodingAgentIntegration, CodingAgentMetadataMode } from "./models.js";

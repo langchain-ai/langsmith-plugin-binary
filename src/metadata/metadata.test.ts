@@ -3,7 +3,6 @@ import {
   buildCodingAgentMetadata,
   metadataForMode,
   normalizeProviderMetadata,
-  validateCodingAgentMetadata,
   validateProviderMetadata,
 } from "./index.js";
 import type { CodingAgentRunType } from "./index.js";
@@ -55,7 +54,7 @@ describe("coding-agent-v1 metadata contract", () => {
     });
     expect(metadata).toMatchObject({
       ls_integration: "claude-code",
-      ls_agent_runtime: "claude-code",
+      ls_agent_runtime: "Claude Code",
       ls_integration_version: "0.1.3",
       ls_agent_runtime_version: "2.1.181",
       ls_trace_schema_version: "coding-agent-v1",
@@ -227,33 +226,5 @@ describe("coding-agent-v1 metadata contract", () => {
       thread_id: "session",
     };
     expect(metadataForMode(redacted, "claude-code", "metadata")).toMatchObject(redacted);
-  });
-
-  it("rejects metadata with missing identity, wrong scope, or wrong field types", () => {
-    const valid = buildCodingAgentMetadata({
-      integration: "cursor",
-      threadId: "session",
-      agentType: "root",
-      runType: "root",
-    });
-    expect(validateCodingAgentMetadata(valid, "root", "cursor")).toEqual([]);
-    expect(
-      validateCodingAgentMetadata(
-        { ...valid, ls_attribution_identifier: "person@example.com" },
-        "root",
-        "cursor",
-      ),
-    ).toEqual([]);
-    expect(
-      validateCodingAgentMetadata(
-        { ...valid, thread_id: undefined, turn_number: "3", ls_tool_name: "Bash" },
-        "root",
-        "cursor",
-      ),
-    ).toEqual([
-      { key: "thread_id", reason: "missing" },
-      { key: "turn_number", reason: "type" },
-      { key: "ls_tool_name", reason: "scope" },
-    ]);
   });
 });

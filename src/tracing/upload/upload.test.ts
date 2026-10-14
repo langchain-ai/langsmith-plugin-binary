@@ -454,41 +454,6 @@ describe("bound LangSmith upload writer", () => {
     expect(requests.map(({ payload }) => payload["id"])).toEqual([RUN_ID, RUN_ID]);
   });
 
-  it("includes runtime metadata only in full mode across regular and redacted clients", async () => {
-    const defaultWriter = createLangSmithUploadWriter({
-      redact: true,
-      destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
-    });
-    const enabledWriter = createLangSmithUploadWriter({
-      redact: true,
-      destinations: [destination(REPLICA_KEY, "replica-project", "replica-workspace")],
-      includeRuntimeMetadata: true,
-    });
-    const defaultDestinationId = destinationByIndex(defaultWriter.destinations, 0);
-    const enabledDestinationId = destinationByIndex(enabledWriter.destinations, 0);
-
-    await defaultWriter.send(submission(), defaultDestinationId);
-    await enabledWriter.send(submission(), enabledDestinationId);
-    await enabledWriter.send(submission({ privacyMode: "full" }), enabledDestinationId);
-    await enabledWriter.send(
-      submission({ privacyMode: "full", redactedFields: ["inputs"] }),
-      enabledDestinationId,
-    );
-
-    expect(requests).toHaveLength(4);
-    expect(requests[0]?.payload).not.toHaveProperty("extra.runtime");
-    expect(requests[1]?.payload).not.toHaveProperty("extra.runtime");
-    for (const request of requests.slice(2)) {
-      expect(request.payload).toMatchObject({
-        extra: { runtime: { library: "langsmith", runtime: "node", sdk: "langsmith-js" } },
-      });
-      const extra = request.payload["extra"] as Record<string, unknown>;
-      expect((extra["runtime"] as Record<string, unknown>)["sdk_version"]).toEqual(
-        expect.any(String),
-      );
-    }
-  });
-
   it("leaves trace sampling to the SDK default like the plugins on main", () => {
     const client = createUploadClient({ apiKey: PRIMARY_KEY, apiUrl: "http://127.0.0.1:9" });
     expect(Reflect.get(client, "tracingSampleRate")).toBeUndefined();

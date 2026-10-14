@@ -43,4 +43,6 @@ export const UPLOAD_PATCH_FIELDS = new Set([
     "reference_example_id",
 ]);
 export const UPLOAD_REDACTED_FIELDS = ["inputs", "outputs"];
+export const UPLOAD_BUN_RUNTIME = "bun";
+export const UPLOAD_NODE_RUNTIME = "node";
 //# sourceMappingURL=constants.js.map

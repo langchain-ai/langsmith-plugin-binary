@@ -1,21 +1,28 @@
 import {
   CODING_AGENT_ALWAYS_FIELD_OPTIONS,
   CODING_AGENT_AGENT_TYPES,
+  CODING_AGENT_CODEX_INTEGRATION,
+  CODING_AGENT_CORE_INTEGRATIONS,
   CODING_AGENT_FIELD_DEFAULTS,
+  CODING_AGENT_INTEGRATION_POLICIES,
   CODING_AGENT_PROVIDER_FIELD_DEFAULTS,
+  CODING_AGENT_ENVIRONMENT_METADATA_ENDPOINT_SUBSTRINGS,
+  CODING_AGENT_ENVIRONMENT_METADATA_EXCLUDED,
+  CODING_AGENT_ENVIRONMENT_METADATA_PREFIXES,
+  CODING_AGENT_ENVIRONMENT_METADATA_SENSITIVE_SUBSTRINGS,
   CODING_AGENT_PURPOSE,
+  CODING_AGENT_RUNTIME_NAMES,
+  CODING_AGENT_RELEASE_ENVIRONMENT_VARIABLES,
+  CODING_AGENT_REVISION_ID_KEY,
+  CODING_AGENT_REVISION_ID_VARIABLE,
   CODING_AGENT_RUN_SCOPES,
+  CODING_AGENT_RUNTIME_LIBRARY,
+  CODING_AGENT_RUNTIME_SDK,
+  CODING_AGENT_SCHEMA_INTEGRATIONS,
   CODING_AGENT_SCHEMA_VERSION,
   CODING_AGENT_STRUCTURAL_FIELD_DEFAULTS,
   CODING_AGENT_WHERE_KNOWN_FIELD_OPTIONS,
-} from "./schema-constants.js";
-import {
-  CODING_AGENT_CODEX_ONLY_INTEGRATIONS,
-  CODING_AGENT_SUPPORTED_INTEGRATIONS,
-  CODING_AGENT_INTEGRATION_POLICIES,
-  CODING_AGENT_RUNTIME_NAMES,
-  CODING_AGENT_SCHEMA_INTEGRATIONS,
-} from "./integration-constants.js";
+} from "./constants.js";
 import type {
   CodingAgentMetadataField,
   CodingAgentMetadataFieldOptions,
@@ -72,7 +79,7 @@ export const CODING_AGENT_V1_CONTRACT: CodingAgentV1Contract = {
     field("cwd", CODING_AGENT_WHERE_KNOWN_FIELD_OPTIONS),
     field("ls_skill_name", {
       appliesTo: CODING_AGENT_RUN_SCOPES.tool,
-      metadataModeIntegrations: CODING_AGENT_SUPPORTED_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CORE_INTEGRATIONS,
     }),
     field("ls_attribution_identifier"),
     field("user_id"),
@@ -82,38 +89,38 @@ export const CODING_AGENT_V1_CONTRACT: CodingAgentV1Contract = {
     field("approval_policy", { appliesTo: CODING_AGENT_RUN_SCOPES.rootInterrupted }),
     field("ls_subagent_id", {
       appliesTo: CODING_AGENT_RUN_SCOPES.subagent,
-      metadataModeIntegrations: CODING_AGENT_SUPPORTED_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CORE_INTEGRATIONS,
     }),
     field("ls_subagent_type", {
       appliesTo: CODING_AGENT_RUN_SCOPES.subagent,
-      metadataModeIntegrations: CODING_AGENT_SUPPORTED_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CORE_INTEGRATIONS,
     }),
     field("ls_tool_name", {
       appliesTo: CODING_AGENT_RUN_SCOPES.tool,
-      metadataModeIntegrations: CODING_AGENT_SUPPORTED_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CORE_INTEGRATIONS,
     }),
     provider("ls_provider", {
       appliesTo: CODING_AGENT_RUN_SCOPES.llmTool,
-      metadataModeIntegrations: CODING_AGENT_CODEX_ONLY_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CODEX_INTEGRATION,
     }),
     provider("ls_model_type", {
       appliesTo: CODING_AGENT_RUN_SCOPES.llmTool,
-      metadataModeIntegrations: CODING_AGENT_CODEX_ONLY_INTEGRATIONS,
-      providerIntegrations: CODING_AGENT_CODEX_ONLY_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CODEX_INTEGRATION,
+      providerIntegrations: CODING_AGENT_CODEX_INTEGRATION,
     }),
     provider("ls_message_format", {
-      metadataModeIntegrations: CODING_AGENT_CODEX_ONLY_INTEGRATIONS,
-      providerIntegrations: CODING_AGENT_CODEX_ONLY_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CODEX_INTEGRATION,
+      providerIntegrations: CODING_AGENT_CODEX_INTEGRATION,
     }),
     provider("codex_cli_version", {
-      metadataModeIntegrations: CODING_AGENT_CODEX_ONLY_INTEGRATIONS,
-      providerIntegrations: CODING_AGENT_CODEX_ONLY_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CODEX_INTEGRATION,
+      providerIntegrations: CODING_AGENT_CODEX_INTEGRATION,
     }),
     provider("ls_raw_aggregated_usage", {
       appliesTo: CODING_AGENT_RUN_SCOPES.chain,
       type: "object",
-      metadataModeIntegrations: CODING_AGENT_CODEX_ONLY_INTEGRATIONS,
-      providerIntegrations: CODING_AGENT_CODEX_ONLY_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CODEX_INTEGRATION,
+      providerIntegrations: CODING_AGENT_CODEX_INTEGRATION,
     }),
     provider("ls_invocation_params", {
       appliesTo: CODING_AGENT_RUN_SCOPES.llmTool,
@@ -121,13 +128,28 @@ export const CODING_AGENT_V1_CONTRACT: CodingAgentV1Contract = {
     }),
     field("usage_metadata", {
       type: "object",
-      metadataModeIntegrations: CODING_AGENT_SUPPORTED_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CORE_INTEGRATIONS,
       metadataSource: "explicit",
     }),
     field("ls_model_name", {
-      metadataModeIntegrations: CODING_AGENT_SUPPORTED_INTEGRATIONS,
+      metadataModeIntegrations: CODING_AGENT_CORE_INTEGRATIONS,
       metadataSource: "explicit",
     }),
   ],
+  runtime: {
+    library: CODING_AGENT_RUNTIME_LIBRARY,
+    sdk: CODING_AGENT_RUNTIME_SDK,
+    releaseEnvironmentVariables: CODING_AGENT_RELEASE_ENVIRONMENT_VARIABLES,
+    environmentMetadata: {
+      prefixes: CODING_AGENT_ENVIRONMENT_METADATA_PREFIXES,
+      excluded: CODING_AGENT_ENVIRONMENT_METADATA_EXCLUDED,
+      sensitiveSubstrings: CODING_AGENT_ENVIRONMENT_METADATA_SENSITIVE_SUBSTRINGS,
+      endpointSubstrings: CODING_AGENT_ENVIRONMENT_METADATA_ENDPOINT_SUBSTRINGS,
+      revisionId: {
+        variable: CODING_AGENT_REVISION_ID_VARIABLE,
+        key: CODING_AGENT_REVISION_ID_KEY,
+      },
+    },
+  },
   integrationPolicies: CODING_AGENT_INTEGRATION_POLICIES,
 };

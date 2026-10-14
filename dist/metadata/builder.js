@@ -1,6 +1,4 @@
-import { CODING_AGENT_INTEGRATION_POLICIES } from "./integration-constants.js";
-import { CODING_AGENT_PURPOSE, CODING_AGENT_SCHEMA_VERSION } from "./schema-constants.js";
-import { TRUSTED_METADATA } from "./metadata-export-constants.js";
+import { CODING_AGENT_INTEGRATION_POLICIES, CODING_AGENT_PURPOSE, CODING_AGENT_SCHEMA_VERSION, TRUSTED_METADATA, } from "./constants.js";
 import { CODING_AGENT_V1_CONTRACT } from "./contract.js";
 import { normalizeProviderMetadata } from "./validation.js";
 export function buildCodingAgentMetadata(options) {

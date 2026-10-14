@@ -1,0 +1,1 @@
+{"version":3,"file":"runtime-metadata.d.ts","sourceRoot":"","sources":["../../../src/tracing/upload/runtime-metadata.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,uBAAuB,EAAE,MAAM,yBAAyB,CAAC;AAEvE,OAAO,KAAK,EAAE,sBAAsB,EAAE,MAAM,aAAa,CAAC;AAE1D,wBAAgB,oBAAoB,CAClC,OAAO,EAAE,sBAAsB,EAC/B,WAAW,EAAE,uBAAuB,GACnC,IAAI,CAcN"}

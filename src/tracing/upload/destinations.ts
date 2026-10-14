@@ -11,7 +11,6 @@ export function resolveUploadDestinations(
   options: LangSmithUploadWriterOptions,
 ): ResolvedUploadDestinations {
   const resolved = resolveUploadDestinationIdentities(options);
-  const includeRuntimeMetadata = options.includeRuntimeMetadata === true;
   const destinations: ResolvedUploadDestination[] = resolved.destinations.map((destination) => {
     const anonymizer = createUploadAnonymizer(options.redact, options.redactExtraRules);
     const client = createUploadClient({
@@ -23,7 +22,6 @@ export function resolveUploadDestinations(
     return {
       ...destination,
       ...(anonymizer === undefined ? {} : { anonymizer }),
-      ...(includeRuntimeMetadata ? { includeRuntimeMetadata: true } : {}),
       client,
     };
   });

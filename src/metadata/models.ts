@@ -29,15 +29,47 @@ export interface CodingAgentMetadataField {
 
 export type CodingAgentMetadataFieldOptions = Partial<Omit<CodingAgentMetadataField, "key">>;
 
+interface CodingAgentRevisionIdContract {
+  variable: string;
+  key: string;
+}
+
+export interface CodingAgentEnvironmentMetadataContract {
+  prefixes: readonly string[];
+  excluded: readonly string[];
+  sensitiveSubstrings: readonly string[];
+  endpointSubstrings: readonly string[];
+  revisionId: CodingAgentRevisionIdContract;
+}
+
+interface CodingAgentRuntimeContract {
+  library: string;
+  sdk: string;
+  releaseEnvironmentVariables: readonly string[];
+  environmentMetadata: CodingAgentEnvironmentMetadataContract;
+}
+
+export interface CodingAgentRuntimeOptions {
+  env: Readonly<Record<string, string | undefined>>;
+  runtime: string;
+  sdkVersion: string;
+}
+
+export interface CodingAgentRuntimeMetadata {
+  runtime: Record<string, string>;
+  metadata: Record<string, string>;
+}
+
 export interface CodingAgentV1Contract {
   schemaVersion: string;
   integrations: readonly CodingAgentSchemaIntegration[];
   runtimeNames: Readonly<Record<CodingAgentSchemaIntegration, string>>;
   keys: readonly CodingAgentMetadataField[];
+  runtime: CodingAgentRuntimeContract;
   integrationPolicies: Readonly<Record<CodingAgentIntegration, CodingAgentIntegrationPolicy>>;
 }
 
-export interface ProviderMetadata {
+interface ProviderMetadata {
   ls_provider?: string | undefined;
   ls_model_type?: string | undefined;
   ls_message_format?: string | undefined;
