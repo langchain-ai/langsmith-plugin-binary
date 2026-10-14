@@ -4,6 +4,7 @@ import {
 } from "../../storage/capture/constants.js";
 import { BACKGROUND_WORKER_DIRECTORY } from "../background-worker/constants.js";
 import { DELIVERY_DIRECTORY } from "../delivery/constants.js";
+import { RECONSTRUCTION_DIRECTORY } from "../reconstruction/constants.js";
 export const ROOT_RUN_EXECUTION_ORDER = 1;
 export const DOTTED_ORDER_TIME_PREFIX_LENGTH = 18;
 export const DOTTED_ORDER_SEGMENT_PATTERN = /^(\d{8}T\d{12}Z)([^.]+)$/u;
@@ -18,6 +19,7 @@ export const LIFECYCLE_ENGINE_FOLDERS: readonly string[] = [
   CAPTURE_RECORD_LOCK_DIRECTORY,
   DELIVERY_DIRECTORY,
   BACKGROUND_WORKER_DIRECTORY,
+  RECONSTRUCTION_DIRECTORY,
   LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY,
 ];
 export const LIFECYCLE_SETTLEMENT_LOCK_FILE = "drain";
