@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CodingAgentMetadataOptions } from "../../metadata/index.js";
 import { createLangSmithUploadWriter } from "./index.js";
+import { createUploadClient } from "./client.js";
 import { resolveUploadDestinationFingerprint } from "./identity.js";
 import type {
   LangSmithUploadDestinationConfig,
@@ -14,6 +15,8 @@ import type {
 const PRIMARY_KEY = "synthetic-primary-key";
 const REPLICA_KEY = "synthetic-replica-key";
 const FAILING_KEY = "synthetic-failing-key";
+const CONFLICT_KEY = "synthetic-conflict-key";
+const MISSING_KEY = "synthetic-missing-key";
 const PRIVATE_MARKER = "synthetic-private-upload-marker";
 const RUN_ID = "12345678-1234-4123-8123-123456789012";
 
@@ -114,6 +117,16 @@ function recordRequest(request: IncomingMessage, response: ServerResponse): void
       const key = apiKey + ":" + runId;
       const previous = storedRuns.get(key);
       if (previous) storedRuns.set(key, { ...previous, ...payload });
+    }
+    if (request.headers["x-api-key"] === CONFLICT_KEY) {
+      response.writeHead(409, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "Run update payload already received." }));
+      return;
+    }
+    if (request.headers["x-api-key"] === MISSING_KEY) {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ detail: "Run not found" }));
+      return;
     }
     if (request.headers["x-api-key"] === FAILING_KEY) {
       response.writeHead(401, { "content-type": "application/json" });
@@ -384,6 +397,31 @@ describe("bound LangSmith upload writer", () => {
     expect(requests.some(({ apiKey }) => apiKey === FAILING_KEY)).toBe(true);
   });
 
+  it("counts a conflict on a patch as delivered but still rejects a conflicting post", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: true,
+      destinations: [destination(CONFLICT_KEY, "primary-project", "primary-workspace")],
+    });
+    const destinationId = destinationByIndex(writer.destinations, 0);
+
+    await expect(writer.send(patchSubmission(), destinationId)).resolves.toEqual({
+      destinationId,
+      runId: RUN_ID,
+      operation: "patched",
+    });
+    await expect(writer.send(submission(), destinationId)).rejects.toThrow(
+      "LangSmith upload failed",
+    );
+    expect(requests.map(({ method }) => method)).toEqual(["PATCH", "POST"]);
+    const missing = createLangSmithUploadWriter({
+      redact: true,
+      destinations: [destination(MISSING_KEY, "primary-project", "primary-workspace")],
+    });
+    await expect(
+      missing.send(patchSubmission(), destinationByIndex(missing.destinations, 0)),
+    ).rejects.toThrow("LangSmith upload failed");
+  });
+
   it("keeps metadata-mode wire content muted and uses the stable run ID on replay", async () => {
     const writer = createLangSmithUploadWriter({
       redact: true,
@@ -451,6 +489,11 @@ describe("bound LangSmith upload writer", () => {
     }
   });
 
+  it("leaves trace sampling to the SDK default like the plugins on main", () => {
+    const client = createUploadClient({ apiKey: PRIMARY_KEY, apiUrl: "http://127.0.0.1:9" });
+    expect(Reflect.get(client, "tracingSampleRate")).toBeUndefined();
+  });
+
   it("applies configured secret rules and preserves content when redaction is disabled", async () => {
     const enabled = createLangSmithUploadWriter({
       destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
@@ -503,7 +546,7 @@ describe("bound LangSmith upload writer", () => {
     expect(requests).toHaveLength(0);
   });
 
-  it("keeps destination IDs stable across order and key rotation", () => {
+  it("keeps destination IDs stable across order and fingerprints all bound credentials", () => {
     const primary = destination(PRIMARY_KEY, "primary-project", "primary-workspace");
     const replica = destination(REPLICA_KEY, "replica-project", "replica-workspace");
     const first = createLangSmithUploadWriter({ destinations: [primary, replica], redact: true });
@@ -538,7 +581,7 @@ describe("bound LangSmith upload writer", () => {
     expect(first.destinations.map(({ id }) => id).toSorted()).toEqual(
       reordered.destinations.map(({ id }) => id).toSorted(),
     );
-    expect(first.accountFingerprint).toBe(changedKey.accountFingerprint);
+    expect(first.accountFingerprint).not.toBe(changedKey.accountFingerprint);
     expect(first.accountFingerprint).not.toBe(changedRedaction.accountFingerprint);
     expect(first.accountFingerprint).not.toBe(changedRedactionRules.accountFingerprint);
     expect(

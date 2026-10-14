@@ -550,4 +550,32 @@ describe("shared replica routing", () => {
       detail: "stable",
     });
   });
+
+  it("routes a keyless primary only to replicas that carry their own key", async () => {
+    const options = {
+      destinations: [destination("", "primary-project")],
+      replicas: [
+        { apiKey: REPLICA_KEY, projectName: "replica-project" },
+        { projectName: "unkeyed" },
+      ],
+      redact: false,
+    };
+    const writer = createLangSmithUploadWriter(options);
+
+    await sendTree(writer, ROOT_V7_ID, CHILD_V7_ID);
+
+    expect(writer.destinations).toHaveLength(1);
+    expect(requests).toHaveLength(4);
+    expect(requests.every(({ apiKey }) => apiKey === REPLICA_KEY)).toBe(true);
+    expect(resolveUploadDestinationFingerprint(options)).toBe(writer.accountFingerprint);
+    expect(
+      resolveUploadDestinationFingerprint({
+        ...options,
+        replicas: [{ apiKey: "synthetic-other-replica-key", projectName: "replica-project" }],
+      }),
+    ).not.toBe(writer.accountFingerprint);
+    expect(() =>
+      createLangSmithUploadWriter({ ...options, replicas: [{ projectName: "unkeyed" }] }),
+    ).toThrow("An API key is required for each upload destination");
+  });
 });

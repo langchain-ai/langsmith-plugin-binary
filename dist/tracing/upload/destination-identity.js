@@ -15,12 +15,15 @@ export function resolveUploadDestinationIdentities(options) {
         throw new TypeError("A replica upload requires exactly one primary destination");
     }
     const primary = options.destinations[0];
-    const primaryProjectName = replicas.length === 0 || primary === undefined
+    const routedReplicas = primary && typeof primary === "object" && !hasApiKey(primary.apiKey)
+        ? replicas.filter((replica) => !replica || typeof replica !== "object" || hasApiKey(replica.apiKey))
+        : replicas;
+    const primaryProjectName = routedReplicas.length === 0 || primary === undefined
         ? undefined
         : normalizeRequiredText(primary.projectName, "project name");
-    const destinations = replicas.length === 0
+    const destinations = routedReplicas.length === 0
         ? options.destinations.map((destination) => resolveDestination(destination))
-        : replicas.map((replica) => resolveReplicaDestination(replica, primary, primaryProjectName));
+        : routedReplicas.map((replica) => resolveReplicaDestination(replica, primary, primaryProjectName));
     const ids = new Set();
     for (const destination of destinations) {
         if (ids.has(destination.id))
@@ -38,7 +41,7 @@ export function resolveUploadDestinationIdentities(options) {
 function resolveDestination(config, sourceProjectName, updates) {
     if (!config || typeof config !== "object")
         throw new TypeError("Invalid upload destination");
-    if (typeof config.apiKey !== "string" || config.apiKey.trim().length === 0) {
+    if (!hasApiKey(config.apiKey)) {
         throw new TypeError("An API key is required for each upload destination");
     }
     const apiUrl = normalizeApiUrl(config.apiUrl);
@@ -47,6 +50,7 @@ function resolveDestination(config, sourceProjectName, updates) {
         ? undefined
         : normalizeRequiredText(config.workspaceId, "workspace ID");
     const identity = JSON.stringify({
+        apiKey: config.apiKey,
         apiUrl,
         projectName,
         workspaceId: workspaceId ?? null,
@@ -135,6 +139,9 @@ function normalizeRequiredText(value, name) {
         throw new TypeError(`Invalid upload ${name}`);
     }
     return value.trim();
+}
+function hasApiKey(value) {
+    return typeof value === "string" && value.trim().length > 0;
 }
 function fingerprint(value) {
     return createHash("sha256").update(value).digest("hex").slice(0, UPLOAD_FINGERPRINT_LENGTH);

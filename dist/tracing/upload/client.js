@@ -6,7 +6,6 @@ export function createUploadClient(options) {
         apiUrl,
         workspaceId: workspaceId ?? "",
         autoBatchTracing: false,
-        tracingSamplingRate: 1,
         disablePromptCache: true,
         debug: false,
         omitTracedRuntimeInfo: includeRuntimeMetadata !== true,
