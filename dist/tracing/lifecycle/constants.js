@@ -29,4 +29,5 @@ export const LIFECYCLE_RUN_CONTEXT_FIELDS = [
     ["trace_id", "Trace ID"],
     ["dotted_order", "Dotted order"],
 ];
+export const LIFECYCLE_SNAPSHOT_CONTENT_FIELDS = ["inputs", "outputs"];
 //# sourceMappingURL=constants.js.map
