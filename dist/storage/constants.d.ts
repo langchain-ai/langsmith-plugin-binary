@@ -19,10 +19,6 @@ export declare const FILE_LOCK_RELEASE_MESSAGE = "Could not release file lock cl
 export declare const FILE_LOCK_INVALID_TIMEOUT_MESSAGE = "timeoutMs must be a finite positive number";
 export declare const FILE_LOCK_ACQUIRE_MESSAGE = "Could not acquire file lock claim";
 export declare const FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE = "Unsafe file lock claims directory";
-export declare const FILE_LOCK_EXISTS_CODE = "EEXIST";
-export declare const FILE_LOCK_MISSING_CODE = "ENOENT";
-export declare const FILE_LOCK_PROCESS_MISSING_CODE = "ESRCH";
-export declare const FILE_LOCK_PROCESS_CHECK_SIGNAL = 0;
 export declare const FILE_LOCK_RENAME_RETRY_TIMEOUT_MS = 100;
 export declare const FILE_LOCK_RENAME_BUSY_CODE = "EPERM";
 export declare const FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES: readonly ["EPERM", "EACCES"];

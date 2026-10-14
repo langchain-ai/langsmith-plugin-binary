@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDeliveryCoordinator } from "./coordinator.js";
 import * as captureStoreModule from "../../storage/capture/index.js";
 import { createCaptureStore } from "../../storage/capture/capture-store.js";
-import { captureInput, temporaryRoot } from "./delivery-test-helpers.js";
+import { captureInput, temporaryRoot } from "../../test-support/tracing/delivery.js";
 
 describe("delivery dependencies", () => {
   it("defers full-scope dependencies without consuming attempts", async () => {

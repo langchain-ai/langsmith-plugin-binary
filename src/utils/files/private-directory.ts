@@ -1,6 +1,8 @@
+import { errorCode } from "../errors.js";
 import type { Dirent } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { FILE_MISSING_CODE } from "../constants.js";
 
 export async function listPrivateDirectory(
   root: string,
@@ -31,16 +33,7 @@ async function lstatDirectory(path: string) {
   try {
     return await lstat(path);
   } catch (error) {
-    if (errorCode(error) === "ENOENT") return undefined;
+    if (errorCode(error) === FILE_MISSING_CODE) return undefined;
     throw error;
   }
-}
-
-function errorCode(error: unknown): string | undefined {
-  return error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    typeof error.code === "string"
-    ? error.code
-    : undefined;
 }

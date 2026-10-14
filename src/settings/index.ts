@@ -2,12 +2,8 @@ export { COMMON_BOOLEAN_SETTINGS } from "./constants.js";
 export type {
   CommonConfig,
   CommonConfigResult,
-  CommonConfigSources,
   CommonReplica,
   CommonRedactRule,
-  MergeCommonConfigOptions,
-  MergedCommonConfig,
-  SdkReplica,
 } from "./models.js";
 export {
   mergeCommonConfig,

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import type { CaptureScope } from "../../storage/capture/models.js";
-import type { DeliveryCaptureInput } from "./models.js";
+import type { DeliveryCaptureInput } from "../../tracing/delivery/models.js";
 
 export const execFileAsync = promisify(execFile);
 
@@ -52,7 +52,7 @@ export function scope(record: CaptureScope): CaptureScope {
   };
 }
 
-export function errorCode(error: unknown): number | undefined {
+export function exitCode(error: unknown): number | undefined {
   return error !== null &&
     typeof error === "object" &&
     "code" in error &&

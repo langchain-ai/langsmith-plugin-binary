@@ -9,9 +9,4 @@ export {
   parseRepoName,
 } from "./repository.js";
 export { nearestExistingDirectory } from "../utils/paths.js";
-export type {
-  GitHubLoginOptions,
-  GitInfo,
-  GitRepositoryName,
-  GitUserNameOptions,
-} from "./models.js";
+export type { GitInfo } from "./models.js";

@@ -3,7 +3,7 @@ import { createDeliveryCoordinator } from "./coordinator.js";
 import { resolvePolicy } from "./coordinator-policy.js";
 import type { DrainOptions } from "./models.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
-import { captureInput, scope, temporaryRoot } from "./delivery-test-helpers.js";
+import { captureInput, scope, temporaryRoot } from "../../test-support/tracing/delivery.js";
 
 describe("delivery retention limits", () => {
   it("records an explicit capacity drop and retains every captured event", async () => {
