@@ -1,14 +1,14 @@
+import { isPlainRecord } from "../utils/validation/objects.js";
 import { chmod, link, lstat, mkdir, readFile, readdir, rmdir, rename, unlink, writeFile, } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
-import { FILE_LOCK_ACQUIRE_MESSAGE, FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE, FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE, FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE, FILE_LOCK_CLAIM_VERSION, FILE_LOCK_CLAIM_EXTENSION, FILE_LOCK_DIRECTORY_MODE, FILE_LOCK_DIRECTORY_SUFFIX, FILE_LOCK_DEFAULT_TIMEOUT_MS, FILE_LOCK_ENCODING, FILE_LOCK_EXISTS_CODE, FILE_LOCK_EXCLUSIVE_FLAG, FILE_LOCK_FILE_MODE, FILE_LOCK_INVALID_TIMEOUT_MESSAGE, FILE_LOCK_MISSING_CODE, FILE_LOCK_NEGATIVE_TICKET_LIMIT, FILE_LOCK_POLL_INTERVAL_MS, FILE_LOCK_PROCESS_MISSING_CODE, FILE_LOCK_PROCESS_CHECK_SIGNAL, FILE_LOCK_RELEASE_MESSAGE, FILE_LOCK_RENAME_RETRY_TIMEOUT_MS, FILE_LOCK_RENAME_BUSY_CODE, FILE_LOCK_TEMP_PREFIX, FILE_LOCK_TEMP_SUFFIX, FILE_LOCK_TICKET_LIMIT_MESSAGE, FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE, FILE_LOCK_UNSELECTED_TICKET, FILE_LOCK_LEGACY_DIRECTORY_SUFFIX, FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES, } from "./constants.js";
+import { FILE_LOCK_ACQUIRE_MESSAGE, FILE_LOCK_COMPATIBLE_ACQUIRE_CLEANUP_MESSAGE, FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE, FILE_LOCK_COMPATIBLE_RELEASE_MESSAGE, FILE_LOCK_CLAIM_VERSION, FILE_LOCK_CLAIM_EXTENSION, FILE_LOCK_DIRECTORY_MODE, FILE_LOCK_DIRECTORY_SUFFIX, FILE_LOCK_DEFAULT_TIMEOUT_MS, FILE_LOCK_ENCODING, FILE_LOCK_EXCLUSIVE_FLAG, FILE_LOCK_FILE_MODE, FILE_LOCK_INVALID_TIMEOUT_MESSAGE, FILE_LOCK_NEGATIVE_TICKET_LIMIT, FILE_LOCK_POLL_INTERVAL_MS, FILE_LOCK_RELEASE_MESSAGE, FILE_LOCK_RENAME_RETRY_TIMEOUT_MS, FILE_LOCK_RENAME_BUSY_CODE, FILE_LOCK_TEMP_PREFIX, FILE_LOCK_TEMP_SUFFIX, FILE_LOCK_TICKET_LIMIT_MESSAGE, FILE_LOCK_UNSAFE_DIRECTORY_MESSAGE, FILE_LOCK_UNSELECTED_TICKET, FILE_LOCK_LEGACY_DIRECTORY_SUFFIX, FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES, } from "./constants.js";
+import { errorCode } from "../utils/errors.js";
+import { FILE_EXISTS_CODE, FILE_MISSING_CODE, PROCESS_CHECK_SIGNAL, PROCESS_MISSING_CODE, } from "../utils/constants.js";
 import { FileLockTimeoutError } from "./errors.js";
-function isRecord(value) {
-    return typeof value === "object" && value !== null;
-}
 function parseClaim(value, id) {
-    if (!isRecord(value))
+    if (!isPlainRecord(value))
         return undefined;
     if (value.version !== FILE_LOCK_CLAIM_VERSION ||
         value.id !== id ||
@@ -26,14 +26,13 @@ function parseClaim(value, id) {
     }
     return value;
 }
-async function processIsAlive(pid) {
+function processIsAlive(pid) {
     try {
-        process.kill(pid, FILE_LOCK_PROCESS_CHECK_SIGNAL);
+        process.kill(pid, PROCESS_CHECK_SIGNAL);
         return true;
     }
     catch (error) {
-        const code = error.code;
-        if (code === FILE_LOCK_PROCESS_MISSING_CODE)
+        if (errorCode(error) === PROCESS_MISSING_CODE)
             return false;
         return undefined;
     }
@@ -44,7 +43,7 @@ async function removeFile(filePath) {
         return true;
     }
     catch (error) {
-        if (error.code === FILE_LOCK_MISSING_CODE)
+        if (errorCode(error) === FILE_MISSING_CODE)
             return true;
         return false;
     }
@@ -66,7 +65,7 @@ async function publishClaim(filePath, claim, create, deadline) {
                     break;
                 }
                 catch (error) {
-                    if (error.code !== FILE_LOCK_RENAME_BUSY_CODE)
+                    if (errorCode(error) !== FILE_LOCK_RENAME_BUSY_CODE)
                         throw error;
                     await waitForNextScan(replacementDeadline, filePath);
                 }
@@ -92,7 +91,7 @@ async function createClaim(claimDirectory) {
             return claim;
         }
         catch (error) {
-            if (error.code !== FILE_LOCK_EXISTS_CODE)
+            if (errorCode(error) !== FILE_EXISTS_CODE)
                 throw error;
         }
     }
@@ -111,14 +110,14 @@ async function scanClaims(claimDirectory) {
             value = JSON.parse(await readFile(join(claimDirectory, entry.name), FILE_LOCK_ENCODING));
         }
         catch (error) {
-            if (error.code === FILE_LOCK_MISSING_CODE)
+            if (errorCode(error) === FILE_MISSING_CODE)
                 continue;
             return { claims, blocked: true };
         }
         const claim = parseClaim(value, id);
         if (!claim)
             return { claims, blocked: true };
-        const alive = await processIsAlive(claim.pid);
+        const alive = processIsAlive(claim.pid);
         if (alive === false) {
             if (!(await removeFile(join(claimDirectory, entry.name))))
                 return { claims, blocked: true };
@@ -163,7 +162,7 @@ async function assertSafeClaimDirectory(claimDirectory) {
         stat = await lstat(claimDirectory);
     }
     catch (error) {
-        if (error.code === FILE_LOCK_MISSING_CODE)
+        if (errorCode(error) === FILE_MISSING_CODE)
             return;
         throw error;
     }
@@ -245,9 +244,9 @@ async function acquireLegacyDirectoryGate(filePath, deadline) {
             return { path: gatePath, dev: stat.dev, ino: stat.ino, birthtimeMs: stat.birthtimeMs };
         }
         catch (error) {
-            const code = error.code;
+            const code = errorCode(error);
             const permissionDenied = FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES.some((candidate) => candidate === code);
-            if (code !== FILE_LOCK_EXISTS_CODE && !permissionDenied) {
+            if (code !== FILE_EXISTS_CODE && !permissionDenied) {
                 throw error;
             }
             let isDirectory = false;
@@ -255,8 +254,8 @@ async function acquireLegacyDirectoryGate(filePath, deadline) {
                 isDirectory = (await lstat(gatePath)).isDirectory();
             }
             catch (statError) {
-                if (statError.code === FILE_LOCK_MISSING_CODE) {
-                    if (code === FILE_LOCK_EXISTS_CODE) {
+                if (errorCode(statError) === FILE_MISSING_CODE) {
+                    if (code === FILE_EXISTS_CODE) {
                         retriedMissingPermission = false;
                         await waitForNextScan(deadline, filePath);
                         continue;
@@ -281,7 +280,7 @@ async function releaseLegacyDirectoryGate(gate) {
         stat = await lstat(gate.path);
     }
     catch (error) {
-        if (error.code === FILE_LOCK_MISSING_CODE)
+        if (errorCode(error) === FILE_MISSING_CODE)
             return;
         throw error;
     }
@@ -355,10 +354,10 @@ export async function waitForFileLockClaim(filePath, pid, options) {
                 return true;
         }
         catch (error) {
-            if (error.code !== FILE_LOCK_MISSING_CODE)
+            if (errorCode(error) !== FILE_MISSING_CODE)
                 throw error;
         }
-        if ((await processIsAlive(pid)) === false)
+        if (processIsAlive(pid) === false)
             return false;
         const remaining = deadline - performance.now();
         if (remaining <= 0)

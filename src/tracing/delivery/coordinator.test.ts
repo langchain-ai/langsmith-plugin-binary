@@ -10,12 +10,12 @@ import { receiptPath } from "../../storage/capture/paths.js";
 import {
   captureInput,
   childEnvironment,
-  errorCode,
+  exitCode,
   execFileAsync,
   moduleUrl,
   scope,
   temporaryRoot,
-} from "./delivery-test-helpers.js";
+} from "../../test-support/tracing/delivery.js";
 
 describe("durable delivery coordinator", () => {
   it("replays the same run ID after a process dies after transport acceptance", async () => {
@@ -41,7 +41,7 @@ describe("durable delivery coordinator", () => {
       { env: childEnvironment(home), timeout: 10_000 },
     )
       .then(() => 0)
-      .catch(errorCode);
+      .catch(exitCode);
     expect(childCode).toBe(71);
     const acceptedRunId = readFileSync(marker, "utf8");
     const replayed: string[] = [];

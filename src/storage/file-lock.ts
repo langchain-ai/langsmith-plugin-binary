@@ -1,3 +1,4 @@
+import { isPlainRecord } from "../utils/validation/objects.js";
 import {
   chmod,
   link,
@@ -24,15 +25,11 @@ import {
   FILE_LOCK_DIRECTORY_SUFFIX,
   FILE_LOCK_DEFAULT_TIMEOUT_MS,
   FILE_LOCK_ENCODING,
-  FILE_LOCK_EXISTS_CODE,
   FILE_LOCK_EXCLUSIVE_FLAG,
   FILE_LOCK_FILE_MODE,
   FILE_LOCK_INVALID_TIMEOUT_MESSAGE,
-  FILE_LOCK_MISSING_CODE,
   FILE_LOCK_NEGATIVE_TICKET_LIMIT,
   FILE_LOCK_POLL_INTERVAL_MS,
-  FILE_LOCK_PROCESS_MISSING_CODE,
-  FILE_LOCK_PROCESS_CHECK_SIGNAL,
   FILE_LOCK_RELEASE_MESSAGE,
   FILE_LOCK_RENAME_RETRY_TIMEOUT_MS,
   FILE_LOCK_RENAME_BUSY_CODE,
@@ -53,14 +50,17 @@ import type {
   BegunFileLock,
   LegacyDirectoryFileLockGate,
 } from "./models.js";
+import { errorCode } from "../utils/errors.js";
+import {
+  FILE_EXISTS_CODE,
+  FILE_MISSING_CODE,
+  PROCESS_CHECK_SIGNAL,
+  PROCESS_MISSING_CODE,
+} from "../utils/constants.js";
 import { FileLockTimeoutError } from "./errors.js";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function parseClaim(value: unknown, id: string): FileLockClaim | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isPlainRecord(value)) return undefined;
   if (
     value.version !== FILE_LOCK_CLAIM_VERSION ||
     value.id !== id ||
@@ -80,13 +80,12 @@ function parseClaim(value: unknown, id: string): FileLockClaim | undefined {
   return value as unknown as FileLockClaim;
 }
 
-async function processIsAlive(pid: number): Promise<boolean | undefined> {
+function processIsAlive(pid: number): boolean | undefined {
   try {
-    process.kill(pid, FILE_LOCK_PROCESS_CHECK_SIGNAL);
+    process.kill(pid, PROCESS_CHECK_SIGNAL);
     return true;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === FILE_LOCK_PROCESS_MISSING_CODE) return false;
+    if (errorCode(error) === PROCESS_MISSING_CODE) return false;
     return undefined;
   }
 }
@@ -96,7 +95,7 @@ async function removeFile(filePath: string): Promise<boolean> {
     await unlink(filePath);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === FILE_LOCK_MISSING_CODE) return true;
+    if (errorCode(error) === FILE_MISSING_CODE) return true;
     return false;
   }
 }
@@ -124,7 +123,7 @@ async function publishClaim(
           await rename(temporaryPath, filePath);
           break;
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== FILE_LOCK_RENAME_BUSY_CODE) throw error;
+          if (errorCode(error) !== FILE_LOCK_RENAME_BUSY_CODE) throw error;
           await waitForNextScan(replacementDeadline, filePath);
         }
       }
@@ -148,7 +147,7 @@ async function createClaim(claimDirectory: string): Promise<FileLockClaim> {
       await publishClaim(join(claimDirectory, `${id}${FILE_LOCK_CLAIM_EXTENSION}`), claim, true);
       return claim;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== FILE_LOCK_EXISTS_CODE) throw error;
+      if (errorCode(error) !== FILE_EXISTS_CODE) throw error;
     }
   }
 }
@@ -166,12 +165,12 @@ async function scanClaims(claimDirectory: string): Promise<FileLockScanResult> {
         await readFile(join(claimDirectory, entry.name), FILE_LOCK_ENCODING),
       ) as unknown;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === FILE_LOCK_MISSING_CODE) continue;
+      if (errorCode(error) === FILE_MISSING_CODE) continue;
       return { claims, blocked: true };
     }
     const claim = parseClaim(value, id);
     if (!claim) return { claims, blocked: true };
-    const alive = await processIsAlive(claim.pid);
+    const alive = processIsAlive(claim.pid);
     if (alive === false) {
       if (!(await removeFile(join(claimDirectory, entry.name)))) return { claims, blocked: true };
       continue;
@@ -222,7 +221,7 @@ async function assertSafeClaimDirectory(claimDirectory: string): Promise<void> {
   try {
     stat = await lstat(claimDirectory);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === FILE_LOCK_MISSING_CODE) return;
+    if (errorCode(error) === FILE_MISSING_CODE) return;
     throw error;
   }
   if (stat.isSymbolicLink() || !stat.isDirectory())
@@ -308,19 +307,19 @@ async function acquireLegacyDirectoryGate(
       if (!stat.isDirectory()) throw new Error(FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE);
       return { path: gatePath, dev: stat.dev, ino: stat.ino, birthtimeMs: stat.birthtimeMs };
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
+      const code = errorCode(error);
       const permissionDenied = FILE_LOCK_WINDOWS_DIRECTORY_CONTENTION_CODES.some(
         (candidate) => candidate === code,
       );
-      if (code !== FILE_LOCK_EXISTS_CODE && !permissionDenied) {
+      if (code !== FILE_EXISTS_CODE && !permissionDenied) {
         throw error;
       }
       let isDirectory = false;
       try {
         isDirectory = (await lstat(gatePath)).isDirectory();
       } catch (statError) {
-        if ((statError as NodeJS.ErrnoException).code === FILE_LOCK_MISSING_CODE) {
-          if (code === FILE_LOCK_EXISTS_CODE) {
+        if (errorCode(statError) === FILE_MISSING_CODE) {
+          if (code === FILE_EXISTS_CODE) {
             retriedMissingPermission = false;
             await waitForNextScan(deadline, filePath);
             continue;
@@ -344,7 +343,7 @@ async function releaseLegacyDirectoryGate(gate: LegacyDirectoryFileLockGate): Pr
   try {
     stat = await lstat(gate.path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === FILE_LOCK_MISSING_CODE) return;
+    if (errorCode(error) === FILE_MISSING_CODE) return;
     throw error;
   }
   if (
@@ -424,9 +423,9 @@ export async function waitForFileLockClaim(
       const scan = await scanClaims(claimDirectory);
       if (scan.claims.some((claim) => claim.pid === pid)) return true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== FILE_LOCK_MISSING_CODE) throw error;
+      if (errorCode(error) !== FILE_MISSING_CODE) throw error;
     }
-    if ((await processIsAlive(pid)) === false) return false;
+    if (processIsAlive(pid) === false) return false;
     const remaining = deadline - performance.now();
     if (remaining <= 0) return false;
     await new Promise((resolvePromise) =>

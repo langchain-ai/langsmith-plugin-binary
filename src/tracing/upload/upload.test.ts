@@ -1,4 +1,4 @@
-import type { LocalRequest } from "./upload-test-models.js";
+import type { LocalRequest } from "../../test-support/models/upload.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CodingAgentMetadataOptions } from "../../metadata/index.js";

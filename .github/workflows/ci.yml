@@ -119,7 +119,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-26, windows-latest]
-        langsmith-version: [0.9.0, 0.10.2, 0.10.5]
+        langsmith-version: [latest]
     steps:
       - name: Check Out the Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
