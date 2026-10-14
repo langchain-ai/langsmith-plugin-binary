@@ -1,7 +1,5 @@
 import { CAPTURE_WAKE_ERROR_NAME, CAPTURE_WAKE_FAILURE_MESSAGE } from "./capture-wake-constants.js";
-import { CAPTURE_RECORD_VERSION } from "../storage/capture/constants.js";
-import { captureContentDigest, compactCaptureRecord, compactReconstructionJobRecord, } from "../storage/capture/compaction.js";
-import { canonicalJson } from "../storage/capture/utils/serialization.js";
+import { captureContentDigest } from "../storage/capture/utils/digest.js";
 export class CaptureWakeError extends Error {
     captureResult;
     constructor(captureResult, cause) {
@@ -36,30 +34,10 @@ export async function readSavedCaptureWake(error, options) {
         turnId: record.turnId,
         eventId: record.eventId,
     });
-    return saved !== undefined && matchesPersistedCapture(saved, record)
+    return saved !== undefined &&
+        saved.capturedAtMs === record.capturedAtMs &&
+        captureContentDigest(saved) === captureContentDigest(record)
         ? { ...result, record: saved }
         : undefined;
-}
-function matchesPersistedCapture(saved, reported) {
-    if (canonicalJson(saved) === canonicalJson(reported))
-        return true;
-    if (reported.version !== CAPTURE_RECORD_VERSION ||
-        reported.compaction !== undefined ||
-        reported.sourceSnapshotCleanup !== undefined ||
-        saved.capturedAtMs !== reported.capturedAtMs) {
-        return false;
-    }
-    const originalContentDigest = captureContentDigest(reported);
-    if (saved.compaction !== undefined &&
-        saved.compaction.originalContentDigest === originalContentDigest) {
-        const compacted = compactCaptureRecord(reported, originalContentDigest);
-        return compacted !== undefined && canonicalJson(compacted) === canonicalJson(saved);
-    }
-    if (saved.sourceSnapshotCleanup !== undefined &&
-        saved.sourceSnapshotCleanup.originalContentDigest === originalContentDigest) {
-        const cleaned = compactReconstructionJobRecord(reported, originalContentDigest);
-        return cleaned !== undefined && canonicalJson(cleaned) === canonicalJson(saved);
-    }
-    return false;
 }
 //# sourceMappingURL=capture-wake.js.map

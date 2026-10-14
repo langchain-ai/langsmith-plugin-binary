@@ -1,14 +1,32 @@
-import { UPLOAD_ALREADY_RECEIVED_MESSAGE, UPLOAD_ALREADY_RECEIVED_STATUS } from "./constants.js";
-import type { UploadFailure } from "./models.js";
+import { describe, failureStatus } from "../../utils/errors.js";
+import {
+  UPLOAD_ALREADY_RECEIVED_MESSAGE,
+  UPLOAD_ALREADY_RECEIVED_STATUS,
+  UPLOAD_ERROR_NAME,
+  UPLOAD_FAILED_MESSAGE,
+  UPLOAD_RETRYABLE_STATUSES,
+  UPLOAD_SERVER_ERROR_MIN_STATUS,
+} from "./constants.js";
 
-function failureStatus(cause: unknown): number | undefined {
-  const status = (cause as UploadFailure | undefined)?.status;
-  return typeof status === "number" ? status : undefined;
+export class UploadError extends Error {
+  readonly retryable: boolean;
+  readonly status: number | undefined;
+
+  constructor(cause: unknown) {
+    super(UPLOAD_FAILED_MESSAGE, { cause });
+    this.name = UPLOAD_ERROR_NAME;
+    const status = failureStatus(cause);
+    this.status = status;
+    this.retryable =
+      status === undefined ||
+      status >= UPLOAD_SERVER_ERROR_MIN_STATUS ||
+      UPLOAD_RETRYABLE_STATUSES.includes(status);
+  }
 }
 
 export function isAlreadyReceived(cause: unknown): boolean {
   return (
     failureStatus(cause) === UPLOAD_ALREADY_RECEIVED_STATUS &&
-    String((cause as Error).message).includes(UPLOAD_ALREADY_RECEIVED_MESSAGE)
+    describe(cause).includes(UPLOAD_ALREADY_RECEIVED_MESSAGE)
   );
 }

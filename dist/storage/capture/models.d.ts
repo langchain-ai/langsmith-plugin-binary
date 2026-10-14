@@ -20,46 +20,48 @@ export interface CaptureInput {
     turnEvidence: JsonValue;
     metadataProvenance: JsonValue;
     sourceAgeStartedAtMs?: number;
-    priorDeliveryAttempts?: number;
     dependencies?: CaptureDependency[];
+}
+export interface CaptureOutcome {
+    outcome: "delivered" | "dropped";
+    reason?: string;
+    recordedAt: string;
+}
+export interface CaptureMarkerEntry {
+    runId: string;
+    outcomes: Record<string, CaptureOutcome>;
+}
+export interface CaptureSettledTurn {
+    rootRunId: string;
+    attribution: Record<string, string>;
+}
+export interface CaptureOutcomeMarker {
+    version: number;
+    settled?: CaptureSettledTurn;
+    entries: Record<string, CaptureMarkerEntry>;
+    unsettled: CaptureOutcome;
+}
+export interface CaptureRemoveOptions {
+    forgetTurn?: boolean;
+}
+export interface CaptureRetry {
+    failures: number;
+    notBeforeMs: number;
+    recordedAtMs?: number;
+}
+export interface CaptureDelivery {
+    retries: Record<string, CaptureRetry>;
+    outcomes: Record<string, CaptureOutcome>;
 }
 export interface StoredCapture extends CaptureInput {
     version: number;
     capturedAtMs: number;
-    compaction?: CompactedCapturePayload;
-    sourceSnapshotCleanup?: SourceSnapshotCleanup;
-}
-export interface SourceSnapshotCleanup {
-    version: 1;
-    originalContentDigest: string;
-}
-export type CompactedFieldDigest = {
-    state: "preserve";
-} | {
-    state: "absent";
-} | {
-    state: "value";
-    digest: string;
-};
-export interface CompactedCapturePayload {
-    version: 1;
-    originalContentDigest: string;
-    fields: {
-        inputs: CompactedFieldDigest;
-        outputs: CompactedFieldDigest;
-    };
-}
-export interface CaptureCompactionFields {
-    inputs: CompactedFieldDigest;
-    outputs: CompactedFieldDigest;
-}
-export interface CaptureCompactionPayload {
-    value: JsonValue;
-    fields: CaptureCompactionFields;
+    delivery?: CaptureDelivery;
 }
 export interface EnumeratedCapture {
     record: StoredCapture;
     capturedAtMs: number;
+    modifiedAtMs: number;
 }
 export interface EnumeratedCaptureSession {
     sessionId: string;
@@ -79,43 +81,13 @@ export type CaptureWriteResult = {
 } | {
     status: "conflict";
 } | StorageFailure;
-export type CaptureCompactionResult = {
-    status: "compacted";
-    record: StoredCapture;
-} | {
-    status: "already-compacted";
-    record: StoredCapture;
-} | {
-    status: "changed";
-} | {
-    status: "missing-capture";
-} | StorageFailure;
-export type ReconstructionJobCleanupResult = {
-    status: "compacted";
-    record: StoredCapture;
-} | {
-    status: "already-compacted";
-    record: StoredCapture;
-} | {
-    status: "unchanged";
-} | {
-    status: "not-delivered";
-} | {
-    status: "changed";
-} | {
-    status: "missing-capture";
-} | StorageFailure;
 export interface OutcomeInput extends CaptureScope {
     destination: string;
     outcome: "delivered" | "dropped";
     reason?: string;
 }
-export interface OutcomeReceipt extends CaptureScope {
-    version: number;
+export interface OutcomeReceipt extends CaptureScope, CaptureOutcome {
     destination: string;
-    outcome: "delivered" | "dropped";
-    reason?: string;
-    recordedAt: string;
 }
 export type OutcomeWriteResult = {
     status: "recorded";
@@ -138,13 +110,33 @@ export type OutcomeReadResult = {
 } | StorageFailure;
 export interface CaptureStore {
     capture(input: CaptureInput): Promise<CaptureWriteResult>;
-    compact(scope: CaptureScope, expected: StoredCapture): Promise<CaptureCompactionResult>;
-    compactReconstructionJob(scope: CaptureScope, expected: StoredCapture, destination: string): Promise<ReconstructionJobCleanupResult>;
     read(scope: CaptureScope): Promise<StoredCapture | undefined>;
+    remove(scope: CaptureScope, options?: CaptureRemoveOptions): Promise<void>;
+    removeTurn(records: readonly StoredCapture[], settled?: CaptureSettledTurn): Promise<void>;
+    readSettledTurn(integration: string, sessionId: string, turnId: string): Promise<CaptureSettledTurn | undefined>;
+    removeStaleMarkers(integration: string, modifiedBeforeMs: number): Promise<number>;
+    readDroppedRunIds(integration: string, sessionId: string, turnId: string): Promise<ReadonlySet<string>>;
     enumerate(integration: string, sessionId: string): Promise<EnumeratedCapture[]>;
     enumerateTurn(integration: string, sessionId: string, turnId: string): Promise<EnumeratedCapture[]>;
     enumerateSessions(integration: string): Promise<EnumeratedCaptureSession[]>;
+    recordRetry(scope: CaptureScope, destination: string, retry: CaptureRetry): Promise<void>;
     recordOutcome(input: OutcomeInput): Promise<OutcomeWriteResult>;
     readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;
+}
+export interface CaptureOrderKey {
+    capturedAtMs: number;
+    eventId: string;
+}
+export interface CaptureLiveTurnSpan {
+    firstMs: number;
+    latestMs: number;
+}
+export interface ExpiredCaptureOptions {
+    store: CaptureStore;
+    integration: string;
+    destinations: readonly string[];
+    accountFingerprint?: string;
+    now: number;
+    maxAgeMs: number;
 }
 //# sourceMappingURL=models.d.ts.map

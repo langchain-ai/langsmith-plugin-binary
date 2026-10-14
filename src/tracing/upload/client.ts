@@ -1,5 +1,5 @@
 import { Client } from "langsmith";
-import { UPLOAD_REQUEST_TIMEOUT_MS } from "./constants.js";
+import { UPLOAD_REQUEST_TIMEOUT_MS, UPLOAD_SDK_MAX_RETRIES } from "./constants.js";
 import type { UploadClientOptions } from "./models.js";
 
 export function createUploadClient(options: UploadClientOptions): Client {
@@ -11,6 +11,7 @@ export function createUploadClient(options: UploadClientOptions): Client {
     autoBatchTracing: false,
     manualFlushMode: true,
     timeout_ms: UPLOAD_REQUEST_TIMEOUT_MS,
+    callerOptions: { maxRetries: UPLOAD_SDK_MAX_RETRIES },
     disablePromptCache: true,
     debug: false,
     omitTracedRuntimeInfo: true,

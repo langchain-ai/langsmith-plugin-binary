@@ -11,11 +11,6 @@ export declare const LIFECYCLE_SETTLEMENT_LOCK_FILE = "drain";
 export declare const LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY = "integrations";
 export declare const LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY = "sessions";
 export declare const LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY = "accounts";
-export declare const LIFECYCLE_SNAPSHOT_LOCK_DIRECTORY = "lifecycle-snapshot-v1";
-export declare const LIFECYCLE_SNAPSHOT_LOCK_FILE = "capture";
-export declare const LIFECYCLE_SNAPSHOT_REVISION_EVENT_ID_PREFIX = "run-snapshot-v1:";
-export declare const LIFECYCLE_SNAPSHOT_OPTIONAL_RUN_FIELDS: readonly ["outputs", "end_time", "error", "tags", "serialized", "events", "reference_example_id"];
 export declare const LIFECYCLE_TURN_CLOSURE_STATES: readonly ["open", "provisional", "authoritative"];
 export declare const LIFECYCLE_RUN_CONTEXT_FIELDS: readonly [readonly ["parent_run_id", "Parent run ID"], readonly ["trace_id", "Trace ID"], readonly ["dotted_order", "Dotted order"]];
-export declare const LIFECYCLE_SNAPSHOT_CONTENT_FIELDS: readonly ["inputs", "outputs"];
 //# sourceMappingURL=constants.d.ts.map

@@ -1,36 +1,58 @@
+import { CaptureRecordInvalidError, CaptureRecordVersionError } from "./errors.js";
+import { describe, errorCode } from "../../utils/errors.js";
 import { lstat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { withFileLock } from "../index.js";
+import { FILE_LOCK_DIRECTORY_SUFFIX } from "../constants.js";
+import type { FileLockCallback, FileLockHandle } from "../models.js";
 import {
-  CAPTURE_COMPACTED_RECORD_VERSION,
   CAPTURE_DIRECTORY,
+  CAPTURE_DEPENDENCIES_INVALID_MESSAGE,
+  CAPTURE_DEPENDENCY_INTEGRATION_MESSAGE,
+  CAPTURE_DEPENDENCY_INVALID_MESSAGE,
+  CAPTURE_DEPENDENCY_SELF_MESSAGE,
+  CAPTURE_DEPENDENCY_UNIQUE_MESSAGE,
   CAPTURE_EVENT_FILE,
+  CAPTURE_FIELD_UNSUPPORTED_MESSAGE,
   CAPTURE_HASH,
+  CAPTURE_NAMESPACE_MISMATCH_MESSAGE,
+  CAPTURE_OUTCOME_INVALID_MESSAGE,
+  CAPTURE_OUTCOME_UNSUPPORTED_MESSAGE,
   CAPTURE_RECORD_LOCK_DIRECTORY,
+  CAPTURE_RECORD_UNSUPPORTED_MESSAGE,
   CAPTURE_RECORD_VERSION,
-  CAPTURE_RECONSTRUCTION_JOB_KIND,
-  CAPTURE_RECEIPT_VERSION,
-  CAPTURE_STAGING_FILE,
+  CAPTURE_RETRY_LOST_MESSAGE,
+  CAPTURE_SKIPPED_WARNING,
+  CAPTURE_UNREADABLE_WARNING,
+  CAPTURE_VERSION_UNSUPPORTED_MESSAGE,
 } from "./constants.js";
 import type {
-  CaptureCompactionResult,
+  CaptureDelivery,
   CaptureDependency,
+  CaptureInput,
+  CaptureOutcome,
+  CaptureRemoveOptions,
+  CaptureSettledTurn,
+  CaptureRetry,
   CaptureScope,
   CaptureStore,
+  CaptureWriteResult,
   EnumeratedCapture,
   EnumeratedCaptureSession,
   OutcomeInput,
   OutcomeReadResult,
   OutcomeReceipt,
-  ReconstructionJobCleanupResult,
+  OutcomeWriteResult,
   StorageFailure,
   StoredCapture,
 } from "./models.js";
 import {
-  captureDirectory,
   eventPath,
+  eventSegments,
+  eventsDirectory,
   identifierHash,
-  receiptPath,
+  sessionsDirectory,
+  turnsDirectory,
   validateIdentifier,
   validateIntegration,
 } from "./paths.js";
@@ -39,505 +61,433 @@ import {
   publishExclusive,
   readPrivateFile,
   replacePrivateFile,
+  retryRemovedDirectory,
 } from "./utils/atomic-file.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
+import { removeEmptyAncestors, removeFileIfPresent } from "../../utils/files/cleanup.js";
 import {
+  parseJsonObject,
   requireNonNegativeInteger,
   requireSafeEpochMilliseconds,
 } from "../../utils/validation/objects.js";
+import { scopeOf } from "./scope.js";
+import { compareCaptureOrder } from "./order.js";
+import { captureContentDigest } from "./utils/digest.js";
 import {
-  captureContentDigest,
-  compactCaptureRecord,
-  compactReconstructionJobRecord,
-  validateCompactionMarker,
-  validateSourceSnapshotCleanup,
-} from "./compaction.js";
+  forgetTurnMarkers,
+  readDroppedRunIds,
+  readSettledTurn,
+  readMarkerOutcome,
+  removeStaleMarkers,
+  writeOutcomeMarker,
+  writeTurnMarker,
+} from "./markers.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
 
 export function createCaptureStore(root: string): CaptureStore {
   const storageRoot = resolve(root);
   return {
-    async capture(input) {
-      let record: StoredCapture;
-      let contents: string;
-      try {
-        validateScope(input);
-        const dependencies = normalizeDependencies(input.dependencies, input);
-        validateIdentifier(input.runId, "run ID");
-        validateIdentifier(input.destinationFingerprint, "destination fingerprint");
-        validateIdentifier(input.eventKind, "event kind");
-        record = {
-          version: CAPTURE_RECORD_VERSION,
-          capturedAtMs: Date.now(),
-          integration: input.integration,
-          sessionId: input.sessionId,
-          turnId: input.turnId,
-          eventId: input.eventId,
-          runId: input.runId,
-          destinationFingerprint: input.destinationFingerprint,
-          eventKind: input.eventKind,
-          normalizedPayload: canonicalValue(input.normalizedPayload, new Set<object>()),
-          turnEvidence: canonicalValue(input.turnEvidence, new Set<object>()),
-          metadataProvenance: canonicalValue(input.metadataProvenance, new Set<object>()),
-          ...(input.sourceAgeStartedAtMs === undefined
-            ? {}
-            : {
-                sourceAgeStartedAtMs: requireSafeEpochMilliseconds(
-                  input.sourceAgeStartedAtMs,
-                  "Source age",
-                ),
-              }),
-          ...(input.priorDeliveryAttempts === undefined
-            ? {}
-            : {
-                priorDeliveryAttempts: requireNonNegativeInteger(
-                  input.priorDeliveryAttempts,
-                  "Prior delivery attempts",
-                ),
-              }),
-          ...(dependencies === undefined ? {} : { dependencies }),
-        };
-        contents = canonicalJson(record);
-      } catch (error) {
-        return failure("SERIALIZATION_FAILED", error);
-      }
-      try {
-        const path = eventPath(storageRoot, input);
-        return await withRecordLock(storageRoot, input, async () => {
-          await ensureDirectories(input.integration, input.sessionId, input.turnId, "events");
-          if (await publishExclusive(path, contents)) return { status: "published", record };
-          const previous = await readRecord(storageRoot, path);
-          if (previous === undefined)
-            return {
-              status: "failed",
-              code: "STORAGE_FAILED",
-              message: "Published event disappeared",
-            };
-          if (!sameScope(previous, input)) return { status: "conflict" };
-          return sameCapture(previous, record)
-            ? { status: "duplicate", record: previous }
-            : { status: "conflict" };
-        });
-      } catch (error) {
-        return failure("STORAGE_FAILED", error);
-      }
-    },
-    async read(scope) {
-      validateScope(scope);
-      const record = await readRecord(storageRoot, eventPath(storageRoot, scope));
-      if (record === undefined) return undefined;
-      if (!sameScope(record, scope)) throw new Error("Capture namespace does not match");
-      return record;
-    },
-    async compact(scope, expected): Promise<CaptureCompactionResult> {
-      try {
-        validateScope(scope);
-        if (!sameScope(expected, scope)) throw new TypeError("Capture namespace does not match");
-        const expectedOriginalContentDigest =
-          expected.compaction?.originalContentDigest ?? captureContentDigest(expected);
-        if (!CAPTURE_HASH.test(expectedOriginalContentDigest))
-          throw new TypeError("Invalid original capture digest");
-        return await withRecordLock(storageRoot, scope, async () => {
-          const path = eventPath(storageRoot, scope);
-          const previous = await readRecord(storageRoot, path);
-          if (previous === undefined) return { status: "missing-capture" };
-          const originalContentDigest =
-            previous.compaction?.originalContentDigest ?? captureContentDigest(previous);
-          if (originalContentDigest !== expectedOriginalContentDigest) return { status: "changed" };
-          if (previous.compaction !== undefined)
-            return { status: "already-compacted", record: previous };
-          const record = compactCaptureRecord(previous, originalContentDigest);
-          if (record === undefined) return { status: "changed" };
-          await replacePrivateFile(storageRoot, path, canonicalJson(record));
-          return { status: "compacted", record };
-        });
-      } catch (error) {
-        return failure("STORAGE_FAILED", error);
-      }
-    },
-    async compactReconstructionJob(
-      scope,
-      expected,
-      destination,
-    ): Promise<ReconstructionJobCleanupResult> {
-      try {
-        validateScope(scope);
-        validateIdentifier(destination, "destination");
-        if (!sameScope(expected, scope) || expected.eventKind !== CAPTURE_RECONSTRUCTION_JOB_KIND)
-          throw new TypeError("Capture is not the expected reconstruction job");
-        if (destination !== expected.destinationFingerprint)
-          throw new TypeError("Reconstruction job destination does not match");
-        const expectedOriginalContentDigest = captureContentDigest(expected);
-        if (!CAPTURE_HASH.test(expectedOriginalContentDigest))
-          throw new TypeError("Invalid original reconstruction job digest");
-        return await withRecordLock(storageRoot, scope, async () => {
-          const path = eventPath(storageRoot, scope);
-          const previous = await readRecord(storageRoot, path);
-          if (previous === undefined) return { status: "missing-capture" };
-          if (!sameScope(previous, scope)) throw new Error("Capture namespace does not match");
-          if (captureContentDigest(previous) !== expectedOriginalContentDigest)
-            return { status: "changed" };
-          const payload = previous.normalizedPayload;
-          const hasSourceSnapshots =
-            payload !== null &&
-            typeof payload === "object" &&
-            !Array.isArray(payload) &&
-            Object.hasOwn(payload, "sourceSnapshots");
-          if (!hasSourceSnapshots && previous.sourceSnapshotCleanup === undefined)
-            return { status: "unchanged" };
-          const receipt = await readReceipt(
-            storageRoot,
-            receiptPath(storageRoot, scope, destination),
-          );
-          if (
-            receipt?.outcome !== "delivered" ||
-            receipt.destination !== destination ||
-            !sameScope(receipt, scope)
-          )
-            return { status: "not-delivered" };
-          if (previous.sourceSnapshotCleanup !== undefined)
-            return { status: "already-compacted", record: previous };
-          const compacted = compactReconstructionJobRecord(previous, expectedOriginalContentDigest);
-          if (compacted === undefined) return { status: "changed" };
-          await replacePrivateFile(storageRoot, path, canonicalJson(compacted));
-          return { status: "compacted", record: compacted };
-        });
-      } catch (error) {
-        return failure("STORAGE_FAILED", error);
-      }
-    },
+    capture: (input) => captureEvent(storageRoot, input),
+    read: (scope) => readCapture(storageRoot, scope),
     async enumerate(integration, sessionId): Promise<EnumeratedCapture[]> {
       validateIntegration(integration);
       validateIdentifier(sessionId, "session ID");
-      const turnsDirectory = join(
-        captureDirectory(storageRoot),
-        "integrations",
-        integration,
-        "sessions",
-        identifierHash(sessionId),
-        "turns",
-      );
-      const turns = await listPrivateDirectory(storageRoot, turnsDirectory);
-      if (turns === undefined) return [];
-      const captures: EnumeratedCapture[] = [];
-      for (const turn of turns) {
-        if (!turn.isDirectory() || turn.isSymbolicLink() || !CAPTURE_HASH.test(turn.name))
-          throw new Error("Invalid capture turn directory");
-        const eventDirectory = join(turnsDirectory, turn.name, "events");
-        const events = await listPrivateDirectory(storageRoot, eventDirectory);
-        if (events === undefined) continue;
-        for (const event of events) {
-          if (event.isSymbolicLink() || !event.isFile())
-            throw new Error("Capture event must be a regular file");
-          if (CAPTURE_STAGING_FILE.test(event.name)) continue;
-          if (!CAPTURE_EVENT_FILE.test(event.name)) throw new Error("Invalid capture event path");
-          const path = join(eventDirectory, event.name);
-          const record = await readRecord(storageRoot, path);
-          if (
-            record === undefined ||
-            record.integration !== integration ||
-            record.sessionId !== sessionId ||
-            identifierHash(record.turnId) !== turn.name ||
-            `${identifierHash(record.eventId)}.json` !== event.name
-          ) {
-            throw new Error("Capture event namespace does not match");
-          }
-          const info = await lstat(path);
-          if (!info.isFile() || info.isSymbolicLink() || !Number.isFinite(info.mtimeMs))
-            throw new Error("Capture event must be a regular file");
-          captures.push({ record, capturedAtMs: record.capturedAtMs });
-        }
-      }
-      return captures.toSorted(compareCaptures);
+      return enumerateTurns(storageRoot, integration, identifierHash(sessionId), () => true);
     },
     async enumerateTurn(integration, sessionId, turnId): Promise<EnumeratedCapture[]> {
-      return enumerateTurnCaptures(storageRoot, integration, sessionId, turnId);
-    },
-    async enumerateSessions(integration) {
       validateIntegration(integration);
-      const sessionsDirectory = join(
-        captureDirectory(storageRoot),
-        "integrations",
+      validateIdentifier(sessionId, "session ID");
+      validateIdentifier(turnId, "turn ID");
+      const turnHash = identifierHash(turnId);
+      return enumerateTurns(
+        storageRoot,
         integration,
-        "sessions",
-      );
-      const directories = await listPrivateDirectory(storageRoot, sessionsDirectory);
-      if (directories === undefined) return [];
-      const sessions: EnumeratedCaptureSession[] = [];
-      for (const directory of directories) {
-        if (
-          !directory.isDirectory() ||
-          directory.isSymbolicLink() ||
-          !CAPTURE_HASH.test(directory.name)
-        ) {
-          throw new Error("Invalid capture session directory");
-        }
-        const session = await enumerateSession(storageRoot, integration, directory.name);
-        if (session === undefined || session.captures.length === 0) continue;
-        sessions.push(session);
-      }
-      return sessions.toSorted((left, right) =>
-        left.sessionId === right.sessionId ? 0 : left.sessionId < right.sessionId ? -1 : 1,
+        identifierHash(sessionId),
+        (name) => name === turnHash,
       );
     },
-    async recordOutcome(input) {
-      try {
-        validateScope(input);
-        validateIdentifier(input.destination, "destination");
-        if (input.outcome !== "delivered" && input.outcome !== "dropped")
-          throw new TypeError("Invalid outcome");
-        if (input.reason !== undefined) validateIdentifier(input.reason, "outcome reason");
-        return await withRecordLock(storageRoot, input, async () => {
-          if ((await readRecord(storageRoot, eventPath(storageRoot, input))) === undefined)
-            return { status: "missing-capture" };
-          const path = receiptPath(storageRoot, input, input.destination);
-          await ensureDirectories(
-            input.integration,
-            input.sessionId,
-            input.turnId,
-            "receipts",
-            input.destination,
-          );
-          const comparable = receiptValue(input, new Date().toISOString());
-          const contents = canonicalJson(comparable);
-          if (await publishExclusive(path, contents))
-            return { status: "recorded", receipt: comparable };
-          const previous = await readReceipt(storageRoot, path);
-          if (previous === undefined)
-            return {
-              status: "failed",
-              code: "STORAGE_FAILED",
-              message: "Published receipt disappeared",
-            };
-          return sameReceipt(previous, input)
-            ? { status: "duplicate", receipt: previous }
-            : { status: "conflict" };
-        });
-      } catch (error) {
-        return failure("STORAGE_FAILED", error);
-      }
-    },
-    async readOutcome(scope, destination): Promise<OutcomeReadResult> {
-      try {
-        validateScope(scope);
-        validateIdentifier(destination, "destination");
-        if ((await readRecord(storageRoot, eventPath(storageRoot, scope))) === undefined)
-          return { status: "missing-capture" };
-        const receipt = await readReceipt(
-          storageRoot,
-          receiptPath(storageRoot, scope, destination),
-        );
-        if (receipt === undefined) return { status: "pending" };
-        return sameScope(receipt, scope) && receipt.destination === destination
-          ? { status: "settled", receipt }
-          : {
-              status: "failed",
-              code: "STORAGE_FAILED",
-              message: "Receipt namespace does not match",
-            };
-      } catch (error) {
-        return failure("STORAGE_FAILED", error);
-      }
-    },
+    enumerateSessions: (integration) => enumerateIntegrationSessions(storageRoot, integration),
+    recordRetry: (scope, destination, retry) =>
+      recordRetryState(storageRoot, scope, destination, retry),
+    recordOutcome: (input) => recordDeliveryOutcome(storageRoot, input),
+    readOutcome: (scope, destination) => readDeliveryOutcome(storageRoot, scope, destination),
+    remove: (scope, options) => removeCapture(storageRoot, scope, options),
+    removeTurn: (records, settled) => removeTurnWithMarker(storageRoot, records, settled),
+    readSettledTurn: (integration, sessionId, turnId) =>
+      readSettledTurn(storageRoot, { integration, sessionId, turnId }),
+    readDroppedRunIds: (integration, sessionId, turnId) =>
+      readDroppedRunIds(storageRoot, { integration, sessionId, turnId }),
+    removeStaleMarkers: (integration, modifiedBeforeMs) =>
+      removeStaleMarkers(storageRoot, integration, modifiedBeforeMs),
   };
+}
 
-  async function ensureDirectories(
-    integration: string,
-    sessionId: string,
-    turnId: string,
-    collection: "events" | "receipts",
-    destination?: string,
-  ): Promise<void> {
-    const pathSegments = [
-      CAPTURE_DIRECTORY,
-      "integrations",
-      integration,
-      "sessions",
-      identifierHash(sessionId),
-      "turns",
-      identifierHash(turnId),
-      collection,
-    ];
-    if (destination !== undefined) pathSegments.push(identifierHash(destination));
-    await ensurePrivateDirectory(storageRoot, pathSegments);
+function buildCaptureRecord(input: CaptureInput): StoredCapture {
+  validateScope(input);
+  const dependencies = normalizeDependencies(input.dependencies, input);
+  validateIdentifier(input.runId, "run ID");
+  validateIdentifier(input.destinationFingerprint, "destination fingerprint");
+  validateIdentifier(input.eventKind, "event kind");
+  return {
+    version: CAPTURE_RECORD_VERSION,
+    capturedAtMs: Date.now(),
+    integration: input.integration,
+    sessionId: input.sessionId,
+    turnId: input.turnId,
+    eventId: input.eventId,
+    runId: input.runId,
+    destinationFingerprint: input.destinationFingerprint,
+    eventKind: input.eventKind,
+    normalizedPayload: canonicalValue(input.normalizedPayload, new Set<object>()),
+    turnEvidence: canonicalValue(input.turnEvidence, new Set<object>()),
+    metadataProvenance: canonicalValue(input.metadataProvenance, new Set<object>()),
+    ...(input.sourceAgeStartedAtMs === undefined
+      ? {}
+      : {
+          sourceAgeStartedAtMs: requireSafeEpochMilliseconds(
+            input.sourceAgeStartedAtMs,
+            "Source age",
+          ),
+        }),
+    ...(dependencies === undefined ? {} : { dependencies }),
+  };
+}
+
+async function publishCapture(
+  root: string,
+  input: CaptureInput,
+  record: StoredCapture,
+  contents: string,
+): Promise<CaptureWriteResult> {
+  const path = eventPath(root, input);
+  return withRecordLock(root, input, async () => {
+    const published = await retryRemovedDirectory(async () => {
+      await ensureEventDirectory(root, input.integration, input.sessionId, input.turnId);
+      return publishExclusive(path, contents);
+    });
+    if (published) return { status: "published", record };
+    const previous = await readRecord(root, path);
+    if (previous === undefined)
+      return {
+        status: "failed",
+        code: "STORAGE_FAILED",
+        message: "Published event disappeared",
+      };
+    if (!sameScope(previous, input)) return { status: "conflict" };
+    return sameCapture(previous, record)
+      ? { status: "duplicate", record: previous }
+      : { status: "conflict" };
+  });
+}
+
+async function captureEvent(root: string, input: CaptureInput): Promise<CaptureWriteResult> {
+  let record: StoredCapture;
+  let contents: string;
+  try {
+    record = buildCaptureRecord(input);
+    contents = canonicalJson(record);
+  } catch (error) {
+    return failure("SERIALIZATION_FAILED", error);
   }
+  try {
+    return await publishCapture(root, input, record, contents);
+  } catch (error) {
+    return failure("STORAGE_FAILED", error);
+  }
+}
+
+async function readCapture(root: string, scope: CaptureScope): Promise<StoredCapture | undefined> {
+  validateScope(scope);
+  const record = await readRecord(root, eventPath(root, scope));
+  if (record === undefined) return undefined;
+  if (!sameScope(record, scope)) throw new Error(CAPTURE_NAMESPACE_MISMATCH_MESSAGE);
+  return record;
+}
+
+async function enumerateIntegrationSessions(
+  root: string,
+  integration: string,
+): Promise<EnumeratedCaptureSession[]> {
+  validateIntegration(integration);
+  const sessions: EnumeratedCaptureSession[] = [];
+  for (const directory of (await listPrivateDirectory(
+    root,
+    sessionsDirectory(root, integration),
+  )) ?? []) {
+    if (!directory.isDirectory() || !CAPTURE_HASH.test(directory.name)) continue;
+    const captures = await enumerateTurns(root, integration, directory.name, () => true);
+    if (captures.length > 0) sessions.push({ sessionId: captures[0]!.record.sessionId, captures });
+  }
+  return sessions.toSorted((left, right) =>
+    left.sessionId === right.sessionId ? 0 : left.sessionId < right.sessionId ? -1 : 1,
+  );
+}
+
+async function recordRetryState(
+  root: string,
+  scope: CaptureScope,
+  destination: string,
+  retry: CaptureRetry,
+): Promise<void> {
+  validateScope(scope);
+  validateIdentifier(destination, "destination");
+  requireNonNegativeInteger(retry.failures, "Delivery failures");
+  requireSafeEpochMilliseconds(retry.notBeforeMs, "Retry time");
+  if (retry.recordedAtMs !== undefined)
+    requireSafeEpochMilliseconds(retry.recordedAtMs, "Retry record time");
+  await withRecordLock(root, scope, async (lock) => {
+    const path = eventPath(root, scope);
+    const record = await readRecord(root, path);
+    if (record === undefined) throw new Error(CAPTURE_RETRY_LOST_MESSAGE);
+    const delivery = deliveryOf(record);
+    await saveDelivery(
+      root,
+      path,
+      record,
+      { ...delivery, retries: { ...delivery.retries, [destination]: retry } },
+      lock,
+    );
+  });
+}
+
+function validateOutcomeInput(input: OutcomeInput): void {
+  validateScope(input);
+  validateIdentifier(input.destination, "destination");
+  if (input.outcome !== "delivered" && input.outcome !== "dropped")
+    throw new TypeError(CAPTURE_OUTCOME_INVALID_MESSAGE);
+  if (input.reason !== undefined) validateIdentifier(input.reason, "outcome reason");
+}
+
+async function recordDeliveryOutcome(
+  root: string,
+  input: OutcomeInput,
+): Promise<OutcomeWriteResult> {
+  try {
+    validateOutcomeInput(input);
+    return await withRecordLock(root, input, async (lock) => {
+      const path = eventPath(root, input);
+      const record = await readRecord(root, path);
+      if (record === undefined) return { status: "missing-capture" };
+      const delivery = deliveryOf(record);
+      const previous = delivery.outcomes[input.destination];
+      if (previous !== undefined)
+        return sameOutcome(previous, input)
+          ? { status: "duplicate", receipt: receiptOf(input, previous) }
+          : { status: "conflict" };
+      const outcome: CaptureOutcome = {
+        outcome: input.outcome,
+        ...(input.reason === undefined ? {} : { reason: input.reason }),
+        recordedAt: new Date().toISOString(),
+      };
+      await saveDelivery(
+        root,
+        path,
+        record,
+        { ...delivery, outcomes: { ...delivery.outcomes, [input.destination]: outcome } },
+        lock,
+      );
+      return { status: "recorded", receipt: receiptOf(input, outcome) };
+    });
+  } catch (error) {
+    return failure("STORAGE_FAILED", error);
+  }
+}
+
+async function readDeliveryOutcome(
+  root: string,
+  scope: CaptureScope,
+  destination: string,
+): Promise<OutcomeReadResult> {
+  try {
+    validateScope(scope);
+    validateIdentifier(destination, "destination");
+    const record = await readRecord(root, eventPath(root, scope));
+    if (record === undefined) {
+      const removed = await readMarkerOutcome(root, scope, destination);
+      return removed === undefined
+        ? { status: "missing-capture" }
+        : { status: "settled", receipt: receiptOf({ ...scope, destination }, removed) };
+    }
+    if (!sameScope(record, scope)) throw new Error(CAPTURE_NAMESPACE_MISMATCH_MESSAGE);
+    const outcome = record.delivery?.outcomes[destination];
+    return outcome === undefined
+      ? { status: "pending" }
+      : { status: "settled", receipt: receiptOf({ ...scope, destination }, outcome) };
+  } catch (error) {
+    return failure("STORAGE_FAILED", error);
+  }
+}
+
+async function removeTurnWithMarker(
+  root: string,
+  records: readonly StoredCapture[],
+  settled: CaptureSettledTurn | undefined,
+): Promise<void> {
+  await writeTurnMarker(root, records, settled);
+  for (const record of records) await removeCapture(root, scopeOf(record), {}, false);
+}
+
+async function removeCapture(
+  root: string,
+  scope: CaptureScope,
+  options: CaptureRemoveOptions = {},
+  leaveMarker = true,
+): Promise<void> {
+  validateScope(scope);
+  await withRecordLock(root, scope, async () => {
+    const path = eventPath(root, scope);
+    const record = options.forgetTurn || !leaveMarker ? undefined : await readRecord(root, path);
+    if (record !== undefined) await writeOutcomeMarker(root, scope, record);
+    await removeFileIfPresent(path);
+  });
+  if (options.forgetTurn) await forgetTurnMarkers(root, scope);
+  const lockEvents = join(root, ...recordLockSegments(scope));
+  await removeEmptyAncestors(
+    join(lockEvents, `${identifierHash(scope.eventId)}.lock${FILE_LOCK_DIRECTORY_SUFFIX}`),
+    root,
+  );
+  await removeEmptyAncestors(dirname(eventPath(root, scope)), root);
+}
+
+async function saveDelivery(
+  root: string,
+  path: string,
+  record: StoredCapture,
+  delivery: CaptureDelivery,
+  lock: FileLockHandle,
+): Promise<void> {
+  await replacePrivateFile(root, path, canonicalJson({ ...record, delivery }), () =>
+    lock.assertHeld(),
+  );
+}
+
+async function ensureEventDirectory(
+  root: string,
+  integration: string,
+  sessionId: string,
+  turnId: string,
+): Promise<void> {
+  await ensurePrivateDirectory(
+    root,
+    eventSegments(CAPTURE_DIRECTORY, { integration, sessionId, turnId }),
+  );
 }
 
 async function withRecordLock<T>(
   root: string,
   scope: CaptureScope,
-  operation: () => Promise<T>,
+  operation: FileLockCallback<T>,
 ): Promise<T> {
   validateScope(scope);
-  return withRecordLockByHashes(
-    root,
-    scope.integration,
-    identifierHash(scope.sessionId),
-    identifierHash(scope.turnId),
-    identifierHash(scope.eventId),
-    operation,
-  );
+  const directory = await ensurePrivateDirectory(root, recordLockSegments(scope));
+  return withFileLock(join(directory, `${identifierHash(scope.eventId)}.lock`), operation);
 }
 
 function compareCaptures(left: EnumeratedCapture, right: EnumeratedCapture): number {
-  if (left.capturedAtMs !== right.capturedAtMs)
-    return left.capturedAtMs < right.capturedAtMs ? -1 : 1;
-  if (left.record.eventId === right.record.eventId) return 0;
-  return left.record.eventId < right.record.eventId ? -1 : 1;
-}
-
-async function enumerateTurnCaptures(
-  root: string,
-  integration: string,
-  sessionId: string,
-  turnId: string,
-): Promise<EnumeratedCapture[]> {
-  validateIntegration(integration);
-  validateIdentifier(sessionId, "session ID");
-  validateIdentifier(turnId, "turn ID");
-  const turnsDirectory = join(
-    captureDirectory(root),
-    "integrations",
-    integration,
-    "sessions",
-    identifierHash(sessionId),
-    "turns",
+  return compareCaptureOrder(
+    { capturedAtMs: left.capturedAtMs, eventId: left.record.eventId },
+    { capturedAtMs: right.capturedAtMs, eventId: right.record.eventId },
   );
-  const turns = await listPrivateDirectory(root, turnsDirectory);
-  if (turns === undefined) return [];
-  const turnHash = identifierHash(turnId);
-  const turn = turns.find((entry) => entry.name === turnHash);
-  if (turn === undefined) return [];
-  if (!turn.isDirectory() || turn.isSymbolicLink())
-    throw new Error("Invalid capture turn directory");
-  const eventDirectory = join(turnsDirectory, turnHash, "events");
-  const events = await listPrivateDirectory(root, eventDirectory);
-  if (events === undefined) return [];
-  const captures: EnumeratedCapture[] = [];
-  for (const event of events) {
-    if (event.isSymbolicLink() || !event.isFile())
-      throw new Error("Capture event must be a regular file");
-    if (CAPTURE_STAGING_FILE.test(event.name)) continue;
-    if (!CAPTURE_EVENT_FILE.test(event.name)) throw new Error("Invalid capture event path");
-    const path = join(eventDirectory, event.name);
-    const record = await readRecord(root, path);
-    if (
-      record === undefined ||
-      record.integration !== integration ||
-      record.sessionId !== sessionId ||
-      record.turnId !== turnId ||
-      `${identifierHash(record.eventId)}.json` !== event.name
-    ) {
-      throw new Error("Capture event namespace does not match");
-    }
-    const info = await lstat(path);
-    if (!info.isFile() || info.isSymbolicLink() || !Number.isFinite(info.mtimeMs))
-      throw new Error("Capture event must be a regular file");
-    captures.push({ record, capturedAtMs: record.capturedAtMs });
-  }
-  return captures.toSorted(compareCaptures);
 }
 
-async function enumerateSession(
+async function enumerateTurns(
   root: string,
   integration: string,
   sessionHash: string,
-): Promise<EnumeratedCaptureSession | undefined> {
-  const turnsDirectory = join(
-    captureDirectory(root),
-    "integrations",
-    integration,
-    "sessions",
-    sessionHash,
-    "turns",
-  );
-  const turns = await listPrivateDirectory(root, turnsDirectory);
-  if (turns === undefined) return undefined;
+  wanted: (turnHash: string) => boolean,
+): Promise<EnumeratedCapture[]> {
+  const turns = turnsDirectory(root, integration, sessionHash);
   const captures: EnumeratedCapture[] = [];
-  let sessionId: string | undefined;
-  for (const turn of turns) {
-    if (!turn.isDirectory() || turn.isSymbolicLink() || !CAPTURE_HASH.test(turn.name))
-      throw new Error("Invalid capture turn directory");
-    const eventDirectory = join(turnsDirectory, turn.name, "events");
-    const events = await listPrivateDirectory(root, eventDirectory);
-    if (events === undefined) continue;
-    for (const event of events) {
-      if (event.isSymbolicLink() || !event.isFile())
-        throw new Error("Capture event must be a regular file");
-      if (CAPTURE_STAGING_FILE.test(event.name)) continue;
-      if (!CAPTURE_EVENT_FILE.test(event.name)) throw new Error("Invalid capture event path");
+  for (const turn of (await listPrivateDirectory(root, turns)) ?? []) {
+    if (!turn.isDirectory() || !CAPTURE_HASH.test(turn.name) || !wanted(turn.name)) continue;
+    const eventDirectory = eventsDirectory(turns, turn.name);
+    for (const event of (await listPrivateDirectory(root, eventDirectory)) ?? []) {
+      if (!event.isFile() || !CAPTURE_EVENT_FILE.test(event.name)) continue;
       const path = join(eventDirectory, event.name);
-      const record = await readRecord(root, path);
+      const record = await readEvent(root, path);
       if (
         record === undefined ||
         record.integration !== integration ||
         identifierHash(record.sessionId) !== sessionHash ||
         identifierHash(record.turnId) !== turn.name ||
-        `${identifierHash(record.eventId)}.json` !== event.name ||
-        (sessionId !== undefined && record.sessionId !== sessionId)
+        `${identifierHash(record.eventId)}.json` !== event.name
       ) {
-        throw new Error("Capture event namespace does not match");
+        if (record !== undefined) await discardEvent(path, "it does not match its folder");
+        continue;
       }
-      sessionId = record.sessionId;
       const info = await lstat(path);
-      if (!info.isFile() || info.isSymbolicLink() || !Number.isFinite(info.mtimeMs))
-        throw new Error("Capture event must be a regular file");
-      captures.push({ record, capturedAtMs: record.capturedAtMs });
+      captures.push({ record, capturedAtMs: record.capturedAtMs, modifiedAtMs: info.mtimeMs });
     }
   }
-  if (sessionId === undefined) return undefined;
-  return { sessionId, captures: captures.toSorted(compareCaptures) };
+  return captures.toSorted(compareCaptures);
 }
 
-async function withRecordLockByHashes<T>(
-  root: string,
-  integration: string,
-  sessionHash: string,
-  turnHash: string,
-  eventHash: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  if (![sessionHash, turnHash, eventHash].every((value) => CAPTURE_HASH.test(value)))
-    throw new TypeError("Invalid capture record lock path");
-  const directory = await ensurePrivateDirectory(root, [
-    CAPTURE_RECORD_LOCK_DIRECTORY,
-    "integrations",
-    integration,
-    "sessions",
-    sessionHash,
-    "turns",
-    turnHash,
-    "events",
-  ]);
-  return withFileLock(join(directory, `${eventHash}.lock`), operation);
+async function readEvent(root: string, path: string): Promise<StoredCapture | undefined> {
+  try {
+    return await readRecord(root, path);
+  } catch (error) {
+    if (error instanceof CaptureRecordInvalidError) await discardEvent(path, describe(error));
+    else console.warn(CAPTURE_SKIPPED_WARNING, `${basename(path)} (${describe(error)})`);
+    return undefined;
+  }
+}
+
+async function discardEvent(path: string, reason: string): Promise<void> {
+  await removeFileIfPresent(path);
+  console.warn(CAPTURE_UNREADABLE_WARNING, `${basename(path)} (${reason})`);
+}
+
+function recordLockSegments(scope: CaptureScope): string[] {
+  return eventSegments(CAPTURE_RECORD_LOCK_DIRECTORY, scope);
 }
 
 function sameCapture(left: StoredCapture, right: StoredCapture): boolean {
-  const leftDigest = left.compaction?.originalContentDigest ?? captureContentDigest(left);
-  return leftDigest === captureContentDigest(right);
+  return captureContentDigest(left) === captureContentDigest(right);
 }
 
-function receiptValue(input: OutcomeInput, recordedAt: string): OutcomeReceipt {
+function deliveryOf(record: StoredCapture): CaptureDelivery {
+  return record.delivery ?? { retries: {}, outcomes: {} };
+}
+
+function receiptOf(
+  scope: CaptureScope & { destination: string },
+  outcome: CaptureOutcome,
+): OutcomeReceipt {
   return {
-    version: CAPTURE_RECEIPT_VERSION,
-    integration: input.integration,
-    sessionId: input.sessionId,
-    turnId: input.turnId,
-    eventId: input.eventId,
-    destination: input.destination,
-    outcome: input.outcome,
-    ...(input.reason === undefined ? {} : { reason: input.reason }),
-    recordedAt,
+    integration: scope.integration,
+    sessionId: scope.sessionId,
+    turnId: scope.turnId,
+    eventId: scope.eventId,
+    destination: scope.destination,
+    ...outcome,
   };
+}
+
+function sameOutcome(outcome: CaptureOutcome, input: OutcomeInput): boolean {
+  return outcome.outcome === input.outcome && outcome.reason === input.reason;
 }
 
 async function readRecord(root: string, path: string): Promise<StoredCapture | undefined> {
   const contents = await readPrivateFile(root, path);
   if (contents === undefined) return undefined;
-  const value = parseObject(contents);
+  let value: Record<string, unknown>;
+  try {
+    value = parseJsonObject(contents, "Invalid storage record");
+  } catch (error) {
+    throw new CaptureRecordInvalidError(describe(error));
+  }
+  if (typeof value.version === "number" && value.version !== CAPTURE_RECORD_VERSION)
+    throw new CaptureRecordVersionError(`${CAPTURE_VERSION_UNSUPPORTED_MESSAGE} ${value.version}`);
+  try {
+    return validateRecord(value);
+  } catch (error) {
+    throw new CaptureRecordInvalidError(describe(error));
+  }
+}
+
+function validateRecord(value: Record<string, unknown>): StoredCapture {
   if (
-    (value.version !== CAPTURE_RECORD_VERSION &&
-      value.version !== CAPTURE_COMPACTED_RECORD_VERSION) ||
+    value.version !== CAPTURE_RECORD_VERSION ||
     typeof value.capturedAtMs !== "number" ||
     !Number.isSafeInteger(value.capturedAtMs) ||
     !Number.isFinite(new Date(value.capturedAtMs).getTime()) ||
@@ -552,13 +502,11 @@ async function readRecord(root: string, path: string): Promise<StoredCapture | u
     !("turnEvidence" in value) ||
     !("metadataProvenance" in value)
   ) {
-    throw new Error("Unsupported capture record");
+    throw new Error(CAPTURE_RECORD_UNSUPPORTED_MESSAGE);
   }
   if ("sourceAgeStartedAtMs" in value) {
     requireSafeEpochMilliseconds(value["sourceAgeStartedAtMs"], "Stored source age");
   }
-  if ("priorDeliveryAttempts" in value)
-    requireNonNegativeInteger(value["priorDeliveryAttempts"], "Stored prior delivery attempts");
   for (const [identifier, name] of [
     [value.runId, "run ID"],
     [value.destinationFingerprint, "destination fingerprint"],
@@ -575,60 +523,46 @@ async function readRecord(root: string, path: string): Promise<StoredCapture | u
   validateScope(scope);
   const dependencies = normalizeDependencies(value.dependencies, scope);
   const normalizedPayload = canonicalValue(value.normalizedPayload, new Set<object>());
-  const compaction =
-    value.version === CAPTURE_COMPACTED_RECORD_VERSION
-      ? validateCompactionMarker(value.compaction, value.eventKind, normalizedPayload)
-      : undefined;
-  if (value.version === CAPTURE_RECORD_VERSION && "compaction" in value)
-    throw new Error("Invalid compacted capture marker");
-  if (value.version === CAPTURE_COMPACTED_RECORD_VERSION && "sourceSnapshotCleanup" in value)
-    throw new Error("Invalid reconstruction source snapshot cleanup marker");
-  const sourceSnapshotCleanup =
-    "sourceSnapshotCleanup" in value
-      ? validateSourceSnapshotCleanup(
-          value.sourceSnapshotCleanup,
-          value.eventKind,
-          normalizedPayload,
-        )
-      : undefined;
+  const delivery = "delivery" in value ? readDelivery(value.delivery) : undefined;
   return {
     ...(value as unknown as StoredCapture),
     normalizedPayload,
     ...(dependencies === undefined ? {} : { dependencies }),
-    ...(compaction === undefined ? {} : { compaction }),
-    ...(sourceSnapshotCleanup === undefined ? {} : { sourceSnapshotCleanup }),
+    ...(delivery === undefined ? {} : { delivery }),
   };
 }
 
-async function readReceipt(root: string, path: string): Promise<OutcomeReceipt | undefined> {
-  const contents = await readPrivateFile(root, path);
-  if (contents === undefined) return undefined;
-  const value = parseObject(contents);
-  if (
-    value.version !== CAPTURE_RECEIPT_VERSION ||
-    typeof value.integration !== "string" ||
-    typeof value.sessionId !== "string" ||
-    typeof value.turnId !== "string" ||
-    typeof value.eventId !== "string" ||
-    typeof value.destination !== "string" ||
-    (value.outcome !== "delivered" && value.outcome !== "dropped") ||
-    typeof value.recordedAt !== "string" ||
-    ("reason" in value && typeof value.reason !== "string")
-  ) {
-    throw new Error("Unsupported outcome receipt");
+function readDelivery(value: unknown): CaptureDelivery {
+  const record = parseRecordObject(value, "delivery");
+  const retries = parseRecordObject(record.retries, "delivery retries");
+  const outcomes = parseRecordObject(record.outcomes, "delivery outcomes");
+  for (const [destination, retry] of Object.entries(retries)) {
+    validateIdentifier(destination, "destination");
+    const entry = parseRecordObject(retry, "delivery retry");
+    requireNonNegativeInteger(entry.failures, "Stored delivery failures");
+    requireSafeEpochMilliseconds(entry.notBeforeMs, "Stored retry time");
+    if (entry.recordedAtMs !== undefined)
+      requireSafeEpochMilliseconds(entry.recordedAtMs, "Stored retry record time");
   }
-  validateIdentifier(value.destination, "destination");
-  if ("reason" in value) validateIdentifier(value.reason as string, "outcome reason");
-  const recordedAt = new Date(value.recordedAt);
-  if (!Number.isFinite(recordedAt.getTime()) || recordedAt.toISOString() !== value.recordedAt)
-    throw new Error("Unsupported outcome receipt");
-  return value as unknown as OutcomeReceipt;
+  for (const [destination, outcome] of Object.entries(outcomes)) {
+    validateIdentifier(destination, "destination");
+    const entry = parseRecordObject(outcome, "delivery outcome");
+    const recordedAt = new Date(String(entry.recordedAt));
+    if (
+      (entry.outcome !== "delivered" && entry.outcome !== "dropped") ||
+      ("reason" in entry && typeof entry.reason !== "string") ||
+      !Number.isFinite(recordedAt.getTime()) ||
+      recordedAt.toISOString() !== entry.recordedAt
+    )
+      throw new Error(CAPTURE_OUTCOME_UNSUPPORTED_MESSAGE);
+    if ("reason" in entry) validateIdentifier(entry.reason as string, "outcome reason");
+  }
+  return { retries, outcomes } as unknown as CaptureDelivery;
 }
 
-function parseObject(contents: string): Record<string, unknown> {
-  const value: unknown = JSON.parse(contents);
+function parseRecordObject(value: unknown, name: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid storage record");
+    throw new Error(`${CAPTURE_FIELD_UNSUPPORTED_MESSAGE} ${name}`);
   return value as Record<string, unknown>;
 }
 
@@ -644,11 +578,11 @@ function normalizeDependencies(
   dependent: CaptureScope,
 ): CaptureDependency[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new TypeError("Invalid capture dependencies");
+  if (!Array.isArray(value)) throw new TypeError(CAPTURE_DEPENDENCIES_INVALID_MESSAGE);
   const seen = new Set<string>();
   return value.map((item) => {
     if (item === null || typeof item !== "object" || Array.isArray(item))
-      throw new TypeError("Invalid capture dependency");
+      throw new TypeError(CAPTURE_DEPENDENCY_INVALID_MESSAGE);
     const candidate = item as Record<string, unknown>;
     if (
       typeof candidate.integration !== "string" ||
@@ -656,7 +590,7 @@ function normalizeDependencies(
       typeof candidate.turnId !== "string" ||
       typeof candidate.eventId !== "string"
     ) {
-      throw new TypeError("Invalid capture dependency");
+      throw new TypeError(CAPTURE_DEPENDENCY_INVALID_MESSAGE);
     }
     const dependency: CaptureDependency = {
       integration: candidate.integration,
@@ -666,10 +600,10 @@ function normalizeDependencies(
     };
     validateScope(dependency);
     if (dependency.integration !== dependent.integration)
-      throw new TypeError("Capture dependencies must use the same integration");
-    if (sameScope(dependency, dependent)) throw new TypeError("Capture cannot depend on itself");
+      throw new TypeError(CAPTURE_DEPENDENCY_INTEGRATION_MESSAGE);
+    if (sameScope(dependency, dependent)) throw new TypeError(CAPTURE_DEPENDENCY_SELF_MESSAGE);
     const key = canonicalJson(dependency);
-    if (seen.has(key)) throw new TypeError("Capture dependencies must be unique");
+    if (seen.has(key)) throw new TypeError(CAPTURE_DEPENDENCY_UNIQUE_MESSAGE);
     seen.add(key);
     return dependency;
   });
@@ -684,28 +618,10 @@ function sameScope(record: CaptureScope, scope: CaptureScope): boolean {
   );
 }
 
-function sameReceipt(receipt: OutcomeReceipt, input: OutcomeInput): boolean {
-  return (
-    sameScope(receipt, input) &&
-    receipt.destination === input.destination &&
-    receipt.outcome === input.outcome &&
-    receipt.reason === input.reason
-  );
-}
-
 function failure(code: string, error: unknown): StorageFailure {
   return {
     status: "failed",
     code: errorCode(error) ?? code,
     message: error instanceof Error ? error.message : String(error),
   };
-}
-
-function errorCode(error: unknown): string | undefined {
-  return error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    typeof error.code === "string"
-    ? error.code
-    : undefined;
 }

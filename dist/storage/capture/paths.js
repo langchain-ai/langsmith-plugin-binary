@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { resolve, join } from "node:path";
-import { CAPTURE_DIRECTORY, CAPTURE_INTEGRATION, CAPTURE_MAX_IDENTIFIER_BYTES, } from "./constants.js";
+import { CAPTURE_DIRECTORY, CAPTURE_EVENTS_DIRECTORY, CAPTURE_INTEGRATIONS_DIRECTORY, CAPTURE_SESSIONS_DIRECTORY, CAPTURE_TURNS_DIRECTORY, CAPTURE_INTEGRATION, CAPTURE_MAX_IDENTIFIER_BYTES, } from "./constants.js";
 export function validateIntegration(value) {
     if (!CAPTURE_INTEGRATION.test(value))
         throw new TypeError("Invalid integration namespace");
@@ -23,13 +23,36 @@ function hasControlCharacter(value) {
 export function identifierHash(value) {
     return createHash("sha256").update(value).digest("hex");
 }
-export function captureDirectory(root) {
+function captureDirectory(root) {
     return join(resolve(root), CAPTURE_DIRECTORY);
 }
-export function eventPath(root, scope) {
-    return join(captureDirectory(root), "integrations", scope.integration, "sessions", identifierHash(scope.sessionId), "turns", identifierHash(scope.turnId), "events", `${identifierHash(scope.eventId)}.json`);
+export function sessionSegments(base, integration, sessionHash) {
+    return [
+        base,
+        CAPTURE_INTEGRATIONS_DIRECTORY,
+        integration,
+        CAPTURE_SESSIONS_DIRECTORY,
+        sessionHash,
+    ];
 }
-export function receiptPath(root, scope, destination) {
-    return join(captureDirectory(root), "integrations", scope.integration, "sessions", identifierHash(scope.sessionId), "turns", identifierHash(scope.turnId), "receipts", identifierHash(destination), `${identifierHash(scope.eventId)}.json`);
+export function eventSegments(base, scope) {
+    return [
+        ...sessionSegments(base, scope.integration, identifierHash(scope.sessionId)),
+        CAPTURE_TURNS_DIRECTORY,
+        identifierHash(scope.turnId),
+        CAPTURE_EVENTS_DIRECTORY,
+    ];
+}
+export function sessionsDirectory(root, integration) {
+    return join(captureDirectory(root), CAPTURE_INTEGRATIONS_DIRECTORY, integration, CAPTURE_SESSIONS_DIRECTORY);
+}
+export function turnsDirectory(root, integration, sessionHash) {
+    return join(sessionsDirectory(root, integration), sessionHash, CAPTURE_TURNS_DIRECTORY);
+}
+export function eventsDirectory(turns, turnHash) {
+    return join(turns, turnHash, CAPTURE_EVENTS_DIRECTORY);
+}
+export function eventPath(root, scope) {
+    return join(resolve(root), ...eventSegments(CAPTURE_DIRECTORY, scope), `${identifierHash(scope.eventId)}.json`);
 }
 //# sourceMappingURL=paths.js.map

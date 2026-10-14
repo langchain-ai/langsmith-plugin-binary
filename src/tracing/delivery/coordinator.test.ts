@@ -1,19 +1,21 @@
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { fillTemplate } from "../../utils/format.js";
+import { DELIVERY_ACCOUNT_MISMATCH_WARNING } from "./constants.js";
 import { createDeliveryCoordinator } from "./coordinator.js";
 import type { DeliveryWriter, DrainOptions } from "./models.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
-import { receiptPath } from "../../storage/capture/paths.js";
 import {
   captureInput,
   childEnvironment,
-  exitCode,
   execFileAsync,
+  exitCode,
   moduleUrl,
   scope,
+  sendOneAtATime,
   temporaryRoot,
 } from "../../test-support/tracing/delivery.js";
 
@@ -49,9 +51,9 @@ describe("durable delivery coordinator", () => {
       writer: {
         accountFingerprint: "account-a",
         destinations: [{ id: "primary" }],
-        send: async (record) => {
+        ...sendOneAtATime(async (record) => {
           replayed.push(record.runId);
-        },
+        }),
       },
     });
     expect(acceptedRunId).toBe(input.runId);
@@ -73,6 +75,7 @@ describe("durable delivery coordinator", () => {
       storageRoot: root,
       integration: "claude-code",
       sessionId: "session-1",
+      policy: { retryBaseMs: 0, quickRetryMs: 0 },
     });
     const input = {
       ...captureInput(),
@@ -85,22 +88,22 @@ describe("durable delivery coordinator", () => {
       writer: {
         accountFingerprint: "account-a",
         destinations,
-        send: async (record, destination) => {
+        ...sendOneAtATime(async (record, destination) => {
           const payload = record.normalizedPayload as typeof input.normalizedPayload;
           sent.push(`${destination.id}:${payload.nested.value}`);
           if (destination.id === "primary") payload.nested.value = "changed";
           if (destination.id === "replica") throw new Error("temporary transport failure");
-        },
+        }),
       },
     });
     const second = await coordinator.drain({
       writer: {
         accountFingerprint: "account-a",
         destinations,
-        send: async (record, destination) => {
+        ...sendOneAtATime(async (record, destination) => {
           const payload = record.normalizedPayload as typeof input.normalizedPayload;
           sent.push(`${destination.id}:${payload.nested.value}`);
-        },
+        }),
       },
     });
     const store = createCaptureStore(root);
@@ -150,11 +153,10 @@ describe("durable delivery coordinator", () => {
       writer: {
         accountFingerprint: "account-b",
         destinations: [{ id: "primary" }],
-        send: async () => {
+        ...sendOneAtATime(async () => {
           sends += 1;
-        },
+        }),
       },
-      now: Date.now() + 60_000,
     });
     expect(result).toMatchObject({ status: "drained", accountMismatch: 1 });
     expect(sends).toBe(0);
@@ -169,6 +171,55 @@ describe("durable delivery coordinator", () => {
         "primary",
       ),
     ).resolves.toEqual({ status: "pending" });
+  });
+
+  it("warns once, naming the cause, when saved work belongs to another upload setting", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const coordinator = createDeliveryCoordinator({
+      storageRoot: temporaryRoot(),
+      integration: "claude-code",
+      sessionId: "session-1",
+    });
+    await coordinator.capture(captureInput());
+    const writer = {
+      accountFingerprint: "account-b",
+      destinations: [{ id: "primary" }],
+      ...sendOneAtATime(async () => undefined),
+    };
+    await coordinator.drain({ writer });
+    await coordinator.drain({ writer });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      fillTemplate(DELIVERY_ACCOUNT_MISMATCH_WARNING, { count: 1 }),
+    );
+    warn.mockRestore();
+  });
+
+  it("does not count other-account work that already has an outcome as waiting", async () => {
+    const root = temporaryRoot();
+    const coordinator = createDeliveryCoordinator({
+      storageRoot: root,
+      integration: "claude-code",
+      sessionId: "session-1",
+    });
+    const input = captureInput();
+    await coordinator.capture(input);
+    await createCaptureStore(root).recordOutcome({
+      integration: "claude-code",
+      sessionId: "session-1",
+      turnId: input.turnId,
+      eventId: input.eventId,
+      destination: "primary",
+      outcome: "delivered",
+    });
+    const result = await coordinator.drain({
+      writer: {
+        accountFingerprint: "account-b",
+        destinations: [{ id: "primary" }],
+        ...sendOneAtATime(async () => undefined),
+      },
+    });
+    expect(result).toMatchObject({ status: "drained", accountMismatch: 0 });
   });
 
   it("keeps the session scope and writer identity fixed during a drain", async () => {
@@ -198,10 +249,12 @@ describe("durable delivery coordinator", () => {
         return this.activeDestinations;
       }
 
-      async send(
-        _record: Parameters<DrainOptions["writer"]["send"]>[0],
-        destination: Parameters<DrainOptions["writer"]["send"]>[1],
-        accountFingerprint: Parameters<DrainOptions["writer"]["send"]>[2],
+      batchLimits = { maxRecords: 1, maxBytes: Infinity };
+
+      async sendBatch(
+        _records: Parameters<DrainOptions["writer"]["sendBatch"]>[0],
+        destination: Parameters<DrainOptions["writer"]["sendBatch"]>[1],
+        accountFingerprint: Parameters<DrainOptions["writer"]["sendBatch"]>[2],
       ) {
         this.sent.push(`${accountFingerprint}/${destination.id}`);
         if (this.sent.length === 1) {
@@ -222,6 +275,7 @@ describe("durable delivery coordinator", () => {
       storageRoot: root,
       integration: "claude-code",
       sessionId: "session-1",
+      policy: { retryBaseMs: 0, quickRetryMs: 0 },
     });
     await coordinator.capture({
       ...captureInput("run-post", "run-1"),
@@ -237,10 +291,10 @@ describe("durable delivery coordinator", () => {
       writer: {
         accountFingerprint: "account-a",
         destinations,
-        send: async (record, destination) => {
+        ...sendOneAtATime(async (record, destination) => {
           if (record.eventId === "run-patch" && destination.id === "replica")
             throw new Error("temporary replica failure");
-        },
+        }),
       },
     });
     expect(first).toMatchObject({ status: "drained", delivered: 3, failed: 1, pending: 1 });
@@ -248,7 +302,7 @@ describe("durable delivery coordinator", () => {
       writer: {
         accountFingerprint: "account-a",
         destinations,
-        send: async () => undefined,
+        ...sendOneAtATime(async () => undefined),
       },
     });
     expect(second).toMatchObject({ status: "drained", delivered: 1, pending: 0 });
@@ -263,56 +317,6 @@ describe("durable delivery coordinator", () => {
         ).resolves.toMatchObject({ status: "settled", receipt: { outcome: "delivered" } });
       }
     }
-  });
-
-  it("fails loudly when a compacted capture loses a destination receipt", async () => {
-    const root = temporaryRoot();
-    const coordinator = createDeliveryCoordinator({
-      storageRoot: root,
-      integration: "claude-code",
-      sessionId: "session-1",
-    });
-    const input = {
-      ...captureInput("compacted-run", "run-compact"),
-      eventKind: "run-post",
-      normalizedPayload: {
-        operation: "post",
-        integration: "claude-code",
-        privacyMode: "full",
-        run: { id: "run-compact", name: "test", run_type: "chain", inputs: { prompt: "large" } },
-      },
-    };
-    const captured = await coordinator.capture(input);
-    if (captured.status !== "published") throw new Error("Run capture was not published");
-    const store = createCaptureStore(root);
-    const recordScope = scope({ integration: "claude-code", sessionId: "session-1", ...input });
-    const destinations = [{ id: "primary" }, { id: "replica" }];
-    for (const destination of destinations) {
-      await expect(
-        store.recordOutcome({ ...recordScope, destination: destination.id, outcome: "delivered" }),
-      ).resolves.toMatchObject({ status: "recorded" });
-    }
-    await expect(store.compact(recordScope, captured.record)).resolves.toMatchObject({
-      status: "compacted",
-    });
-    const send = vi.fn();
-
-    await expect(
-      coordinator.drain({
-        writer: { accountFingerprint: "account-a", destinations, send },
-      }),
-    ).resolves.toMatchObject({ status: "drained", delivered: 0, pending: 0 });
-    expect(send).not.toHaveBeenCalled();
-
-    unlinkSync(receiptPath(root, recordScope, "replica"));
-    await expect(
-      coordinator.drain({
-        writer: { accountFingerprint: "account-a", destinations, send },
-      }),
-    ).rejects.toThrow(
-      "Compacted capture compacted-run has no delivered receipt for destination replica",
-    );
-    expect(send).not.toHaveBeenCalled();
   });
 
   it("lets only the process holding the session lock send pending events", async () => {
@@ -335,10 +339,10 @@ describe("durable delivery coordinator", () => {
       writer: {
         accountFingerprint: "account-a",
         destinations: [{ id: "primary" }],
-        send: async () => {
+        ...sendOneAtATime(async () => {
           beginSend();
           await blocked;
-        },
+        }),
       },
     });
     await sending;
@@ -346,9 +350,9 @@ describe("durable delivery coordinator", () => {
       writer: {
         accountFingerprint: "account-a",
         destinations: [{ id: "primary" }],
-        send: async () => {
+        ...sendOneAtATime(async () => {
           secondSends += 1;
-        },
+        }),
       },
     });
     await expect(coordinator.capture(captureInput("event-2", "run-2"))).resolves.toMatchObject({
@@ -363,9 +367,9 @@ describe("durable delivery coordinator", () => {
         writer: {
           accountFingerprint: "account-a",
           destinations: [{ id: "primary" }],
-          send: async () => {
+          ...sendOneAtATime(async () => {
             secondSends += 1;
-          },
+          }),
         },
       }),
     ).resolves.toMatchObject({ delivered: 1, pending: 0 });

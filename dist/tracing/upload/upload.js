@@ -1,9 +1,9 @@
 import { buildCodingAgentMetadata } from "../../metadata/index.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
 import { resolveUploadDestinations } from "./destinations.js";
-import { UPLOAD_BATCH_LIMITS, UPLOAD_FAILED_MESSAGE, UPLOAD_PATCH_FIELDS, UPLOAD_RECEIPT_MISSING_MESSAGE, } from "./constants.js";
+import { UPLOAD_BATCH_LIMITS, UPLOAD_PATCH_FIELDS, UPLOAD_RECEIPT_MISSING_MESSAGE, } from "./constants.js";
 import { createUploadClientCache } from "./client-cache.js";
-import { isAlreadyReceived } from "./errors.js";
+import { UploadError, isAlreadyReceived } from "./errors.js";
 import { redactSdkOmittedFields } from "./redaction.js";
 import { applyRuntimeMetadata } from "./runtime-metadata.js";
 import { contextForDestination, runIdForDestination } from "./replica-identifiers.js";
@@ -30,7 +30,7 @@ export function createLangSmithUploadWriter(options) {
                 await withDeadline(client.batchIngestRuns(ingestFor(group), clientOptions)).catch(ignoreAlreadyReceived);
             }
             catch (error) {
-                throw new Error(UPLOAD_FAILED_MESSAGE, { cause: error });
+                throw new UploadError(error);
             }
         }
         return prepared.map(({ submission, operation }) => ({

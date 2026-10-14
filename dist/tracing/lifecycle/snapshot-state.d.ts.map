@@ -1,1 +1,0 @@
-{"version":3,"file":"snapshot-state.d.ts","sourceRoot":"","sources":["../../../src/tracing/lifecycle/snapshot-state.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,aAAa,EAAE,MAAM,iCAAiC,CAAC;AAQrE,OAAO,KAAK,EAAE,sBAAsB,EAAE,MAAM,aAAa,CAAC;AAsB1D,wBAAgB,iBAAiB,CAC/B,OAAO,EAAE,SAAS,aAAa,EAAE,EACjC,sBAAsB,EAAE,MAAM,EAC9B,cAAc,EAAE,MAAM,GACrB,sBAAsB,GAAG,UAAU,GAAG,SAAS,CA+FjD"}

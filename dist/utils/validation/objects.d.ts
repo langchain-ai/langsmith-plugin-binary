@@ -14,4 +14,5 @@ export declare function requireStringArray(value: unknown, name: string): string
 export declare function requireTimestamp(value: unknown): number | string;
 export declare function requireSafeEpochMilliseconds(value: unknown, name: string): number;
 export declare function requireNonNegativeInteger(value: unknown, name: string): number;
+export declare function parseJsonObject(contents: string, message: string): Record<string, unknown>;
 //# sourceMappingURL=objects.d.ts.map

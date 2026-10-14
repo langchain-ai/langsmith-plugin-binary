@@ -1,9 +1,27 @@
+import { errorCode } from "../../../utils/errors.js";
 import { constants as fsConstants } from "node:fs";
 import { chmod, link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { randomUUID } from "node:crypto";
-import { CAPTURE_DIRECTORY_MODE, CAPTURE_FILE_MODE } from "../constants.js";
+import { CAPTURE_DIRECTORY_MODE, CAPTURE_DIRECTORY_SETUP_ATTEMPTS, CAPTURE_FILE_MODE, CAPTURE_REMOVED_DIRECTORY_CODES, } from "../constants.js";
+import { FILE_MISSING_CODE, FILE_EXISTS_CODE, WINDOWS_PLATFORM } from "../../../utils/constants.js";
 export async function ensurePrivateDirectory(root, segments) {
+    return retryRemovedDirectory(() => createPrivateDirectory(root, segments));
+}
+export async function retryRemovedDirectory(operation) {
+    for (let attempt = 1;; attempt += 1) {
+        try {
+            return await operation();
+        }
+        catch (error) {
+            const code = errorCode(error);
+            if (!CAPTURE_REMOVED_DIRECTORY_CODES.some((removed) => removed === code) ||
+                attempt >= CAPTURE_DIRECTORY_SETUP_ATTEMPTS)
+                throw error;
+        }
+    }
+}
+async function createPrivateDirectory(root, segments) {
     await mkdir(root, { recursive: true, mode: CAPTURE_DIRECTORY_MODE });
     const rootInfo = await lstat(root);
     if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
@@ -15,7 +33,7 @@ export async function ensurePrivateDirectory(root, segments) {
             await mkdir(current, { mode: CAPTURE_DIRECTORY_MODE });
         }
         catch (error) {
-            if (errorCode(error) !== "EEXIST")
+            if (errorCode(error) !== FILE_EXISTS_CODE)
                 throw error;
         }
         const info = await lstat(current);
@@ -47,18 +65,18 @@ export async function publishExclusive(path, contents, beforeCommit) {
         return true;
     }
     catch (error) {
-        if (errorCode(error) === "EEXIST")
+        if (errorCode(error) === FILE_EXISTS_CODE)
             return false;
         throw error;
     }
     finally {
         await unlink(stagingPath).catch((error) => {
-            if (errorCode(error) !== "ENOENT")
+            if (errorCode(error) !== FILE_MISSING_CODE)
                 throw error;
         });
     }
 }
-export async function replacePrivateFile(root, path, contents) {
+export async function replacePrivateFile(root, path, contents, beforeCommit) {
     if (!(await hasRealParentDirectories(root, path)))
         throw new Error("Capture record parent directory is missing");
     const original = await lstat(path);
@@ -87,6 +105,7 @@ export async function replacePrivateFile(root, path, contents) {
             !hasPrivateFileMode(current.mode)) {
             throw new Error("Capture record changed during replacement");
         }
+        await beforeCommit?.();
         await rename(stagingPath, path);
         await syncDirectory(directory);
     }
@@ -108,7 +127,7 @@ export async function replacePrivateFile(root, path, contents) {
             await unlink(stagingPath);
         }
         catch (error) {
-            if (errorCode(error) !== "ENOENT")
+            if (errorCode(error) !== FILE_MISSING_CODE)
                 cleanupErrors.push(error);
         }
     }
@@ -122,7 +141,7 @@ export async function replacePrivateFile(root, path, contents) {
         throw new AggregateError(cleanupErrors, "Capture replacement cleanup failed");
 }
 function hasPrivateFileMode(mode) {
-    return process.platform === "win32" || (mode & 0o077) === 0;
+    return process.platform === WINDOWS_PLATFORM || (mode & 0o077) === 0;
 }
 export async function readPrivateFile(root, path) {
     if (!(await hasRealParentDirectories(root, path)))
@@ -135,7 +154,7 @@ export async function readPrivateFile(root, path) {
         handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
     }
     catch (error) {
-        if (errorCode(error) === "ENOENT")
+        if (errorCode(error) === FILE_MISSING_CODE)
             return undefined;
         throw error;
     }
@@ -167,7 +186,7 @@ async function hasRealParentDirectories(root, path) {
             info = await lstat(directory);
         }
         catch (error) {
-            if (errorCode(error) === "ENOENT")
+            if (errorCode(error) === FILE_MISSING_CODE)
                 return false;
             throw error;
         }
@@ -177,7 +196,7 @@ async function hasRealParentDirectories(root, path) {
     return true;
 }
 async function syncDirectory(path) {
-    if (process.platform === "win32")
+    if (process.platform === WINDOWS_PLATFORM)
         return;
     const handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | (fsConstants.O_NOFOLLOW ?? 0));
     try {
@@ -186,13 +205,5 @@ async function syncDirectory(path) {
     finally {
         await handle.close();
     }
-}
-function errorCode(error) {
-    return error !== null &&
-        typeof error === "object" &&
-        "code" in error &&
-        typeof error.code === "string"
-        ? error.code
-        : undefined;
 }
 //# sourceMappingURL=atomic-file.js.map

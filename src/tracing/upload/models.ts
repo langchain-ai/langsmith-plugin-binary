@@ -163,10 +163,6 @@ export interface PreparedUploadItem {
   operation: UploadReceipt["operation"];
 }
 
-export interface UploadFailure {
-  status?: unknown;
-}
-
 export interface UploadReceipt {
   destinationId: string;
   runId: string;

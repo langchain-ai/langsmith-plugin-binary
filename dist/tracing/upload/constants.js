@@ -43,14 +43,18 @@ export const UPLOAD_PATCH_FIELDS = new Set([
     "reference_example_id",
 ]);
 export const UPLOAD_REDACTED_FIELDS = ["inputs", "outputs"];
+export const UPLOAD_FAILED_MESSAGE = "LangSmith upload failed";
+export const UPLOAD_RETRYABLE_STATUSES = [408, 409, 429];
+export const UPLOAD_SDK_MAX_RETRIES = 0;
 export const UPLOAD_BUN_RUNTIME = "bun";
 export const UPLOAD_NODE_RUNTIME = "node";
 export const UPLOAD_DOTTED_ORDER_SEGMENT = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(\d{6})Z/;
 export const UPLOAD_REQUEST_TIMEOUT_MS = 15_000;
 export const UPLOAD_SEND_DEADLINE_MS = 20_000;
 export const UPLOAD_BATCH_LIMITS = { maxRuns: 100, maxBytes: 8 * 1024 * 1024 };
-export const UPLOAD_FAILED_MESSAGE = "LangSmith upload failed";
 export const UPLOAD_ALREADY_RECEIVED_MESSAGE = "already received";
 export const UPLOAD_DEADLINE_MESSAGE = "LangSmith upload did not finish in time";
 export const UPLOAD_RECEIPT_MISSING_MESSAGE = "The upload returned no receipt";
+export const UPLOAD_ERROR_NAME = "UploadError";
+export const UPLOAD_SERVER_ERROR_MIN_STATUS = 500;
 //# sourceMappingURL=constants.js.map

@@ -80,4 +80,10 @@ export function requireNonNegativeInteger(value, name) {
         throw new TypeError(`${name} must be a non-negative safe integer`);
     return value;
 }
+export function parseJsonObject(contents, message) {
+    const value = JSON.parse(contents);
+    if (value === null || typeof value !== "object" || Array.isArray(value))
+        throw new Error(message);
+    return value;
+}
 //# sourceMappingURL=objects.js.map
