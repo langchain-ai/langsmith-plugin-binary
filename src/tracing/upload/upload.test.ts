@@ -1,28 +1,33 @@
+import { CHILD_ID, RUN_ID } from "../../test-support/constants.js";
 import type { LocalRequest } from "../../test-support/models/upload.js";
+import { runUnits } from "../../test-support/tracing/ingest.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CodingAgentMetadataOptions } from "../../metadata/index.js";
 import { createLangSmithUploadWriter } from "./index.js";
 import { createUploadClient } from "./client.js";
+import { UPLOAD_REQUEST_TIMEOUT_MS } from "./constants.js";
 import { resolveUploadDestinationFingerprint } from "./identity.js";
 import type {
   LangSmithUploadDestinationConfig,
   PreparedRunPatchSubmission,
   PreparedRunPostSubmission,
-  UploadDestination,
+  LangSmithUploadWriter,
 } from "./models.js";
 
 const PRIMARY_KEY = "synthetic-primary-key";
 const REPLICA_KEY = "synthetic-replica-key";
 const FAILING_KEY = "synthetic-failing-key";
 const CONFLICT_KEY = "synthetic-conflict-key";
+const OTHER_CONFLICT_KEY = "synthetic-other-conflict-key";
+const DUPLICATE_CREATE_KEY = "synthetic-duplicate-create-key";
 const MISSING_KEY = "synthetic-missing-key";
 const PRIVATE_MARKER = "synthetic-private-upload-marker";
-const RUN_ID = "12345678-1234-4123-8123-123456789012";
 
 let server: ReturnType<typeof createServer>;
 let endpoint: string;
 let requests: LocalRequest[];
+let httpRequests = 0;
 let storedRuns: Map<string, Record<string, unknown>>;
 
 function destination(
@@ -68,7 +73,7 @@ function patchSubmission(
       run_type: "chain",
       start_time: "2026-10-09T20:00:00.000Z",
       trace_id: RUN_ID,
-      dotted_order: "20261009T200000000Z12345678-1234-4123-8123-123456789012",
+      dotted_order: `20261009T200000000Z${RUN_ID}`,
     },
     privacyContext: { status: "completed" },
     patch: { fields: [], values: {} },
@@ -88,7 +93,10 @@ function metadata(): CodingAgentMetadataOptions {
   };
 }
 
-function destinationByIndex(destinations: readonly UploadDestination[], index: number): string {
+function destinationByIndex(
+  destinations: LangSmithUploadWriter["destinations"],
+  index: number,
+): string {
   const selectedDestination = destinations[index];
   if (!selectedDestination) throw new Error("Missing upload destination");
   return selectedDestination.id;
@@ -101,22 +109,41 @@ function recordRequest(request: IncomingMessage, response: ServerResponse): void
     body += chunk;
   });
   request.on("end", () => {
+    httpRequests += 1;
     const payload = body.length === 0 ? {} : (JSON.parse(body) as Record<string, unknown>);
     const apiKey = headerValue(request.headers["x-api-key"]) ?? "";
-    requests.push({
-      method: request.method ?? "",
-      path: request.url ?? "",
-      apiKey,
-      workspaceId: headerValue(request.headers["x-tenant-id"]),
-      payload,
-    });
-    if (request.method === "POST" && typeof payload["id"] === "string") {
-      storedRuns.set(apiKey + ":" + payload["id"], payload);
-    } else if (request.method === "PATCH") {
-      const runId = decodeURIComponent((request.url ?? "").split("/").at(-1) ?? "");
-      const key = apiKey + ":" + runId;
-      const previous = storedRuns.get(key);
-      if (previous) storedRuns.set(key, { ...previous, ...payload });
+    for (const unit of runUnits(request.method ?? "", request.url ?? "", payload)) {
+      requests.push({
+        method: unit.method,
+        path: unit.path,
+        wire: unit.wire,
+        apiKey,
+        workspaceId: headerValue(request.headers["x-tenant-id"]),
+        payload: unit.payload,
+      });
+      if (unit.method === "POST" && typeof unit.payload["id"] === "string") {
+        storedRuns.set(apiKey + ":" + unit.payload["id"], unit.payload);
+      } else if (unit.method === "PATCH") {
+        const runId = decodeURIComponent(unit.path.split("/").at(-1) ?? "");
+        const key = apiKey + ":" + runId;
+        const previous = storedRuns.get(key);
+        if (previous) storedRuns.set(key, { ...previous, ...unit.payload });
+      }
+    }
+    if (request.headers["x-api-key"] === OTHER_CONFLICT_KEY) {
+      response.writeHead(409, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "Session quota exceeded." }));
+      return;
+    }
+    if (request.headers["x-api-key"] === DUPLICATE_CREATE_KEY) {
+      response.writeHead(409, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error:
+            "Run create payload already received. Duplicate run create requests for the same run are not supported.",
+        }),
+      );
+      return;
     }
     if (request.headers["x-api-key"] === CONFLICT_KEY) {
       response.writeHead(409, { "content-type": "application/json" });
@@ -138,12 +165,17 @@ function recordRequest(request: IncomingMessage, response: ServerResponse): void
   });
 }
 
+function inputsOf(id: string): unknown {
+  return requests.find(({ payload }) => payload["id"] === id)?.payload["inputs"];
+}
+
 function headerValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
 beforeEach(async () => {
   requests = [];
+  httpRequests = 0;
   storedRuns = new Map();
   server = createServer(recordRequest);
   await new Promise<void>((resolve) => {
@@ -267,26 +299,19 @@ describe("bound LangSmith upload writer", () => {
     const request = requests[1];
     expect(request?.method).toBe("PATCH");
     expect(request?.payload).toMatchObject({
+      id: RUN_ID,
+      trace_id: "original-trace",
+      dotted_order: "original-order",
       session_name: "primary-project",
       extra: { metadata: { thread_id: "thread-1", turn_number: 2 } },
     });
-    for (const field of [
-      "inputs",
-      "outputs",
-      "start_time",
-      "end_time",
-      "parent_run_id",
-      "trace_id",
-      "dotted_order",
-    ]) {
+    for (const field of ["inputs", "outputs", "start_time", "end_time", "parent_run_id"]) {
       expect(request?.payload).not.toHaveProperty(field);
     }
     expect(storedRuns.get(PRIMARY_KEY + ":" + RUN_ID)).toMatchObject({
       inputs: { prompt: "original prompt" },
       outputs: { answer: "original answer" },
       end_time: "2026-10-09T20:00:01.000Z",
-      trace_id: "original-trace",
-      dotted_order: "original-order",
       extra: { metadata: { turn_number: 2 } },
     });
   });
@@ -315,15 +340,12 @@ describe("bound LangSmith upload writer", () => {
       session_name: "primary-project",
     });
     for (const field of [
-      "id",
       "name",
       "run_type",
       "outputs",
       "start_time",
       "end_time",
       "parent_run_id",
-      "trace_id",
-      "dotted_order",
     ]) {
       expect(requests[0]?.payload).not.toHaveProperty(field);
     }
@@ -397,7 +419,7 @@ describe("bound LangSmith upload writer", () => {
     expect(requests.some(({ apiKey }) => apiKey === FAILING_KEY)).toBe(true);
   });
 
-  it("counts a conflict on a patch as delivered but still rejects a conflicting post", async () => {
+  it("counts a conflict on a post or a patch as already delivered", async () => {
     const writer = createLangSmithUploadWriter({
       redact: true,
       destinations: [destination(CONFLICT_KEY, "primary-project", "primary-workspace")],
@@ -409,9 +431,11 @@ describe("bound LangSmith upload writer", () => {
       runId: RUN_ID,
       operation: "patched",
     });
-    await expect(writer.send(submission(), destinationId)).rejects.toThrow(
-      "LangSmith upload failed",
-    );
+    await expect(writer.send(submission(), destinationId)).resolves.toEqual({
+      destinationId,
+      runId: RUN_ID,
+      operation: "posted",
+    });
     expect(requests.map(({ method }) => method)).toEqual(["PATCH", "POST"]);
     const missing = createLangSmithUploadWriter({
       redact: true,
@@ -452,6 +476,168 @@ describe("bound LangSmith upload writer", () => {
       expect(JSON.stringify(request.payload)).not.toContain(PRIVATE_MARKER);
     }
     expect(requests.map(({ payload }) => payload["id"])).toEqual([RUN_ID, RUN_ID]);
+  });
+
+  describe("batch ingest, so token counts are not doubled", () => {
+    const LLM_ID = CHILD_ID;
+    const llmRun = () =>
+      submission({
+        privacyMode: "full",
+        run: {
+          id: LLM_ID,
+          name: "llm run",
+          run_type: "llm",
+          start_time: "2026-10-09T20:00:00.000Z",
+          end_time: "2026-10-09T20:00:01.000Z",
+          trace_id: LLM_ID,
+          dotted_order: `20261009T200000000123Z${LLM_ID}`,
+          inputs: { prompt: "p" },
+          outputs: { answer: "a" },
+        },
+        metadata: { ...metadata(), usageMetadata: { input_tokens: 27, output_tokens: 3 } },
+      });
+
+    it("sends a finished llm run in a batch and never as a single create", async () => {
+      const writer = createLangSmithUploadWriter({
+        redact: false,
+        destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+      });
+      await writer.send(llmRun(), destinationByIndex(writer.destinations, 0));
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.wire).toMatch(/\/runs\/batch$/);
+      expect(requests[0]?.payload).toMatchObject({ id: LLM_ID, end_time: expect.anything() });
+    });
+
+    it("sends several creates and updates to a destination in one request", async () => {
+      const writer = createLangSmithUploadWriter({
+        redact: false,
+        destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+      });
+      const other = "33333333-3333-4333-8333-333333333333";
+      const receipts = await writer.sendBatch(
+        [llmRun(), submission(), patchSubmission({ run: { ...patchSubmission().run, id: other } })],
+        destinationByIndex(writer.destinations, 0),
+      );
+      expect(httpRequests).toBe(1);
+      expect(receipts.map(({ runId, operation }) => [runId, operation])).toEqual([
+        [LLM_ID, "posted"],
+        [RUN_ID, "posted"],
+        [other, "patched"],
+      ]);
+      expect(requests.map(({ method, payload }) => [method, payload["id"]])).toEqual([
+        ["POST", LLM_ID],
+        ["POST", RUN_ID],
+        ["PATCH", other],
+      ]);
+    });
+
+    it("rejects a whole batch when the service refuses it", async () => {
+      const writer = createLangSmithUploadWriter({
+        redact: false,
+        destinations: [destination(FAILING_KEY, "primary-project", "primary-workspace")],
+      });
+      await expect(
+        writer.sendBatch([llmRun(), submission()], destinationByIndex(writer.destinations, 0)),
+      ).rejects.toThrow("LangSmith upload failed");
+      expect(httpRequests).toBe(1);
+    });
+
+    describe("runs that need different redaction", () => {
+      const SECRET = "sk-ant-api03-" + "A".repeat(40);
+      const withInputs = (id: string, extra: Partial<PreparedRunPostSubmission> = {}) =>
+        submission({
+          privacyMode: "full",
+          run: { ...submission().run, id, inputs: { text: SECRET } },
+          ...extra,
+        });
+      const redacted = (id: string) => withInputs(id, { redactedFields: ["inputs"] });
+      const SECOND_ID = "33333333-3333-4333-8333-333333333333";
+
+      it("never sends a run through a client that redacts differently", async () => {
+        const writer = createLangSmithUploadWriter({
+          redact: true,
+          destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+        });
+        await writer.sendBatch(
+          [redacted(CHILD_ID), withInputs(RUN_ID)],
+          destinationByIndex(writer.destinations, 0),
+        );
+        expect(inputsOf(RUN_ID)).toEqual({ text: "[SECRET_DETECTED]" });
+        expect(inputsOf(CHILD_ID)).toEqual({ text: SECRET });
+      });
+
+      it("keeps the order of runs when their redaction differs", async () => {
+        const writer = createLangSmithUploadWriter({
+          redact: true,
+          destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+        });
+        await writer.sendBatch(
+          [redacted(CHILD_ID), withInputs(RUN_ID), redacted(SECOND_ID)],
+          destinationByIndex(writer.destinations, 0),
+        );
+        expect(httpRequests).toBe(3);
+        expect(requests.map(({ payload }) => payload["id"])).toEqual([CHILD_ID, RUN_ID, SECOND_ID]);
+      });
+    });
+
+    it("keeps a batch pending when the service answers 409 for another reason", async () => {
+      const writer = createLangSmithUploadWriter({
+        redact: false,
+        destinations: [destination(OTHER_CONFLICT_KEY, "primary-project", "primary-workspace")],
+      });
+      await expect(
+        writer.sendBatch([llmRun()], destinationByIndex(writer.destinations, 0)),
+      ).rejects.toThrow("LangSmith upload failed");
+    });
+
+    it("counts the duplicate create answer of LangSmith as delivered", async () => {
+      const writer = createLangSmithUploadWriter({
+        redact: false,
+        destinations: [destination(DUPLICATE_CREATE_KEY, "primary-project", "primary-workspace")],
+      });
+      await expect(
+        writer.sendBatch([llmRun()], destinationByIndex(writer.destinations, 0)),
+      ).resolves.toHaveLength(1);
+    });
+
+    it.each([
+      [
+        "a millisecond string as the plugin built it",
+        "2026-10-09T20:00:00.000Z",
+        "2026-10-09T20:00:00.000Z",
+      ],
+      [
+        "a microsecond string as the plugin built it",
+        "2026-10-09T20:00:00.000456Z",
+        "2026-10-09T20:00:00.000456Z",
+      ],
+      [
+        "an epoch number as an ISO string",
+        Date.parse("2026-10-09T20:00:00.000Z"),
+        "2026-10-09T20:00:00.000Z",
+      ],
+      [
+        "nothing, taking microseconds from the dotted order",
+        undefined,
+        "2026-10-09T20:00:00.000123Z",
+      ],
+    ])("sends the start time from %s", async (_name, supplied, expected) => {
+      const writer = createLangSmithUploadWriter({
+        redact: false,
+        destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+      });
+      const run = llmRun();
+      if (supplied === undefined) delete run.run.start_time;
+      else run.run.start_time = supplied;
+      await writer.send(run, destinationByIndex(writer.destinations, 0));
+      expect(requests[0]?.payload["start_time"]).toBe(expected);
+    });
+  });
+
+  it("serializes inline and gives each request a time limit", () => {
+    const client = createUploadClient({ apiKey: PRIMARY_KEY, apiUrl: "http://127.0.0.1:9" });
+    expect(Reflect.get(client, "manualFlushMode")).toBe(true);
+    expect(Reflect.get(client, "timeout_ms")).toBe(UPLOAD_REQUEST_TIMEOUT_MS);
   });
 
   it("leaves trace sampling to the SDK default like the plugins on main", () => {

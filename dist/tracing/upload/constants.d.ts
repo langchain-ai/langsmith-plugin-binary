@@ -7,7 +7,6 @@ export declare const UPLOAD_CONTROL_CHARACTER_PATTERN: RegExp;
 export declare const UPLOAD_API_URL_TRAILING_SLASH_PATTERN: RegExp;
 export declare const UPLOAD_UUID_PATTERN: RegExp;
 export declare const UPLOAD_REPLICA_UUID_V7_PATTERN: RegExp;
-export declare const UPLOAD_REPLICA_UUID_V5_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 export declare const UPLOAD_REPLICA_UUID_V5_NAMESPACE_BYTES: Buffer<ArrayBuffer>;
 export declare const UPLOAD_REPLICA_UUID_V5_DOMAIN = "langchain-upload-replica-v1";
 export declare const UPLOAD_REPLICA_DOTTED_ORDER_ID_LENGTH = 36;
@@ -17,4 +16,15 @@ export declare const UPLOAD_PATCH_FIELDS: ReadonlySet<NormalizedRunPatchField>;
 export declare const UPLOAD_REDACTED_FIELDS: readonly ["inputs", "outputs"];
 export declare const UPLOAD_BUN_RUNTIME = "bun";
 export declare const UPLOAD_NODE_RUNTIME = "node";
+export declare const UPLOAD_DOTTED_ORDER_SEGMENT: RegExp;
+export declare const UPLOAD_REQUEST_TIMEOUT_MS = 15000;
+export declare const UPLOAD_SEND_DEADLINE_MS = 20000;
+export declare const UPLOAD_BATCH_LIMITS: {
+    readonly maxRuns: 100;
+    readonly maxBytes: number;
+};
+export declare const UPLOAD_FAILED_MESSAGE = "LangSmith upload failed";
+export declare const UPLOAD_ALREADY_RECEIVED_MESSAGE = "already received";
+export declare const UPLOAD_DEADLINE_MESSAGE = "LangSmith upload did not finish in time";
+export declare const UPLOAD_RECEIPT_MISSING_MESSAGE = "The upload returned no receipt";
 //# sourceMappingURL=constants.d.ts.map

@@ -1,12 +1,11 @@
 import type { Client, RunTree } from "langsmith";
+import type { RunCreate, RunUpdate } from "langsmith/schemas";
 import type {
   CodingAgentIntegration,
   CodingAgentMetadataMode,
   CodingAgentMetadataOptions,
 } from "../../metadata/index.js";
 import type { CodingAgentPrivacyContext } from "../../privacy/index.js";
-
-export type UploadOperation = "post" | "patch";
 
 export interface UploadRedactRule {
   pattern: string;
@@ -74,7 +73,7 @@ export interface UploadClientOptions extends Omit<LangSmithUploadDestinationConf
   redactedFields?: readonly RedactedRunField[];
 }
 
-export interface PreparedRunSubmissionBase {
+interface PreparedRunSubmissionBase {
   integration: CodingAgentIntegration;
   privacyMode: CodingAgentMetadataMode;
   redactedFields?: readonly RedactedRunField[];
@@ -145,8 +144,23 @@ export interface ResolvedUploadDestinations {
   destinations: ResolvedUploadDestination[];
 }
 
-export interface UploadDestination {
+interface UploadDestination {
   readonly id: string;
+}
+
+export type UploadIngest = NonNullable<Parameters<Client["batchIngestRuns"]>[0]>;
+
+interface UploadBatchLimits {
+  readonly maxRuns: number;
+  readonly maxBytes: number;
+}
+
+export interface PreparedUploadItem {
+  client: Client;
+  submission: PreparedRunSubmission;
+  payload: RunCreate | RunUpdate;
+  destination: ResolvedUploadDestination;
+  operation: UploadReceipt["operation"];
 }
 
 export interface UploadFailure {
@@ -159,12 +173,14 @@ export interface UploadReceipt {
   operation: "posted" | "patched";
 }
 
-export type LangSmithRunCreate = Parameters<Client["createRun"]>[0];
-export type LangSmithRunUpdate = Parameters<Client["updateRun"]>[1];
-
 export interface LangSmithUploadWriter {
   readonly accountFingerprint: string;
   readonly destinations: readonly UploadDestination[];
+  readonly batchLimits: UploadBatchLimits;
+  sendBatch(
+    submissions: readonly PreparedRunSubmission[],
+    destinationId: string,
+  ): Promise<UploadReceipt[]>;
   send(submission: PreparedRunSubmission, destinationId: string): Promise<UploadReceipt>;
 }
 

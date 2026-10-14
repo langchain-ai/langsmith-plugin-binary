@@ -3,8 +3,10 @@ import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __version__ } from "langsmith";
+import { RUN_ID } from "../../test-support/constants.js";
 import type { LocalRequest } from "../../test-support/models/upload.js";
 import { childEnvironment, moduleUrl, temporaryRoot } from "../../test-support/tracing/delivery.js";
+import { runUnits } from "../../test-support/tracing/ingest.js";
 import { createLangSmithUploadWriter } from "./index.js";
 import type {
   LangSmithUploadWriterOptions,
@@ -12,7 +14,6 @@ import type {
   PreparedRunPostSubmission,
 } from "./models.js";
 
-const RUN_ID = "12345678-1234-4123-8123-123456789012";
 const SECRET_NAME_VALUES = {
   LANGSMITH_SECRET_THING: "env-secret-value",
   LANGSMITH_USER_EMAIL: "someone@example.com",
@@ -40,13 +41,15 @@ beforeEach(async () => {
     request.setEncoding("utf8");
     request.on("data", (chunk: string) => (body += chunk));
     request.on("end", () => {
-      requests.push({
-        method: request.method ?? "",
-        path: request.url ?? "",
-        apiKey: String(request.headers["x-api-key"] ?? ""),
-        workspaceId: undefined,
-        payload: body === "" ? {} : (JSON.parse(body) as Record<string, unknown>),
-      });
+      const payload = body === "" ? {} : (JSON.parse(body) as Record<string, unknown>);
+      for (const unit of runUnits(request.method ?? "", request.url ?? "", payload))
+        requests.push({
+          method: unit.method,
+          path: unit.path,
+          apiKey: String(request.headers["x-api-key"] ?? ""),
+          workspaceId: undefined,
+          payload: unit.payload,
+        });
       response.writeHead(200, { "content-type": "application/json" });
       response.end("{}");
     });

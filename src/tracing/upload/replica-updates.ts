@@ -1,12 +1,9 @@
 import { isPlainRecord } from "../../utils/validation/objects.js";
-import type {
-  LangSmithRunUpdate,
-  PreparedRunSubmission,
-  ResolvedUploadDestination,
-} from "./models.js";
+import type { RunUpdate } from "langsmith/schemas";
+import type { PreparedRunSubmission, ResolvedUploadDestination } from "./models.js";
 
 export function applyReplicaPatchUpdates(
-  payload: LangSmithRunUpdate,
+  payload: RunUpdate,
   destination: ResolvedUploadDestination,
   privacyMode: PreparedRunSubmission["privacyMode"],
 ): void {

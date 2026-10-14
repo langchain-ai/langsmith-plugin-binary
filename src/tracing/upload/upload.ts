@@ -1,9 +1,8 @@
 import { buildCodingAgentMetadata } from "../../metadata/index.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
-import type { RunTreeConfig } from "langsmith";
+import type { Client, RunTreeConfig } from "langsmith";
+import type { RunCreate, RunUpdate } from "langsmith/schemas";
 import type {
-  LangSmithRunUpdate,
-  LangSmithRunCreate,
   LangSmithUploadWriter,
   LangSmithUploadWriterOptions,
   NormalizedRunContext,
@@ -12,16 +11,26 @@ import type {
   PreparedRunPostSubmission,
   PreparedRunSubmission,
   ResolvedUploadDestination,
-  UploadFailure,
+  PreparedUploadItem,
+  UploadClientCache,
+  UploadIngest,
   UploadReceipt,
 } from "./models.js";
 import { resolveUploadDestinations } from "./destinations.js";
-import { UPLOAD_ALREADY_RECEIVED_STATUS, UPLOAD_PATCH_FIELDS } from "./constants.js";
+import {
+  UPLOAD_BATCH_LIMITS,
+  UPLOAD_FAILED_MESSAGE,
+  UPLOAD_PATCH_FIELDS,
+  UPLOAD_RECEIPT_MISSING_MESSAGE,
+} from "./constants.js";
 import { createUploadClientCache } from "./client-cache.js";
+import { isAlreadyReceived } from "./errors.js";
 import { redactSdkOmittedFields } from "./redaction.js";
 import { applyRuntimeMetadata } from "./runtime-metadata.js";
 import { contextForDestination, runIdForDestination } from "./replica-identifiers.js";
 import { applyReplicaPatchUpdates } from "./replica-updates.js";
+import { withDeadline } from "./deadline.js";
+import { startTimeText } from "./timestamps.js";
 
 export function createLangSmithUploadWriter(
   options: LangSmithUploadWriterOptions,
@@ -30,51 +39,99 @@ export function createLangSmithUploadWriter(
   const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
   const byId = new Map(resolved.destinations.map((destination) => [destination.id, destination]));
   const clients = createUploadClientCache();
+
+  async function sendBatch(
+    submissions: readonly PreparedRunSubmission[],
+    destinationId: string,
+  ): Promise<UploadReceipt[]> {
+    const destination = byId.get(destinationId);
+    if (!destination) throw new TypeError("Unknown upload destination");
+    const prepared = submissions.map((submission) => prepareItem(clients, destination, submission));
+    const clientOptions = {
+      apiKey: destination.apiKey,
+      apiUrl: destination.apiUrl,
+      ...(destination.workspaceId === undefined ? {} : { workspaceId: destination.workspaceId }),
+    };
+    for (const [client, group] of segmentByClient(prepared)) {
+      try {
+        await withDeadline(client.batchIngestRuns(ingestFor(group), clientOptions)).catch(
+          ignoreAlreadyReceived,
+        );
+      } catch (error) {
+        throw new Error(UPLOAD_FAILED_MESSAGE, { cause: error });
+      }
+    }
+    return prepared.map(({ submission, operation }) => ({
+      destinationId,
+      runId: submission.run.id,
+      operation,
+    }));
+  }
+
   return Object.freeze({
     accountFingerprint: resolved.accountFingerprint,
     destinations: Object.freeze(destinations),
+    batchLimits: UPLOAD_BATCH_LIMITS,
+    sendBatch,
     async send(submission: PreparedRunSubmission, destinationId: string): Promise<UploadReceipt> {
-      const destination = byId.get(destinationId);
-      if (!destination) throw new TypeError("Unknown upload destination");
-      validateSubmission(submission);
-      const client = clients.forSubmission(destination, submission);
-      const payload =
-        submission.operation === "post"
-          ? preparePostRunPayload(submission, destination)
-          : preparePatchRunPayload(submission, destination);
-      if (submission.operation === "patch") {
-        applyReplicaPatchUpdates(payload, destination, submission.privacyMode);
-      }
-      applyRuntimeMetadata(payload, submission.privacyMode);
-      redactSdkOmittedFields(payload, destination.anonymizer);
-      const clientOptions = {
-        apiKey: destination.apiKey,
-        apiUrl: destination.apiUrl,
-        ...(destination.workspaceId === undefined ? {} : { workspaceId: destination.workspaceId }),
-      };
-      try {
-        if (submission.operation === "post") {
-          await client.createRun(
-            { ...payload, project_name: destination.projectName } as LangSmithRunCreate,
-            clientOptions,
-          );
-          return { destinationId, runId: submission.run.id, operation: "posted" };
-        }
-        await client
-          .updateRun(runIdForDestination(submission.run.id, destination), payload, clientOptions)
-          .catch((error: unknown) => {
-            if (!alreadyReceived(error)) throw error;
-          });
-        return { destinationId, runId: submission.run.id, operation: "patched" };
-      } catch {
-        throw new Error("LangSmith upload failed");
-      }
+      const [receipt] = await sendBatch([submission], destinationId);
+      if (receipt === undefined) throw new Error(UPLOAD_RECEIPT_MISSING_MESSAGE);
+      return receipt;
     },
   });
 }
 
-function alreadyReceived(error: unknown): boolean {
-  return (error as UploadFailure | undefined)?.status === UPLOAD_ALREADY_RECEIVED_STATUS;
+function prepareItem(
+  clients: UploadClientCache,
+  destination: ResolvedUploadDestination,
+  submission: PreparedRunSubmission,
+): PreparedUploadItem {
+  validateSubmission(submission);
+  const client = clients.forSubmission(destination, submission);
+  const payload =
+    submission.operation === "post"
+      ? preparePostRunPayload(submission, destination)
+      : preparePatchRunPayload(submission, destination);
+  if (submission.operation === "patch") {
+    applyReplicaPatchUpdates(payload, destination, submission.privacyMode);
+  }
+  applyRuntimeMetadata(payload, submission.privacyMode);
+  redactSdkOmittedFields(payload, destination.anonymizer);
+  return {
+    client,
+    submission,
+    payload,
+    destination,
+    operation: submission.operation === "post" ? "posted" : "patched",
+  };
+}
+
+function segmentByClient(items: readonly PreparedUploadItem[]): [Client, PreparedUploadItem[]][] {
+  const segments: [Client, PreparedUploadItem[]][] = [];
+  for (const item of items) {
+    const last = segments.at(-1);
+    if (last !== undefined && last[0] === item.client) last[1].push(item);
+    else segments.push([item.client, [item]]);
+  }
+  return segments;
+}
+
+function ingestFor(items: readonly PreparedUploadItem[]): UploadIngest {
+  const runCreates: RunCreate[] = [];
+  const runUpdates: RunUpdate[] = [];
+  for (const { payload, submission, destination, operation } of items) {
+    if (operation === "posted") {
+      runCreates.push({ ...payload, session_name: destination.projectName } as RunCreate);
+    } else {
+      const id = runIdForDestination(submission.run.id, destination);
+      runUpdates.push({ ...payload, id } as RunUpdate);
+    }
+  }
+  return { runCreates, runUpdates };
+}
+
+function ignoreAlreadyReceived(error: unknown): void {
+  if (!isAlreadyReceived(error)) throw error;
 }
 
 function runConfig(
@@ -127,13 +184,16 @@ function preparePostRunPayload(
     submission.privacyContext,
   );
   if (source.events !== undefined) run.events = source.events;
-  return JSON.parse(JSON.stringify(run.toJSON())) as LangSmithRunCreate;
+  const create = JSON.parse(JSON.stringify(run.toJSON())) as RunCreate;
+  const startTime = startTimeText(source.start_time, create.dotted_order);
+  if (startTime !== undefined) create.start_time = startTime;
+  return create;
 }
 
 function preparePatchRunPayload(
   submission: PreparedRunPatchSubmission,
   destination: ResolvedUploadDestination,
-): LangSmithRunUpdate {
+): RunUpdate {
   const config = runConfig(submission.run, submission, destination);
   for (const field of submission.patch.fields) {
     if (field === "inputs") config.inputs = submission.patch.values.inputs!;
@@ -159,24 +219,25 @@ function preparePatchRunPayload(
   const update = {
     extra: snapshot["extra"],
     session_name: destination.projectName,
-  } as LangSmithRunUpdate;
+    trace_id: snapshot["trace_id"],
+    dotted_order: snapshot["dotted_order"],
+    ...(snapshot["parent_run_id"] === undefined
+      ? {}
+      : { parent_run_id: snapshot["parent_run_id"] }),
+  } as RunUpdate;
   for (const field of submission.patch.fields) {
     const value = snapshot[field];
     if (value === undefined) continue;
-    if (field === "inputs") update.inputs = value as NonNullable<LangSmithRunUpdate["inputs"]>;
-    else if (field === "outputs")
-      update.outputs = value as NonNullable<LangSmithRunUpdate["outputs"]>;
-    else if (field === "end_time")
-      update.end_time = value as NonNullable<LangSmithRunUpdate["end_time"]>;
-    else if (field === "error") update.error = value as NonNullable<LangSmithRunUpdate["error"]>;
-    else if (field === "tags") update.tags = value as NonNullable<LangSmithRunUpdate["tags"]>;
+    if (field === "inputs") update.inputs = value as NonNullable<RunUpdate["inputs"]>;
+    else if (field === "outputs") update.outputs = value as NonNullable<RunUpdate["outputs"]>;
+    else if (field === "end_time") update.end_time = value as NonNullable<RunUpdate["end_time"]>;
+    else if (field === "error") update.error = value as NonNullable<RunUpdate["error"]>;
+    else if (field === "tags") update.tags = value as NonNullable<RunUpdate["tags"]>;
     else if (field === "serialized")
-      update.serialized = value as NonNullable<LangSmithRunUpdate["serialized"]>;
-    else if (field === "events") update.events = value as NonNullable<LangSmithRunUpdate["events"]>;
+      update.serialized = value as NonNullable<RunUpdate["serialized"]>;
+    else if (field === "events") update.events = value as NonNullable<RunUpdate["events"]>;
     else if (field === "reference_example_id") {
-      update.reference_example_id = value as NonNullable<
-        LangSmithRunUpdate["reference_example_id"]
-      >;
+      update.reference_example_id = value as NonNullable<RunUpdate["reference_example_id"]>;
     }
   }
   return update;
