@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync, statSync } from "node:fs";
-import { COMMON_BOOLEAN_SETTINGS } from "./constants.js";
+import { join } from "node:path";
+import { COMMON_BOOLEAN_SETTINGS, COMMON_CONFIG_FILE_NAME, COMMON_CONFIG_ROOT_FILE_NAME, COMMON_CONFIG_USER_ROOT_FILE_NAME, } from "./constants.js";
 function object(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -120,7 +121,7 @@ export function readCommonConfigFile(path) {
             }
             catch (lstatError) {
                 if (lstatError.code === "ENOENT") {
-                    return { status: "absent", common: {}, diagnostics: [] };
+                    return absent();
                 }
             }
         }
@@ -132,6 +133,20 @@ export function readCommonConfigFile(path) {
     catch {
         return invalid();
     }
+}
+function absent() {
+    return { status: "absent", common: {}, diagnostics: [] };
+}
+export function readCommonConfigFiles(options) {
+    const { cwd, home, harnessDirectory } = options;
+    return {
+        harness: readCommonConfigFile(join(cwd, harnessDirectory, COMMON_CONFIG_FILE_NAME)),
+        root: readCommonConfigFile(join(cwd, COMMON_CONFIG_ROOT_FILE_NAME)),
+        user: home
+            ? readCommonConfigFile(join(home, harnessDirectory, COMMON_CONFIG_FILE_NAME))
+            : absent(),
+        userRoot: home ? readCommonConfigFile(join(home, COMMON_CONFIG_USER_ROOT_FILE_NAME)) : absent(),
+    };
 }
 /** Resolve the first supplied value from sources ordered highest priority first. */
 function resolveField(sources, field) {
