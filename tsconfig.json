@@ -25,7 +25,9 @@
   "exclude": [
     "src/**/*.test.ts",
     "src/**/*-test-models.ts",
+    "src/**/*-test-helpers.ts",
     "src/test-support.ts",
+    "src/test-support/**/*.ts",
     "src/settings/**/*.ts"
   ]
 }
