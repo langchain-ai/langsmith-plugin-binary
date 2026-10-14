@@ -6,13 +6,13 @@ import { identifierHash, sessionSegments, validateIdentifier, validateIntegratio
 import { fillTemplate } from "../../utils/format.js";
 import { isWaitingForOtherSetting } from "../../storage/capture/account.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
-import { DELIVERY_ACCOUNT_MISMATCH_WARNING, DELIVERY_DIRECTORY, DELIVERY_DRAIN_LOCK, } from "./constants.js";
+import { DELIVERY_ACCOUNT_MISMATCH_WARNING, DELIVERY_DRAIN_LOCK } from "./constants.js";
 import { drainLocked } from "./drain.js";
 import { resolvePolicy, snapshotWriter, validateDrainRequest } from "./options.js";
 import { countPending, createDrainCache } from "./drain-cache.js";
 async function drainUnderLock(context, request, drainCache) {
     const { captureStore, integration, sessionId, storageRoot, policy } = context;
-    const sessionDirectory = await ensurePrivateDirectory(storageRoot, sessionSegments(DELIVERY_DIRECTORY, integration, identifierHash(sessionId)));
+    const sessionDirectory = await ensurePrivateDirectory(storageRoot, sessionSegments(identifierHash(sessionId)));
     const lockPath = join(sessionDirectory, DELIVERY_DRAIN_LOCK);
     const lock = await tryAcquireFileLock(lockPath);
     if (!lock)

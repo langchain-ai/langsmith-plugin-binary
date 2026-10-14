@@ -58,11 +58,7 @@ export const FILE_LOCK_LOST_MESSAGE = "The file lock was taken over before the w
 const STORAGE_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 export const STORAGE_ENGINE_FILE_PATTERNS: readonly RegExp[] = [
   new RegExp(`^\\.${STORAGE_UUID}(\\.${STORAGE_UUID})?\\.tmp$`, "u"),
-  new RegExp(`^wake\\.active\\.${STORAGE_UUID}(\\.attempt\\.[1-9]\\d*)?\\.json$`, "u"),
-  /^wake\.launching$/u,
+  new RegExp(`^wake-[0-9a-f]{64}\\.active\\.${STORAGE_UUID}(\\.attempt\\.[1-9]\\d*)?\\.json$`, "u"),
+  /^wake-[0-9a-f]{64}\.launching$/u,
 ];
 export const STORAGE_CLAIM_FILE = new RegExp(`^${STORAGE_UUID}\\.json$`, "u");
-export const STORAGE_LEGACY_RECEIPTS_DIRECTORY = "receipts";
-export const STORAGE_LEGACY_ATTEMPTS_DIRECTORY = "attempts";
-export const STORAGE_LEGACY_RECEIPT_FILE = /^[0-9a-f]{64}\.json$/u;
-export const STORAGE_LEGACY_ATTEMPT_FILE = /^[1-9]\d*\.json$/u;

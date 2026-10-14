@@ -1,8 +1,8 @@
+import { CAPTURE_JOBS_DIRECTORY } from "../../storage/capture/constants.js";
 import { isWaitingForRetry } from "../../storage/capture/retry-state.js";
-import { join } from "node:path";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import type { EnumeratedCapture, StoredCapture } from "../../storage/capture/models.js";
-import { RECONSTRUCTION_DIRECTORY, RECONSTRUCTION_JOB_KIND } from "../reconstruction/constants.js";
+import { RECONSTRUCTION_JOB_KIND } from "../reconstruction/constants.js";
 import {
   LIFECYCLE_PATCH_EVENT_KIND,
   LIFECYCLE_POST_EVENT_KIND,
@@ -56,9 +56,7 @@ async function loadRecoveryIndex(
   runtime: TracingEngineRecoveryRuntime,
 ): Promise<TracingEngineRecoveryIndex> {
   const lifecycleStore = createCaptureStore(runtime.storageRoot);
-  const reconstructionStore = createCaptureStore(
-    join(runtime.storageRoot, RECONSTRUCTION_DIRECTORY),
-  );
+  const reconstructionStore = createCaptureStore(runtime.storageRoot, CAPTURE_JOBS_DIRECTORY);
   const [lifecycleSessions, reconstructionSessions] = await Promise.all([
     lifecycleStore.enumerateSessions(runtime.integration),
     reconstructionStore.enumerateSessions(runtime.integration),

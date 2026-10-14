@@ -5,4 +5,6 @@ export declare function workerPendingPath(storageRoot: string, scope: Background
 export declare function workerActivePath(storageRoot: string, scope: BackgroundWorkerScope, markerId: string): string;
 export declare function workerAttemptPath(storageRoot: string, scope: BackgroundWorkerScope, markerId: string, attempt: number): string;
 export declare function workerLaunchPath(storageRoot: string, scope: BackgroundWorkerScope): string;
+export declare function workerFileName(scope: BackgroundWorkerScope, name: string): string;
+export declare function scopedWorkerFileName(scope: BackgroundWorkerScope, name: string): string | undefined;
 //# sourceMappingURL=paths.d.ts.map

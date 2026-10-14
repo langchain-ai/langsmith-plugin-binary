@@ -11,7 +11,7 @@ import type {
   JsonValue,
   StoredCapture,
 } from "../../storage/capture/models.js";
-import { identifierHash } from "../../storage/capture/paths.js";
+import { sessionSegments, identifierHash } from "../../storage/capture/paths.js";
 import { scopeKey, scopeOf } from "../../storage/capture/scope.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import { createDeliveryCoordinator } from "../delivery/index.js";
@@ -53,11 +53,7 @@ import {
   LIFECYCLE_ENGINE_FOLDERS,
   LIFECYCLE_PATCH_EVENT_KIND,
   LIFECYCLE_POST_EVENT_KIND,
-  LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY,
-  LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY,
-  LIFECYCLE_SETTLEMENT_LOCK_FILE,
-  LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY,
-  LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY,
+  LIFECYCLE_SETTLEMENT_LOCK_PREFIX,
   LIFECYCLE_STORED_CAPTURE_IS_MISSING_THREAD_IDENTITY_MESSAGE,
   LIFECYCLE_STORED_INTEGRATION_DOES_NOT_MATCH_LIFECYCLE_BRIDGE_MESSAGE,
   LIFECYCLE_STORED_PRIVACY_MODE_IS_INVALID_MESSAGE,
@@ -268,16 +264,14 @@ function busyDrainResult() {
 }
 
 async function acquireSettlementLock(context: LifecycleBridgeContext) {
-  const directory = await ensurePrivateDirectory(context.storageRoot, [
-    LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY,
-    LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY,
-    context.integration,
-    LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY,
-    identifierHash(context.sessionId),
-    LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY,
-    identifierHash(context.writer.accountFingerprint),
-  ]);
-  const path = join(directory, LIFECYCLE_SETTLEMENT_LOCK_FILE);
+  const directory = await ensurePrivateDirectory(
+    context.storageRoot,
+    sessionSegments(identifierHash(context.sessionId)),
+  );
+  const path = join(
+    directory,
+    `${LIFECYCLE_SETTLEMENT_LOCK_PREFIX}${identifierHash(context.writer.accountFingerprint)}`,
+  );
   return { path, lock: await tryAcquireFileLock(path) };
 }
 

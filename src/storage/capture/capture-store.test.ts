@@ -248,17 +248,7 @@ describe("immutable capture storage", () => {
   it("skips an empty session directory", async () => {
     const root = temporaryRoot();
     const store = createCaptureStore(root);
-    await mkdir(
-      join(
-        root,
-        "capture-v1",
-        "integrations",
-        "claude-code",
-        "sessions",
-        identifierHash("empty-session"),
-      ),
-      { recursive: true },
-    );
+    await mkdir(join(root, "sessions", identifierHash("empty-session")), { recursive: true });
 
     await expect(store.enumerateSessions("claude-code")).resolves.toEqual([]);
   });
@@ -268,14 +258,10 @@ describe("immutable capture storage", () => {
     const store = createCaptureStore(root);
     await store.capture({ ...captureInput("event-a"), sessionId: "saved-session" });
     const stagingDirectory = await ensurePrivateDirectory(root, [
-      "capture-v1",
-      "integrations",
-      "claude-code",
       "sessions",
       identifierHash("writing-session"),
       "turns",
       identifierHash("turn-1"),
-      "events",
     ]);
     writeFileSync(join(stagingDirectory, ".11111111-1111-4111-8111-111111111111.tmp"), "partial");
 
@@ -289,23 +275,10 @@ describe("immutable capture storage", () => {
     const outsideRoot = temporaryRoot();
     await createCaptureStore(outsideRoot).capture(input);
     const linkedRoot = temporaryRoot();
-    const sessionsDirectory = join(
-      linkedRoot,
-      "capture-v1",
-      "integrations",
-      input.integration,
-      "sessions",
-    );
+    const sessionsDirectory = join(linkedRoot, "sessions");
     await mkdir(sessionsDirectory, { recursive: true });
     createDirectoryLink(
-      join(
-        outsideRoot,
-        "capture-v1",
-        "integrations",
-        input.integration,
-        "sessions",
-        identifierHash(input.sessionId),
-      ),
+      join(outsideRoot, "sessions", identifierHash(input.sessionId)),
       join(sessionsDirectory, identifierHash(input.sessionId)),
     );
 
@@ -380,12 +353,9 @@ describe("immutable capture storage", () => {
     const outsideRoot = temporaryRoot();
     await createCaptureStore(outsideRoot).capture(input);
     const linkedRoot = temporaryRoot();
-    const captureRoot = join(linkedRoot, "capture-v1");
-    await mkdir(captureRoot);
-    createDirectoryLink(
-      join(outsideRoot, "capture-v1", "integrations"),
-      join(captureRoot, "integrations"),
-    );
+    const captureRoot = linkedRoot;
+
+    createDirectoryLink(join(outsideRoot, "sessions"), join(captureRoot, "sessions"));
     await expect(
       createCaptureStore(linkedRoot).enumerate(input.integration, input.sessionId),
     ).rejects.toThrow("Private path contains a non-directory");
@@ -601,13 +571,12 @@ describe("immutable capture storage", () => {
     await expect(
       createCaptureStore(root).capture({ ...captureInput(), integration: "../escape" }),
     ).resolves.toMatchObject({ status: "failed" });
-    const captureRoot = join(root, "capture-v1");
-    const integrationParent = join(captureRoot, "integrations");
+    const integrationParent = root;
     const outside = join(root, "outside");
     await mkdir(integrationParent, { recursive: true });
     await mkdir(outside);
     const outsideMode = lstatSync(outside).mode & 0o777;
-    createDirectoryLink(outside, join(integrationParent, "claude-code"));
+    createDirectoryLink(outside, join(integrationParent, "sessions"));
     await expect(createCaptureStore(root).capture(captureInput())).resolves.toMatchObject({
       status: "failed",
     });
@@ -620,12 +589,9 @@ describe("immutable capture storage", () => {
     const outsideRoot = temporaryRoot();
     await createCaptureStore(outsideRoot).capture(input);
     const linkedRoot = temporaryRoot();
-    const captureRoot = join(linkedRoot, "capture-v1");
-    await mkdir(captureRoot, { mode: 0o700 });
-    createDirectoryLink(
-      join(outsideRoot, "capture-v1", "integrations"),
-      join(captureRoot, "integrations"),
-    );
+    const captureRoot = linkedRoot;
+
+    createDirectoryLink(join(outsideRoot, "sessions"), join(captureRoot, "sessions"));
     await expect(createCaptureStore(linkedRoot).read(input)).rejects.toThrow(
       "Capture path contains a non-directory",
     );
@@ -693,14 +659,10 @@ describe("immutable capture storage", () => {
     const input = captureInput();
     const path = eventPath(root, input);
     await ensurePrivateDirectory(root, [
-      "capture-v1",
-      "integrations",
-      input.integration,
       "sessions",
       identifierHash(input.sessionId),
       "turns",
       identifierHash(input.turnId),
-      "events",
     ]);
     const contents = JSON.stringify(input);
     const url = moduleUrl("dist/storage/capture/utils/atomic-file.js");
@@ -728,4 +690,21 @@ describe("immutable capture storage", () => {
       eventId: input.eventId,
     });
   }, 20_000);
+});
+
+it("rejects an unsupported storage directory before creating any paths", () => {
+  const root = temporaryRoot();
+  expect(() => createCaptureStore(root, "../outside" as never)).toThrow(
+    "Capture directory must be turns or jobs",
+  );
+  expect(readdirSync(root)).toEqual([]);
+});
+
+it("does not delete another plugin's records when scanning the same storage root", async () => {
+  const root = temporaryRoot();
+  const store = createCaptureStore(root);
+  const input = captureInput();
+  await store.capture(input);
+  await expect(store.enumerate("codex", input.sessionId)).resolves.toEqual([]);
+  await expect(store.read(input)).resolves.toMatchObject({ eventId: input.eventId });
 });

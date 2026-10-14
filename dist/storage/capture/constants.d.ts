@@ -1,10 +1,7 @@
-export declare const CAPTURE_DIRECTORY = "capture-v1";
-export declare const CAPTURE_INTEGRATIONS_DIRECTORY = "integrations";
+export declare const CAPTURE_JOBS_DIRECTORY = "jobs";
 export declare const CAPTURE_SESSIONS_DIRECTORY = "sessions";
 export declare const CAPTURE_TURNS_DIRECTORY = "turns";
-export declare const CAPTURE_EVENTS_DIRECTORY = "events";
 export declare const CAPTURE_RECORD_VERSION = 2;
-export declare const CAPTURE_RECORD_LOCK_DIRECTORY = "record-lock-v1";
 export declare const CAPTURE_DIRECTORY_MODE = 448;
 export declare const CAPTURE_DIRECTORY_SETUP_ATTEMPTS = 100;
 export declare const CAPTURE_REMOVED_DIRECTORY_CODES: readonly ["ENOENT", "EINVAL"];
@@ -40,4 +37,7 @@ export declare const CAPTURE_MARKER_INVALID_WARNING = "Removed an unreadable out
 export declare const CAPTURE_ROUTES_INVALID_MESSAGE = "Invalid capture destination routes";
 export declare const CAPTURE_ROUTE_INVALID_MESSAGE = "Invalid capture destination route";
 export declare const CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE = "Invalid capture route project";
+export declare const CAPTURE_FILE_EXTENSION = ".json";
+export declare const CAPTURE_LOCK_EXTENSION = ".lock";
+export declare const CAPTURE_STORAGE_DIRECTORY_MESSAGE = "Capture directory must be turns or jobs";
 //# sourceMappingURL=constants.d.ts.map

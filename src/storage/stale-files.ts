@@ -8,10 +8,6 @@ import {
   FILE_LOCK_DIRECTORY_SUFFIX,
   STORAGE_CLAIM_FILE,
   STORAGE_ENGINE_FILE_PATTERNS,
-  STORAGE_LEGACY_ATTEMPT_FILE,
-  STORAGE_LEGACY_ATTEMPTS_DIRECTORY,
-  STORAGE_LEGACY_RECEIPT_FILE,
-  STORAGE_LEGACY_RECEIPTS_DIRECTORY,
   STORAGE_STALE_DIRECTORY_WARNING,
   STORAGE_STALE_REMOVAL_WARNING,
 } from "./constants.js";
@@ -45,24 +41,11 @@ async function removeStaleChildren(directory: string, modifiedBeforeMs: number):
   return removed;
 }
 
-function isLegacyDeliveryFile(path: string): boolean {
-  const name = basename(path);
-  const parent = dirname(path);
-  return (
-    (STORAGE_LEGACY_RECEIPT_FILE.test(name) &&
-      basename(dirname(parent)) === STORAGE_LEGACY_RECEIPTS_DIRECTORY) ||
-    (STORAGE_LEGACY_ATTEMPT_FILE.test(name) &&
-      basename(parent) === STORAGE_LEGACY_ATTEMPTS_DIRECTORY)
-  );
-}
-
 function isEngineFile(path: string): boolean {
   const name = basename(path);
   return (
     STORAGE_ENGINE_FILE_PATTERNS.some((pattern) => pattern.test(name)) ||
-    (STORAGE_CLAIM_FILE.test(name) &&
-      basename(dirname(path)).endsWith(FILE_LOCK_DIRECTORY_SUFFIX)) ||
-    isLegacyDeliveryFile(path)
+    (STORAGE_CLAIM_FILE.test(name) && basename(dirname(path)).endsWith(FILE_LOCK_DIRECTORY_SUFFIX))
   );
 }
 

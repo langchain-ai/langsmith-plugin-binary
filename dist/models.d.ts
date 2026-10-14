@@ -85,4 +85,7 @@ export interface BuildSteps {
 export type CredentialName = (typeof APPLE_CREDENTIALS)[number];
 export type Environment = Partial<Record<CredentialName, string>>;
 export type AppleCredentials = Record<CredentialName, string>;
+declare global {
+    const LS_COMPILED_BINARY: string | undefined;
+}
 //# sourceMappingURL=models.d.ts.map

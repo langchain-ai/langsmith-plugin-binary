@@ -7,6 +7,7 @@ export declare const CRASH_SIGNALS: ReadonlySet<string>;
 export declare const NODE_ERROR_PREFIX = "ERR_";
 export declare const MACH_O_ARCHES: Readonly<Record<string, string>>;
 export declare const VERSION_DEFINE = "__LS_INTEGRATION_VERSION__";
+export declare const COMPILED_BINARY_DEFINE = "LS_COMPILED_BINARY";
 export declare const DEVELOPER_ID_PREFIX = "Developer ID Application:";
 export declare const IDENTITY_LINE: RegExp;
 export declare const TEAM_ID_SUFFIX: RegExp;

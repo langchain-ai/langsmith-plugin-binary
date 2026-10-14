@@ -1,9 +1,8 @@
-export const DELIVERY_DIRECTORY = "delivery-v1";
 export const DELIVERY_RETRY_BASE_MS = 5_000;
 export const DELIVERY_RETRY_BACKOFF_FACTOR = 2;
 export const DELIVERY_RETRY_MAX_MS = 30 * 60 * 1000;
 export const DELIVERY_QUICK_RETRY_MS = 1_000;
-export const DELIVERY_DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const DELIVERY_DEFAULT_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 export const DELIVERY_DEFAULT_MAX_ENTRIES = 500;
 export const DELIVERY_DROPPED_WARNING = "Dropped trace work:";
 export const DELIVERY_CAPACITY_REASON = "capacity";
@@ -24,7 +23,7 @@ export const DELIVERY_RECEIPT_READ_MESSAGE = "Could not read delivery receipt:";
 export const DELIVERY_RECEIPT_PERSIST_MESSAGE = "Could not persist delivery receipt:";
 export const DELIVERY_ACCOUNT_MISMATCH_WARNING =
   "Saved trace work was saved under a different API key, endpoint, replica or redaction setting, not uploaded with the current one. It waits until that setting returns. Files waiting: {count}";
-export const DELIVERY_DRAIN_LOCK = "drain";
+export const DELIVERY_DRAIN_LOCK = "delivery";
 export const DELIVERY_DROPPED_DETAIL =
   "{eventId} for run {runId} on destination {destination} ({reason}){hint}";
 export const DELIVERY_DEPENDENTS_DROPPED_WARNING =

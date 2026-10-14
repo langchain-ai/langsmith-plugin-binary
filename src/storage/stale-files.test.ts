@@ -20,25 +20,34 @@ function age(path: string, hours: number): void {
 }
 
 const uuid = (digit: string) => `${digit.repeat(8)}-0000-4000-8000-000000000000`;
-const FOLDERS = ["capture-v1", "background-worker"];
+const FOLDERS = ["sessions"];
 const sweep = (root: string) => removeStaleStorageFiles(root, FOLDERS, Date.now() - 2 * HOUR_MS);
 
 it("removes only the engine's own old leftovers and keeps events, recent files and everything else", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const root = mkdtempSync(join(tmpdir(), "plugins-base-stale-"));
-  const events = join(root, "capture-v1", "turns", "events");
-  const claims = join(root, "capture-v1", "locks", "state.lock.claims");
-  const workers = join(root, "background-worker");
+  const events = join(root, "sessions", "turns", "events");
+  const claims = join(root, "sessions", "locks", "state.lock.claims");
+  const workers = join(root, "sessions");
   mkdirSync(events, { recursive: true });
   mkdirSync(claims, { recursive: true });
-  mkdirSync(workers);
+  mkdirSync(workers, { recursive: true });
   mkdirSync(join(root, "other-plugin"));
   const stale = [
     join(events, `.${uuid("b")}.tmp`),
     join(claims, `${uuid("c")}.json`),
-    join(workers, `wake.active.${uuid("d")}.json`),
-    join(workers, `wake.active.${uuid("d")}.attempt.2.json`),
-    join(workers, "wake.launching"),
+    join(
+      workers,
+      `wake-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.active.${uuid("d")}.json`,
+    ),
+    join(
+      workers,
+      `wake-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.active.${uuid("d")}.attempt.2.json`,
+    ),
+    join(
+      workers,
+      "wake-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.launching",
+    ),
   ];
   const kept = [
     join(events, eventName),
@@ -74,14 +83,14 @@ it("removes only the engine's own old leftovers and keeps events, recent files a
 
 it("removes a whole chain of old empty folders in one pass", async () => {
   const root = mkdtempSync(join(tmpdir(), "plugins-base-stale-"));
-  const deepest = join(root, "capture-v1", "a", "b");
+  const deepest = join(root, "sessions", "a", "b");
   mkdirSync(deepest, { recursive: true });
   const file = join(deepest, `.${uuid("f")}.tmp`);
   writeFileSync(file, "{}");
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
-  for (const path of [file, deepest, join(root, "capture-v1", "a")]) age(path, 3);
+  for (const path of [file, deepest, join(root, "sessions", "a")]) age(path, 3);
   await sweep(root);
-  expect(existsSync(join(root, "capture-v1", "a"))).toBe(false);
+  expect(existsSync(join(root, "sessions", "a"))).toBe(false);
   vi.restoreAllMocks();
 });
 
@@ -89,10 +98,10 @@ it("does nothing when the folders do not exist", async () => {
   await expect(sweep(join(tmpdir(), "plugins-base-missing-root"))).resolves.toBe(0);
 });
 
-it("removes old delivery receipts and attempt files left by the previous layout", async () => {
+it("keeps files shaped like former delivery receipts and attempts", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const root = mkdtempSync(join(tmpdir(), "plugins-base-stale-legacy-"));
-  const receipts = join(root, "capture-v1", "turn", "receipts", "b".repeat(64));
+  const receipts = join(root, "sessions", "turn", "receipts", "b".repeat(64));
   const attempts = join(root, "delivery-v1", "event", "destinations", "d", "attempts");
   mkdirSync(receipts, { recursive: true });
   mkdirSync(attempts, { recursive: true });
@@ -102,8 +111,8 @@ it("removes old delivery receipts and attempt files left by the previous layout"
     writeFileSync(path, "{}");
     age(path, 3);
   }
-  await removeStaleStorageFiles(root, ["capture-v1", "delivery-v1"], Date.now() - 2 * HOUR_MS);
-  expect(legacy.some(existsSync)).toBe(false);
+  await removeStaleStorageFiles(root, ["sessions", "delivery-v1"], Date.now() - 2 * HOUR_MS);
+  expect(legacy.every(existsSync)).toBe(true);
   expect(existsSync(keep)).toBe(true);
   warn.mockRestore();
 });

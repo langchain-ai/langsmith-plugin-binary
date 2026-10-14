@@ -1,8 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { identifierHash } from "../../storage/capture/paths.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import type { LocalEndpoint } from "../../test-support/models/lifecycle.js";
 import {
@@ -193,8 +194,12 @@ it("clears the leftovers of six killed upload attempts once the work is delivere
   endpoint.state.mode = "hang";
   for (let index = 0; index < 6; index += 1) await crashAnUpload(index);
   const strays = [
-    join(root, "background-worker", "wake.active.11111111-0000-4000-8000-000000000000.json"),
-    join(root, "capture-v1", ".22222222-0000-4000-8000-000000000000.tmp"),
+    join(
+      root,
+      "sessions",
+      "wake-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.active.11111111-0000-4000-8000-000000000000.json",
+    ),
+    join(root, "sessions", ".22222222-0000-4000-8000-000000000000.tmp"),
   ];
   for (const stray of strays) {
     mkdirSync(join(stray, ".."), { recursive: true });
@@ -210,7 +215,7 @@ it("clears the leftovers of six killed upload attempts once the work is delivere
   expectNoPathsLeft(root);
 }, 90_000);
 
-it("removes a session that ended without a Stop once its work is a day old", async () => {
+it("removes a session that ended without a Stop once its work is six hours old", async () => {
   const lifecycle = testBridge(root, endpoint.url, { sessionId: "session-no-stop" });
   await lifecycle.capture({
     turnId: "turn",
@@ -220,9 +225,9 @@ it("removes a session that ended without a Stop once its work is a day old", asy
   });
   await expect(lifecycle.drain()).resolves.toMatchObject({ delivered: 1, pending: 0 });
   expect(filesUnder(root)).toHaveLength(1);
-  await lifecycle.drain({ now: Date.now() + 23 * HOUR_MS });
+  await lifecycle.drain({ now: Date.now() + 5 * HOUR_MS });
   expect(filesUnder(root)).toHaveLength(1);
-  await lifecycle.drain({ now: Date.now() + 25 * HOUR_MS });
+  await lifecycle.drain({ now: Date.now() + 7 * HOUR_MS });
   expectNoFilesLeft(root);
   await expect(createCaptureStore(root).enumerateSessions("claude-code")).resolves.toEqual([]);
 });
@@ -235,3 +240,38 @@ it("delivers each run once when two hooks finish together", async () => {
   expect(posts().toSorted()).toEqual([0, 1, 2, 3].map(runId));
   expectNoFilesLeft(root);
 }, 30_000);
+
+it("keeps only turn markers in the exact session tree after delivery and removes every folder after expiry", async () => {
+  const sessions = ["session-a", "session-b"] as const;
+  for (const [index, sessionId] of sessions.entries()) {
+    const session = open(sessionId);
+    await finishedTurn(session, index * 2);
+    await finishedTurn(session, index * 2 + 1);
+    await session.drain();
+  }
+  expect(posts().toSorted()).toEqual([0, 1, 2, 3].map(runId));
+  expect(
+    filesUnder(root)
+      .map((path) => relative(root, path))
+      .toSorted(),
+  ).toEqual(
+    sessions
+      .flatMap((sessionId, index) =>
+        [index * 2, index * 2 + 1].map((turn) =>
+          join(
+            "sessions",
+            identifierHash(sessionId),
+            "turns",
+            identifierHash(`turn-${turn}`),
+            "turn.outcome",
+          ),
+        ),
+      )
+      .toSorted(),
+  );
+  await testBridge(root, endpoint.url, { sessionId: sessions[0] }).drain({
+    now: Date.now() + 25 * HOUR_MS,
+  });
+  expect(filesUnder(root)).toEqual([]);
+  expect(existsSync(join(root, "sessions"))).toBe(false);
+});

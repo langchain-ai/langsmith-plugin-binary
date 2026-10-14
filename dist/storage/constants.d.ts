@@ -42,8 +42,4 @@ export declare const STORAGE_STALE_REMOVAL_WARNING = "Removed an old leftover fi
 export declare const FILE_LOCK_LOST_MESSAGE = "The file lock was taken over before the write finished";
 export declare const STORAGE_ENGINE_FILE_PATTERNS: readonly RegExp[];
 export declare const STORAGE_CLAIM_FILE: RegExp;
-export declare const STORAGE_LEGACY_RECEIPTS_DIRECTORY = "receipts";
-export declare const STORAGE_LEGACY_ATTEMPTS_DIRECTORY = "attempts";
-export declare const STORAGE_LEGACY_RECEIPT_FILE: RegExp;
-export declare const STORAGE_LEGACY_ATTEMPT_FILE: RegExp;
 //# sourceMappingURL=constants.d.ts.map

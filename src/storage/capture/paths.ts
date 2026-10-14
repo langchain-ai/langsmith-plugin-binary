@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto";
 import { resolve, join } from "node:path";
 import {
-  CAPTURE_DIRECTORY,
-  CAPTURE_EVENTS_DIRECTORY,
-  CAPTURE_INTEGRATIONS_DIRECTORY,
   CAPTURE_SESSIONS_DIRECTORY,
+  CAPTURE_FILE_EXTENSION,
+  CAPTURE_LOCK_EXTENSION,
   CAPTURE_TURNS_DIRECTORY,
+  CAPTURE_JOBS_DIRECTORY,
+  CAPTURE_STORAGE_DIRECTORY_MESSAGE,
   CAPTURE_INTEGRATION,
   CAPTURE_MAX_IDENTIFIER_BYTES,
 } from "./constants.js";
-import type { CaptureScope } from "./models.js";
+import type { CaptureScope, CaptureStorageRoot, CaptureDirectory } from "./models.js";
 
 export function validateIntegration(value: string): void {
   if (!CAPTURE_INTEGRATION.test(value)) throw new TypeError("Invalid integration namespace");
@@ -37,53 +38,61 @@ export function identifierHash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function captureDirectory(root: string): string {
-  return join(resolve(root), CAPTURE_DIRECTORY);
+export function captureRoot(storage: CaptureStorageRoot): string {
+  return typeof storage === "string" ? resolve(storage) : storage.root;
 }
 
-export function sessionSegments(base: string, integration: string, sessionHash: string): string[] {
-  return [
-    base,
-    CAPTURE_INTEGRATIONS_DIRECTORY,
-    integration,
-    CAPTURE_SESSIONS_DIRECTORY,
-    sessionHash,
-  ];
+export function captureDirectory(storage: CaptureStorageRoot): CaptureDirectory {
+  const directory = typeof storage === "string" ? CAPTURE_TURNS_DIRECTORY : storage.directory;
+  if (directory !== CAPTURE_TURNS_DIRECTORY && directory !== CAPTURE_JOBS_DIRECTORY)
+    throw new TypeError(CAPTURE_STORAGE_DIRECTORY_MESSAGE);
+  return directory;
+}
+
+export function sessionSegments(sessionHash: string): string[] {
+  return [CAPTURE_SESSIONS_DIRECTORY, sessionHash];
 }
 
 export function eventSegments(
-  base: string,
+  storage: CaptureStorageRoot,
   scope: Pick<CaptureScope, "integration" | "sessionId" | "turnId">,
 ): string[] {
-  return [
-    ...sessionSegments(base, scope.integration, identifierHash(scope.sessionId)),
-    CAPTURE_TURNS_DIRECTORY,
-    identifierHash(scope.turnId),
-    CAPTURE_EVENTS_DIRECTORY,
-  ];
+  const segments = [...sessionSegments(identifierHash(scope.sessionId)), captureDirectory(storage)];
+  return captureDirectory(storage) === CAPTURE_TURNS_DIRECTORY
+    ? [...segments, identifierHash(scope.turnId)]
+    : segments;
 }
 
-export function sessionsDirectory(root: string, integration: string): string {
-  return join(
-    captureDirectory(root),
-    CAPTURE_INTEGRATIONS_DIRECTORY,
-    integration,
-    CAPTURE_SESSIONS_DIRECTORY,
-  );
+export function sessionsDirectory(root: CaptureStorageRoot, integration: string): string {
+  validateIntegration(integration);
+  return join(captureRoot(root), CAPTURE_SESSIONS_DIRECTORY);
 }
 
-export function turnsDirectory(root: string, integration: string, sessionHash: string): string {
-  return join(sessionsDirectory(root, integration), sessionHash, CAPTURE_TURNS_DIRECTORY);
+export function turnsDirectory(
+  root: CaptureStorageRoot,
+  integration: string,
+  sessionHash: string,
+): string {
+  return join(sessionsDirectory(root, integration), sessionHash, captureDirectory(root));
 }
 
 export function eventsDirectory(turns: string, turnHash: string): string {
-  return join(turns, turnHash, CAPTURE_EVENTS_DIRECTORY);
+  return join(turns, turnHash);
 }
 
-export function eventPath(root: string, scope: CaptureScope): string {
+export function eventPath(root: CaptureStorageRoot, scope: CaptureScope): string {
+  const eventId =
+    captureDirectory(root) === CAPTURE_TURNS_DIRECTORY
+      ? scope.eventId
+      : JSON.stringify([scope.turnId, scope.eventId]);
   return join(
-    resolve(root),
-    ...eventSegments(CAPTURE_DIRECTORY, scope),
-    `${identifierHash(scope.eventId)}.json`,
+    captureRoot(root),
+    ...eventSegments(root, scope),
+    `${identifierHash(eventId)}${CAPTURE_FILE_EXTENSION}`,
   );
+}
+
+export function recordLockPath(root: CaptureStorageRoot, scope: CaptureScope): string {
+  const path = eventPath(root, scope);
+  return `${path.slice(0, -CAPTURE_FILE_EXTENSION.length)}${CAPTURE_LOCK_EXTENSION}`;
 }

@@ -1,8 +1,8 @@
+import { scopedWorkerFileName } from "./paths.js";
 import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { parseJsonObject } from "../../utils/validation/objects.js";
 import { readPrivateFile } from "../../storage/capture/utils/atomic-file.js";
-import { FILE_LOCK_DIRECTORY_SUFFIX } from "../../storage/constants.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
 import {
   BACKGROUND_WORKER_ACTIVE_MARKER_NAME,
@@ -14,7 +14,6 @@ import {
   BACKGROUND_WORKER_INVALID_MARKER_MESSAGE,
   BACKGROUND_WORKER_INVALID_RETRY_ATTEMPT_MESSAGE,
   BACKGROUND_WORKER_LAUNCHING_FILE,
-  BACKGROUND_WORKER_LOCK_FILE,
   BACKGROUND_WORKER_MARKER_ID_PATTERN,
   BACKGROUND_WORKER_MARKER_VERSION,
   BACKGROUND_WORKER_MULTIPLE_ACTIVE_MARKERS_MESSAGE,
@@ -24,6 +23,8 @@ import {
   BACKGROUND_WORKER_STATE_DISAPPEARED_MESSAGE,
   BACKGROUND_WORKER_STATE_ERROR,
   BACKGROUND_WORKER_UNEXPECTED_STATE_PATH_MESSAGE,
+  BACKGROUND_WORKER_SCOPED_FILE,
+  BACKGROUND_WORKER_SHARED_DIRECTORY,
   BACKGROUND_WORKER_UNSAFE_ACTIVE_MARKER_MESSAGE,
   BACKGROUND_WORKER_UNSAFE_LAUNCH_MARKER_MESSAGE,
   BACKGROUND_WORKER_UNSAFE_LOCK_DIRECTORY_MESSAGE,
@@ -36,6 +37,7 @@ import type {
   BackgroundWorkerMarker,
   BackgroundWorkerState,
   BackgroundWorkerStateScan,
+  BackgroundWorkerScope,
 } from "./models.js";
 
 function assertPlainFile(entry: Dirent, message: string): void {
@@ -90,26 +92,32 @@ async function scanStateEntry(
   directory: string,
   entry: Dirent,
   scan: BackgroundWorkerStateScan,
+  scope: BackgroundWorkerScope,
 ): Promise<void> {
-  if (entry.name === `${BACKGROUND_WORKER_LOCK_FILE}${FILE_LOCK_DIRECTORY_SUFFIX}`) {
+  if (BACKGROUND_WORKER_SHARED_DIRECTORY.test(entry.name)) {
     if (!entry.isDirectory() || entry.isSymbolicLink())
       throw new Error(BACKGROUND_WORKER_UNSAFE_LOCK_DIRECTORY_MESSAGE);
     return;
   }
-  if (entry.name === BACKGROUND_WORKER_PENDING_FILE) {
+  const name = scopedWorkerFileName(scope, entry.name);
+  if (name === undefined && BACKGROUND_WORKER_SCOPED_FILE.test(entry.name)) {
+    assertPlainFile(entry, BACKGROUND_WORKER_UNSAFE_ACTIVE_MARKER_MESSAGE);
+    return;
+  }
+  if (name === BACKGROUND_WORKER_PENDING_FILE) {
     assertPlainFile(entry, BACKGROUND_WORKER_UNSAFE_PENDING_MARKER_MESSAGE);
     scan.pending = parseMarker(await readRequired(storageRoot, join(directory, entry.name)));
     return;
   }
-  const activeMatch = BACKGROUND_WORKER_ACTIVE_MARKER_NAME.exec(entry.name);
+  const activeMatch = BACKGROUND_WORKER_ACTIVE_MARKER_NAME.exec(name ?? "");
   if (activeMatch) return readActiveMarker(storageRoot, directory, entry, activeMatch[1], scan);
-  const attemptMatch = BACKGROUND_WORKER_ATTEMPT_NAME.exec(entry.name);
+  const attemptMatch = BACKGROUND_WORKER_ATTEMPT_NAME.exec(name ?? "");
   if (attemptMatch) return readAttemptFile(storageRoot, directory, entry, attemptMatch, scan);
   if (BACKGROUND_WORKER_STAGING_FILE.test(entry.name)) {
     assertPlainFile(entry, BACKGROUND_WORKER_UNSAFE_STAGING_FILE_MESSAGE);
     return;
   }
-  if (entry.name === BACKGROUND_WORKER_LAUNCHING_FILE) {
+  if (name === BACKGROUND_WORKER_LAUNCHING_FILE) {
     assertPlainFile(entry, BACKGROUND_WORKER_UNSAFE_LAUNCH_MARKER_MESSAGE);
     return;
   }
@@ -141,11 +149,12 @@ function stateFromScan({
 export async function readWorkerState(
   storageRoot: string,
   directory: string,
+  scope: BackgroundWorkerScope,
 ): Promise<BackgroundWorkerState> {
   const entries = await listPrivateDirectory(storageRoot, directory);
   if (!entries) return { attempts: [], orphanedAttempts: [] };
   const scan: BackgroundWorkerStateScan = { attemptsByMarker: new Map() };
-  for (const entry of entries) await scanStateEntry(storageRoot, directory, entry, scan);
+  for (const entry of entries) await scanStateEntry(storageRoot, directory, entry, scan, scope);
   return stateFromScan(scan);
 }
 

@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readdirSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { dirname, join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
 import { withFileLock } from "./file-lock.js";
 import { ensurePrivateDirectory } from "./capture/utils/atomic-file.js";
@@ -85,11 +85,11 @@ it("creates a private directory that a cleanup removes during setup", async () =
   }
 });
 
-it("saves a capture whose folders a removal deletes mid-write", async () => {
+it("saves a capture whose folders a removal deletes during setup", async () => {
   const root = mkdtempSync(join(tmpdir(), "plugins-base-removed-capture-"));
   const store = createCaptureStore(root);
   const scope = { integration: "claude-code", sessionId: "s", turnId: "t", eventId: "e" };
-  fault.removeBeforeOpen = `${sep}events`;
+  fault.removeBeforeChmod = join(root, "sessions");
   const captured = await store.capture({
     ...scope,
     runId: "r",
@@ -100,6 +100,6 @@ it("saves a capture whose folders a removal deletes mid-write", async () => {
     metadataProvenance: {},
   });
   expect(captured.status).toBe("published");
-  expect(fault.removeBeforeOpen).toBe("");
+  expect(fault.removeBeforeChmod).toBe("");
   await expect(store.read(scope)).resolves.toMatchObject({ eventId: "e" });
 });

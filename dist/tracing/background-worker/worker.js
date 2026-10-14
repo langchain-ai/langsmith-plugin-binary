@@ -6,10 +6,10 @@ import { removeEmptyLockFolders } from "../../storage/lock-folders.js";
 import { removeFileIfPresent } from "../../utils/files/cleanup.js";
 import { parseJsonObject } from "../../utils/validation/objects.js";
 import { ensurePrivateDirectory, publishExclusive, readPrivateFile, } from "../../storage/capture/utils/atomic-file.js";
-import { identifierHash } from "../../storage/capture/paths.js";
+import { identifierHash, sessionSegments } from "../../storage/capture/paths.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
-import { BACKGROUND_WORKER_ACCOUNTS_DIRECTORY, BACKGROUND_WORKER_ACTIVE_MARKER_ALREADY_EXISTS_MESSAGE, BACKGROUND_WORKER_ACTIVE_MARKER_NAME, BACKGROUND_WORKER_ATTEMPT_VERSION, BACKGROUND_WORKER_DEFAULT_MAX_ATTEMPTS, BACKGROUND_WORKER_DEFAULT_RETRY_DELAY_MS, BACKGROUND_WORKER_DID_NOT_CLAIM_ITS_LOCK_BEFORE_TIMEOUT_MESSAGE, BACKGROUND_WORKER_DIRECTORY, BACKGROUND_WORKER_INTEGRATIONS_DIRECTORY, BACKGROUND_WORKER_INVALID_LAUNCH_MARKER_MESSAGE, BACKGROUND_WORKER_LAUNCHER_MUST_RETURN_CHILD_PROCESS_ID_MESSAGE, BACKGROUND_WORKER_LAUNCH_IS_ALREADY_PENDING_MESSAGE, BACKGROUND_WORKER_LAUNCH_LEASE_MS, BACKGROUND_WORKER_LAUNCH_VERSION, BACKGROUND_WORKER_MARKER_VERSION, BACKGROUND_WORKER_MAX_ATTEMPTS_MUST_BE_POSITIVE_INTEGER_MESSAGE, BACKGROUND_WORKER_OWNER_WAIT_MS, BACKGROUND_WORKER_PENDING_FILE, BACKGROUND_WORKER_RETRY_ATTEMPT_ALREADY_EXISTS_MESSAGE, BACKGROUND_WORKER_RETRY_DELAY_MUST_BE_NON_NEGATIVE_MESSAGE, BACKGROUND_WORKER_SESSIONS_DIRECTORY, BACKGROUND_WORKER_STARTUP_WAIT_MS, BACKGROUND_WORKER_STARTUP_WAIT_MUST_BE_POSITIVE_INTEGER_MESSAGE, BACKGROUND_WORKER_STATE_ERROR, } from "./constants.js";
-import { workerActivePath, workerAttemptPath, workerDirectory, workerLaunchPath, workerLockPath, workerPendingPath, } from "./paths.js";
+import { BACKGROUND_WORKER_ACTIVE_MARKER_ALREADY_EXISTS_MESSAGE, BACKGROUND_WORKER_ACTIVE_MARKER_NAME, BACKGROUND_WORKER_PENDING_FILE, BACKGROUND_WORKER_ATTEMPT_VERSION, BACKGROUND_WORKER_DEFAULT_MAX_ATTEMPTS, BACKGROUND_WORKER_DEFAULT_RETRY_DELAY_MS, BACKGROUND_WORKER_DID_NOT_CLAIM_ITS_LOCK_BEFORE_TIMEOUT_MESSAGE, BACKGROUND_WORKER_INVALID_LAUNCH_MARKER_MESSAGE, BACKGROUND_WORKER_LAUNCHER_MUST_RETURN_CHILD_PROCESS_ID_MESSAGE, BACKGROUND_WORKER_LAUNCH_IS_ALREADY_PENDING_MESSAGE, BACKGROUND_WORKER_LAUNCH_LEASE_MS, BACKGROUND_WORKER_LAUNCH_VERSION, BACKGROUND_WORKER_MARKER_VERSION, BACKGROUND_WORKER_MAX_ATTEMPTS_MUST_BE_POSITIVE_INTEGER_MESSAGE, BACKGROUND_WORKER_OWNER_WAIT_MS, BACKGROUND_WORKER_RETRY_ATTEMPT_ALREADY_EXISTS_MESSAGE, BACKGROUND_WORKER_RETRY_DELAY_MUST_BE_NON_NEGATIVE_MESSAGE, BACKGROUND_WORKER_STARTUP_WAIT_MS, BACKGROUND_WORKER_STARTUP_WAIT_MUST_BE_POSITIVE_INTEGER_MESSAGE, BACKGROUND_WORKER_STATE_ERROR, } from "./constants.js";
+import { workerActivePath, scopedWorkerFileName, workerAttemptPath, workerDirectory, workerLaunchPath, workerLockPath, workerPendingPath, } from "./paths.js";
 import { matchesScope } from "./utils/scope.js";
 import { readWorkerState } from "./state.js";
 export function createBackgroundWorker(options) {
@@ -41,15 +41,7 @@ function createWorkerContext(options) {
         retryPolicy,
         directory: workerDirectory(storageRoot, scope),
         lockPath: workerLockPath(storageRoot, scope),
-        directorySegments: [
-            BACKGROUND_WORKER_DIRECTORY,
-            BACKGROUND_WORKER_INTEGRATIONS_DIRECTORY,
-            scope.integration,
-            BACKGROUND_WORKER_SESSIONS_DIRECTORY,
-            identifierHash(scope.sessionId),
-            BACKGROUND_WORKER_ACCOUNTS_DIRECTORY,
-            identifierHash(scope.accountFingerprint),
-        ],
+        directorySegments: sessionSegments(identifierHash(scope.sessionId)),
     };
 }
 async function wakeWorker(context) {
@@ -98,7 +90,7 @@ async function launchWorker(context) {
     return "launched";
 }
 async function runPasses(context) {
-    const { storageRoot, directory, lockPath, retryPolicy } = context;
+    const { storageRoot, directory, lockPath, retryPolicy, scope } = context;
     await ensurePrivateDirectory(storageRoot, context.directorySegments);
     const totals = {
         processed: false,
@@ -113,7 +105,7 @@ async function runPasses(context) {
             return result;
         if (totals.failures >= retryPolicy.maxAttempts)
             return "retry-exhausted";
-        if (!(await hasPendingWork(storageRoot, directory)))
+        if (!(await hasPendingWork(storageRoot, directory, scope)))
             return result;
     }
 }
@@ -142,7 +134,7 @@ async function runOwnedPasses(context, totals) {
             return "retry-exhausted";
         if (pass.retryPending && retryPolicy.retryDelayMs > 0)
             await delay(retryPolicy.retryDelayMs);
-        if (!(await hasPendingWork(storageRoot, directory)))
+        if (!(await hasPendingWork(storageRoot, directory, scope)))
             return totals.retryExhausted ? "retry-exhausted" : totals.processed ? "completed" : "idle";
     }
 }
@@ -210,7 +202,7 @@ async function recordAttempt(storageRoot, scope, marker, attemptNumber) {
     return attempt;
 }
 async function processLocked(storageRoot, directory, scope, options, retryPolicy) {
-    const state = await readWorkerState(storageRoot, directory);
+    const state = await readWorkerState(storageRoot, directory, scope);
     for (const attempt of state.orphanedAttempts) {
         await removeFileIfPresent(workerAttemptPath(storageRoot, scope, attempt.markerId, attempt.attempt));
     }
@@ -274,10 +266,13 @@ async function runTasks(options, scope) {
     deferred ||= result === "deferred";
     return deferred ? "deferred" : progressed ? "progressed" : "idle";
 }
-async function hasPendingWork(storageRoot, directory) {
+async function hasPendingWork(storageRoot, directory, scope) {
     const entries = await listPrivateDirectory(storageRoot, directory);
-    return (entries?.some((entry) => entry.name === BACKGROUND_WORKER_PENDING_FILE ||
-        BACKGROUND_WORKER_ACTIVE_MARKER_NAME.test(entry.name)) ?? false);
+    return (entries?.some((entry) => {
+        const name = scopedWorkerFileName(scope, entry.name);
+        return (name === BACKGROUND_WORKER_PENDING_FILE ||
+            BACKGROUND_WORKER_ACTIVE_MARKER_NAME.test(name ?? ""));
+    }) ?? false);
 }
 async function removeActiveMarker(storageRoot, scope, marker, attempts) {
     await removeFileIfPresent(workerActivePath(storageRoot, scope, marker.id));

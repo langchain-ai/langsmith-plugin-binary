@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { resolve, join } from "node:path";
-import { CAPTURE_DIRECTORY, CAPTURE_EVENTS_DIRECTORY, CAPTURE_INTEGRATIONS_DIRECTORY, CAPTURE_SESSIONS_DIRECTORY, CAPTURE_TURNS_DIRECTORY, CAPTURE_INTEGRATION, CAPTURE_MAX_IDENTIFIER_BYTES, } from "./constants.js";
+import { CAPTURE_SESSIONS_DIRECTORY, CAPTURE_FILE_EXTENSION, CAPTURE_LOCK_EXTENSION, CAPTURE_TURNS_DIRECTORY, CAPTURE_JOBS_DIRECTORY, CAPTURE_STORAGE_DIRECTORY_MESSAGE, CAPTURE_INTEGRATION, CAPTURE_MAX_IDENTIFIER_BYTES, } from "./constants.js";
 export function validateIntegration(value) {
     if (!CAPTURE_INTEGRATION.test(value))
         throw new TypeError("Invalid integration namespace");
@@ -23,36 +23,42 @@ function hasControlCharacter(value) {
 export function identifierHash(value) {
     return createHash("sha256").update(value).digest("hex");
 }
-function captureDirectory(root) {
-    return join(resolve(root), CAPTURE_DIRECTORY);
+export function captureRoot(storage) {
+    return typeof storage === "string" ? resolve(storage) : storage.root;
 }
-export function sessionSegments(base, integration, sessionHash) {
-    return [
-        base,
-        CAPTURE_INTEGRATIONS_DIRECTORY,
-        integration,
-        CAPTURE_SESSIONS_DIRECTORY,
-        sessionHash,
-    ];
+export function captureDirectory(storage) {
+    const directory = typeof storage === "string" ? CAPTURE_TURNS_DIRECTORY : storage.directory;
+    if (directory !== CAPTURE_TURNS_DIRECTORY && directory !== CAPTURE_JOBS_DIRECTORY)
+        throw new TypeError(CAPTURE_STORAGE_DIRECTORY_MESSAGE);
+    return directory;
 }
-export function eventSegments(base, scope) {
-    return [
-        ...sessionSegments(base, scope.integration, identifierHash(scope.sessionId)),
-        CAPTURE_TURNS_DIRECTORY,
-        identifierHash(scope.turnId),
-        CAPTURE_EVENTS_DIRECTORY,
-    ];
+export function sessionSegments(sessionHash) {
+    return [CAPTURE_SESSIONS_DIRECTORY, sessionHash];
+}
+export function eventSegments(storage, scope) {
+    const segments = [...sessionSegments(identifierHash(scope.sessionId)), captureDirectory(storage)];
+    return captureDirectory(storage) === CAPTURE_TURNS_DIRECTORY
+        ? [...segments, identifierHash(scope.turnId)]
+        : segments;
 }
 export function sessionsDirectory(root, integration) {
-    return join(captureDirectory(root), CAPTURE_INTEGRATIONS_DIRECTORY, integration, CAPTURE_SESSIONS_DIRECTORY);
+    validateIntegration(integration);
+    return join(captureRoot(root), CAPTURE_SESSIONS_DIRECTORY);
 }
 export function turnsDirectory(root, integration, sessionHash) {
-    return join(sessionsDirectory(root, integration), sessionHash, CAPTURE_TURNS_DIRECTORY);
+    return join(sessionsDirectory(root, integration), sessionHash, captureDirectory(root));
 }
 export function eventsDirectory(turns, turnHash) {
-    return join(turns, turnHash, CAPTURE_EVENTS_DIRECTORY);
+    return join(turns, turnHash);
 }
 export function eventPath(root, scope) {
-    return join(resolve(root), ...eventSegments(CAPTURE_DIRECTORY, scope), `${identifierHash(scope.eventId)}.json`);
+    const eventId = captureDirectory(root) === CAPTURE_TURNS_DIRECTORY
+        ? scope.eventId
+        : JSON.stringify([scope.turnId, scope.eventId]);
+    return join(captureRoot(root), ...eventSegments(root, scope), `${identifierHash(eventId)}${CAPTURE_FILE_EXTENSION}`);
+}
+export function recordLockPath(root, scope) {
+    const path = eventPath(root, scope);
+    return `${path.slice(0, -CAPTURE_FILE_EXTENSION.length)}${CAPTURE_LOCK_EXTENSION}`;
 }
 //# sourceMappingURL=paths.js.map

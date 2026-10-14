@@ -1,11 +1,8 @@
 import { FILE_MISSING_CODE, INVALID_ARGUMENT_CODE } from "../../utils/constants.js";
-export const CAPTURE_DIRECTORY = "capture-v1";
-export const CAPTURE_INTEGRATIONS_DIRECTORY = "integrations";
+export const CAPTURE_JOBS_DIRECTORY = "jobs";
 export const CAPTURE_SESSIONS_DIRECTORY = "sessions";
 export const CAPTURE_TURNS_DIRECTORY = "turns";
-export const CAPTURE_EVENTS_DIRECTORY = "events";
 export const CAPTURE_RECORD_VERSION = 2;
-export const CAPTURE_RECORD_LOCK_DIRECTORY = "record-lock-v1";
 export const CAPTURE_DIRECTORY_MODE = 0o700;
 export const CAPTURE_DIRECTORY_SETUP_ATTEMPTS = 100;
 export const CAPTURE_REMOVED_DIRECTORY_CODES = [FILE_MISSING_CODE, INVALID_ARGUMENT_CODE] as const;
@@ -44,3 +41,6 @@ export const CAPTURE_MARKER_INVALID_WARNING = "Removed an unreadable outcome mar
 export const CAPTURE_ROUTES_INVALID_MESSAGE = "Invalid capture destination routes";
 export const CAPTURE_ROUTE_INVALID_MESSAGE = "Invalid capture destination route";
 export const CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE = "Invalid capture route project";
+export const CAPTURE_FILE_EXTENSION = ".json";
+export const CAPTURE_LOCK_EXTENSION = ".lock";
+export const CAPTURE_STORAGE_DIRECTORY_MESSAGE = "Capture directory must be turns or jobs";
