@@ -2,15 +2,15 @@ import { buildCodingAgentMetadata } from "../../metadata/index.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
 import { resolveUploadDestinations } from "./destinations.js";
 import { UPLOAD_PATCH_FIELDS } from "./constants.js";
-import { createUploadClient } from "./client.js";
-import { normalizedRedactedFields, redactSdkOmittedFields } from "./redaction.js";
+import { createUploadClientCache } from "./client-cache.js";
+import { redactSdkOmittedFields } from "./redaction.js";
 import { contextForDestination, runIdForDestination } from "./replica-identifiers.js";
 import { applyReplicaPatchUpdates } from "./replica-updates.js";
 export function createLangSmithUploadWriter(options) {
     const resolved = resolveUploadDestinations(options);
     const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
     const byId = new Map(resolved.destinations.map((destination) => [destination.id, destination]));
-    const redactedClients = new Map();
+    const clients = createUploadClientCache();
     return Object.freeze({
         accountFingerprint: resolved.accountFingerprint,
         destinations: Object.freeze(destinations),
@@ -19,18 +19,7 @@ export function createLangSmithUploadWriter(options) {
             if (!destination)
                 throw new TypeError("Unknown upload destination");
             validateSubmission(submission);
-            const redactedFields = normalizedRedactedFields(submission.redactedFields).filter((field) => submission.privacyMode === "full" &&
-                !(submission.operation === "patch" &&
-                    field === "outputs" &&
-                    Object.hasOwn(destination.updates ?? {}, "outputs")));
-            let client = destination.client;
-            if (redactedFields.length > 0) {
-                const key = JSON.stringify([destinationId, redactedFields]);
-                const previous = redactedClients.get(key);
-                client = previous ?? createUploadClient({ ...destination, redactedFields });
-                if (previous === undefined)
-                    redactedClients.set(key, client);
-            }
+            const client = clients.forSubmission(destination, submission);
             const payload = submission.operation === "post"
                 ? preparePostRunPayload(submission, destination)
                 : preparePatchRunPayload(submission, destination);
