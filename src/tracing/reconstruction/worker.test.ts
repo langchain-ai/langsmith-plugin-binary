@@ -11,7 +11,7 @@ import { CaptureWakeError } from "../capture-wake.js";
 import type { DeliveryPolicy } from "../delivery/models.js";
 import type { LifecycleBridge, LifecycleCaptureInput } from "../lifecycle/models.js";
 import type { PreparedRunPostSubmission } from "../upload/models.js";
-import { RECONSTRUCTION_DIRECTORY } from "./constants.js";
+import { CAPTURE_JOBS_DIRECTORY } from "../../storage/capture/constants.js";
 import { createReconstructionWorker } from "./index.js";
 import type { ReconstructionJob, ReconstructionJobInput, ReconstructionResult } from "./models.js";
 
@@ -71,7 +71,7 @@ function worker(
   });
 }
 
-const jobs = (root: string) => createCaptureStore(join(root, RECONSTRUCTION_DIRECTORY));
+const jobs = (root: string) => createCaptureStore(root, CAPTURE_JOBS_DIRECTORY);
 const jobScope = (eventId: string) => ({
   integration: "claude-code",
   sessionId: "session-1",
@@ -112,7 +112,7 @@ it("refuses a saved wake whose job evidence was changed on disk", async () => {
   const saved = await accountA.enqueue(job("job"));
   if (saved.status !== "published") throw new Error("Job was not saved");
   const wake = new CaptureWakeError(saved, new Error("launch failed"));
-  const path = eventPath(join(root, RECONSTRUCTION_DIRECTORY), saved.record);
+  const path = eventPath({ root, directory: CAPTURE_JOBS_DIRECTORY }, saved.record);
   await writeFile(
     path,
     JSON.stringify({ ...saved.record, turnEvidence: { childRunIds: [], closureState: "open" } }),
@@ -207,7 +207,7 @@ it("keeps jobs whose callback or capture keeps failing and retries them", async 
   );
   await nullCapture.enqueue(job("job-null-capture"));
   await expect(nullCapture.drain()).resolves.toMatchObject({ dropped: 0 });
-  const files = await readdir(join(root, RECONSTRUCTION_DIRECTORY), {
+  const files = await readdir(root, {
     recursive: true,
     withFileTypes: true,
   });
@@ -578,4 +578,26 @@ it("reports the earliest retry time among pending jobs", async () => {
     deferred: 1,
     nextRetryAtMs: 1_001_001,
   });
+});
+
+it("keeps jobs with the same event ID in different turns separate in the flat jobs folder", async () => {
+  const root = temporaryRoot();
+  const capture = vi.fn<LifecycleBridge["capture"]>(published);
+  const reconstruct = vi.fn(async (value: ReconstructionJob) =>
+    ready({ eventId: "output", submission: post(`run-${value.turnId}`) }),
+  );
+  const rebuilding = worker(root, reconstruct, capture);
+  for (const turnId of ["turn-a", "turn-b"])
+    await expect(rebuilding.enqueue({ ...job("shared-event"), turnId })).resolves.toMatchObject({
+      status: "published",
+    });
+  const store = jobs(root);
+  expect(await store.enumerate("claude-code", "session-1")).toHaveLength(2);
+  expect(await store.enumerateTurn("claude-code", "session-1", "turn-a")).toHaveLength(1);
+  await expect(rebuilding.drain()).resolves.toMatchObject({ captured: 2, pending: 0 });
+  expect(capture.mock.calls.map(([input]) => input.turnId).toSorted()).toEqual([
+    "turn-a",
+    "turn-b",
+  ]);
+  expectNoFilesLeft(root);
 });

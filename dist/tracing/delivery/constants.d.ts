@@ -1,4 +1,3 @@
-export declare const DELIVERY_DIRECTORY = "delivery-v1";
 export declare const DELIVERY_RETRY_BASE_MS = 5000;
 export declare const DELIVERY_RETRY_BACKOFF_FACTOR = 2;
 export declare const DELIVERY_RETRY_MAX_MS: number;
@@ -22,7 +21,7 @@ export declare const DELIVERY_PREREQUISITE_READ_MESSAGE = "Could not read prereq
 export declare const DELIVERY_RECEIPT_READ_MESSAGE = "Could not read delivery receipt:";
 export declare const DELIVERY_RECEIPT_PERSIST_MESSAGE = "Could not persist delivery receipt:";
 export declare const DELIVERY_ACCOUNT_MISMATCH_WARNING = "Saved trace work was saved under a different API key, endpoint, replica or redaction setting, not uploaded with the current one. It waits until that setting returns. Files waiting: {count}";
-export declare const DELIVERY_DRAIN_LOCK = "drain";
+export declare const DELIVERY_DRAIN_LOCK = "delivery";
 export declare const DELIVERY_DROPPED_DETAIL = "{eventId} for run {runId} on destination {destination} ({reason}){hint}";
 export declare const DELIVERY_DEPENDENTS_DROPPED_WARNING = "Dropped trace work that depended on dropped work on destination {destination}: runs {runs}";
 //# sourceMappingURL=constants.d.ts.map

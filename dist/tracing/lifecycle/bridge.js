@@ -5,7 +5,7 @@ import { createCaptureStore, removeExpiredCaptures } from "../../storage/capture
 import { removeStaleStorageFiles } from "../../storage/stale-files.js";
 import { STORAGE_STALE_FILE_MAX_AGE_MS } from "../../storage/constants.js";
 import { describe } from "../../utils/errors.js";
-import { identifierHash } from "../../storage/capture/paths.js";
+import { sessionSegments, identifierHash } from "../../storage/capture/paths.js";
 import { scopeKey, scopeOf } from "../../storage/capture/scope.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
 import { createDeliveryCoordinator } from "../delivery/index.js";
@@ -14,7 +14,7 @@ import { wakeCapturedWork } from "../capture-wake.js";
 import { refreshSettlementProgress, settleCapturedTurns } from "../settlement/pass.js";
 import { canonicalJsonObject, canonicalJsonValue, ownDataField, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireSafeEpochMilliseconds, requireTimestamp, } from "../../utils/validation/objects.js";
 import { snapshotData } from "../../utils/validation/snapshot.js";
-import { LIFECYCLE_ENGINE_FOLDERS, LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_FILE, LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY, LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY, LIFECYCLE_STORED_CAPTURE_IS_MISSING_THREAD_IDENTITY_MESSAGE, LIFECYCLE_STORED_INTEGRATION_DOES_NOT_MATCH_LIFECYCLE_BRIDGE_MESSAGE, LIFECYCLE_STORED_PRIVACY_MODE_IS_INVALID_MESSAGE, LIFECYCLE_STORED_RUN_CONTEXT_IS_REQUIRED_MESSAGE, LIFECYCLE_STORED_RUN_DATA_IS_REQUIRED_MESSAGE, LIFECYCLE_STORED_RUN_ID_DOES_NOT_MATCH_ITS_CAPTURE_MESSAGE, LIFECYCLE_SWEEP_WARNING, LIFECYCLE_UPLOAD_ACCOUNT_CHANGED_MESSAGE, } from "./constants.js";
+import { LIFECYCLE_ENGINE_FOLDERS, LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLEMENT_LOCK_PREFIX, LIFECYCLE_STORED_CAPTURE_IS_MISSING_THREAD_IDENTITY_MESSAGE, LIFECYCLE_STORED_INTEGRATION_DOES_NOT_MATCH_LIFECYCLE_BRIDGE_MESSAGE, LIFECYCLE_STORED_PRIVACY_MODE_IS_INVALID_MESSAGE, LIFECYCLE_STORED_RUN_CONTEXT_IS_REQUIRED_MESSAGE, LIFECYCLE_STORED_RUN_DATA_IS_REQUIRED_MESSAGE, LIFECYCLE_STORED_RUN_ID_DOES_NOT_MATCH_ITS_CAPTURE_MESSAGE, LIFECYCLE_SWEEP_WARNING, LIFECYCLE_UPLOAD_ACCOUNT_CHANGED_MESSAGE, } from "./constants.js";
 import { projectSubmission, projectTurnEvidence } from "./projection.js";
 import { removeSettledTurns } from "./turn-removal.js";
 import { resolvePolicy } from "../delivery/options.js";
@@ -152,16 +152,8 @@ function busyDrainResult() {
     return { status: "busy", settlement: { captured: 0, turns: [] } };
 }
 async function acquireSettlementLock(context) {
-    const directory = await ensurePrivateDirectory(context.storageRoot, [
-        LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY,
-        LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY,
-        context.integration,
-        LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY,
-        identifierHash(context.sessionId),
-        LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY,
-        identifierHash(context.writer.accountFingerprint),
-    ]);
-    const path = join(directory, LIFECYCLE_SETTLEMENT_LOCK_FILE);
+    const directory = await ensurePrivateDirectory(context.storageRoot, sessionSegments(identifierHash(context.sessionId)));
+    const path = join(directory, `${LIFECYCLE_SETTLEMENT_LOCK_PREFIX}${identifierHash(context.writer.accountFingerprint)}`);
     return { path, lock: await tryAcquireFileLock(path) };
 }
 async function sweepWithWarning(fallback, sweep) {

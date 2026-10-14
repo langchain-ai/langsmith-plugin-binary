@@ -65,10 +65,10 @@ function lifecycle() {
 function strayFile() {
   const stray = join(
     root,
-    "background-worker",
-    "wake.active.11111111-0000-4000-8000-000000000000.json",
+    "sessions",
+    "wake-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.active.11111111-0000-4000-8000-000000000000.json",
   );
-  mkdirSync(join(root, "background-worker"));
+  mkdirSync(join(root, "sessions"));
   writeFileSync(stray, "{}");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   utimesSync(stray, old, old);
@@ -88,7 +88,13 @@ it("still clears old leftover files when the expiry sweep fails", async () => {
   await saveOld();
   failures.expiry = true;
   await expect(lifecycle().drain()).resolves.toMatchObject({ status: "drained" });
-  expect(filesUnder(root).some((file) => file.includes("wake.active.11111111"))).toBe(false);
+  expect(
+    filesUnder(root).some((file) =>
+      file.includes(
+        "wake-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.active.11111111",
+      ),
+    ),
+  ).toBe(false);
   expect(warn.mock.calls.map((call) => call.join(" ")).join("\n")).toContain(
     "synthetic expiry failure",
   );
@@ -120,7 +126,7 @@ it("names a changed upload setting when it drops expired work that could never b
 });
 
 it("clears the claim a killed hook left in a record lock folder", async () => {
-  const claims = join(root, "record-lock-v1", "events", "abc.lock.claims");
+  const claims = join(root, "sessions", "events", "abc.lock.claims");
   mkdirSync(claims, { recursive: true });
   const claim = join(claims, "22222222-0000-4000-8000-000000000000.json");
   writeFileSync(claim, "{}");

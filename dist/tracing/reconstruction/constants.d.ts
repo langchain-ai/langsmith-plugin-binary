@@ -1,7 +1,4 @@
-export declare const RECONSTRUCTION_DIRECTORY = "reconstruction-v1";
-export declare const RECONSTRUCTION_WORKER_DIRECTORY = "workers";
-export declare const RECONSTRUCTION_SESSIONS_DIRECTORY = "sessions";
-export declare const RECONSTRUCTION_DRAIN_LOCK = "drain";
+export declare const RECONSTRUCTION_DRAIN_LOCK = "reconstruction";
 export declare const RECONSTRUCTION_RUN_ID_PREFIX = "reconstruction:";
 export declare const RECONSTRUCTION_MAPPING_EVENT_ID_PREFIX = "reconstruction-map:";
 export declare const RECONSTRUCTION_JOB_KIND = "reconstruction-job-v1";

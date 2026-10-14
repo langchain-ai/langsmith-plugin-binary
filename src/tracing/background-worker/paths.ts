@@ -1,18 +1,16 @@
 import { join, resolve } from "node:path";
 import {
   identifierHash,
+  sessionSegments,
   validateIdentifier,
   validateIntegration,
 } from "../../storage/capture/paths.js";
 import {
-  BACKGROUND_WORKER_ACCOUNTS_DIRECTORY,
   BACKGROUND_WORKER_ACTIVE_PREFIX,
-  BACKGROUND_WORKER_DIRECTORY,
-  BACKGROUND_WORKER_INTEGRATIONS_DIRECTORY,
+  BACKGROUND_WORKER_FILE_PREFIX,
   BACKGROUND_WORKER_LAUNCHING_FILE,
   BACKGROUND_WORKER_LOCK_FILE,
   BACKGROUND_WORKER_PENDING_FILE,
-  BACKGROUND_WORKER_SESSIONS_DIRECTORY,
 } from "./constants.js";
 import type { BackgroundWorkerScope } from "./models.js";
 
@@ -24,24 +22,21 @@ function validateWorkerScope(scope: BackgroundWorkerScope): void {
 
 export function workerDirectory(storageRoot: string, scope: BackgroundWorkerScope): string {
   validateWorkerScope(scope);
-  return join(
-    resolve(storageRoot),
-    BACKGROUND_WORKER_DIRECTORY,
-    BACKGROUND_WORKER_INTEGRATIONS_DIRECTORY,
-    scope.integration,
-    BACKGROUND_WORKER_SESSIONS_DIRECTORY,
-    identifierHash(scope.sessionId),
-    BACKGROUND_WORKER_ACCOUNTS_DIRECTORY,
-    identifierHash(scope.accountFingerprint),
-  );
+  return join(resolve(storageRoot), ...sessionSegments(identifierHash(scope.sessionId)));
 }
 
 export function workerLockPath(storageRoot: string, scope: BackgroundWorkerScope): string {
-  return join(workerDirectory(storageRoot, scope), BACKGROUND_WORKER_LOCK_FILE);
+  return join(
+    workerDirectory(storageRoot, scope),
+    `${BACKGROUND_WORKER_LOCK_FILE}-${identifierHash(scope.accountFingerprint)}`,
+  );
 }
 
 export function workerPendingPath(storageRoot: string, scope: BackgroundWorkerScope): string {
-  return join(workerDirectory(storageRoot, scope), BACKGROUND_WORKER_PENDING_FILE);
+  return join(
+    workerDirectory(storageRoot, scope),
+    workerFileName(scope, BACKGROUND_WORKER_PENDING_FILE),
+  );
 }
 
 export function workerActivePath(
@@ -51,7 +46,7 @@ export function workerActivePath(
 ): string {
   return join(
     workerDirectory(storageRoot, scope),
-    `${BACKGROUND_WORKER_ACTIVE_PREFIX}${markerId}.json`,
+    workerFileName(scope, `${BACKGROUND_WORKER_ACTIVE_PREFIX}${markerId}.json`),
   );
 }
 
@@ -63,10 +58,30 @@ export function workerAttemptPath(
 ): string {
   return join(
     workerDirectory(storageRoot, scope),
-    `${BACKGROUND_WORKER_ACTIVE_PREFIX}${markerId}.attempt.${attempt}.json`,
+    workerFileName(scope, `${BACKGROUND_WORKER_ACTIVE_PREFIX}${markerId}.attempt.${attempt}.json`),
   );
 }
 
 export function workerLaunchPath(storageRoot: string, scope: BackgroundWorkerScope): string {
-  return join(workerDirectory(storageRoot, scope), BACKGROUND_WORKER_LAUNCHING_FILE);
+  return join(
+    workerDirectory(storageRoot, scope),
+    workerFileName(scope, BACKGROUND_WORKER_LAUNCHING_FILE),
+  );
+}
+
+export function workerFileName(scope: BackgroundWorkerScope, name: string): string {
+  return name.replace(
+    BACKGROUND_WORKER_FILE_PREFIX,
+    `${BACKGROUND_WORKER_FILE_PREFIX}-${identifierHash(scope.accountFingerprint)}`,
+  );
+}
+
+export function scopedWorkerFileName(
+  scope: BackgroundWorkerScope,
+  name: string,
+): string | undefined {
+  const prefix = `${BACKGROUND_WORKER_FILE_PREFIX}-${identifierHash(scope.accountFingerprint)}.`;
+  return name.startsWith(prefix)
+    ? `${BACKGROUND_WORKER_FILE_PREFIX}.${name.slice(prefix.length)}`
+    : undefined;
 }

@@ -26,7 +26,7 @@ vi.mock("./utils/atomic-file.js", async (importOriginal) => {
 const scope = { integration: "claude-code", sessionId: "s", turnId: "t", eventId: "e" };
 
 function takeOverEveryClaim(root: string): void {
-  for (const entry of readdirSync(join(root, "record-lock-v1"), {
+  for (const entry of readdirSync(join(root, "sessions"), {
     recursive: true,
     withFileTypes: true,
   }))

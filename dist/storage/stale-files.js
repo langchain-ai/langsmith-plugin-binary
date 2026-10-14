@@ -4,7 +4,7 @@ import { DIRECTORY_NOT_EMPTY_CODE, FILE_MISSING_CODE } from "../utils/constants.
 import { describe, errorCode } from "../utils/errors.js";
 import { removeFileIfPresent } from "../utils/files/cleanup.js";
 import { ifMissing } from "../utils/files/missing.js";
-import { FILE_LOCK_DIRECTORY_SUFFIX, STORAGE_CLAIM_FILE, STORAGE_ENGINE_FILE_PATTERNS, STORAGE_LEGACY_ATTEMPT_FILE, STORAGE_LEGACY_ATTEMPTS_DIRECTORY, STORAGE_LEGACY_RECEIPT_FILE, STORAGE_LEGACY_RECEIPTS_DIRECTORY, STORAGE_STALE_DIRECTORY_WARNING, STORAGE_STALE_REMOVAL_WARNING, } from "./constants.js";
+import { FILE_LOCK_DIRECTORY_SUFFIX, STORAGE_CLAIM_FILE, STORAGE_ENGINE_FILE_PATTERNS, STORAGE_STALE_DIRECTORY_WARNING, STORAGE_STALE_REMOVAL_WARNING, } from "./constants.js";
 export async function removeStaleStorageFiles(root, folders, modifiedBeforeMs) {
     let removed = 0;
     for (const folder of folders)
@@ -32,20 +32,10 @@ async function removeStaleChildren(directory, modifiedBeforeMs) {
     }
     return removed;
 }
-function isLegacyDeliveryFile(path) {
-    const name = basename(path);
-    const parent = dirname(path);
-    return ((STORAGE_LEGACY_RECEIPT_FILE.test(name) &&
-        basename(dirname(parent)) === STORAGE_LEGACY_RECEIPTS_DIRECTORY) ||
-        (STORAGE_LEGACY_ATTEMPT_FILE.test(name) &&
-            basename(parent) === STORAGE_LEGACY_ATTEMPTS_DIRECTORY));
-}
 function isEngineFile(path) {
     const name = basename(path);
     return (STORAGE_ENGINE_FILE_PATTERNS.some((pattern) => pattern.test(name)) ||
-        (STORAGE_CLAIM_FILE.test(name) &&
-            basename(dirname(path)).endsWith(FILE_LOCK_DIRECTORY_SUFFIX)) ||
-        isLegacyDeliveryFile(path));
+        (STORAGE_CLAIM_FILE.test(name) && basename(dirname(path)).endsWith(FILE_LOCK_DIRECTORY_SUFFIX)));
 }
 function warnUnlessExpected(error) {
     const code = errorCode(error);

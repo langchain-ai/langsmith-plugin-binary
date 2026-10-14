@@ -5,14 +5,20 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { childEnvironment, moduleUrl, temporaryRoot } from "../../test-support/tracing/delivery.js";
 import {
   BACKGROUND_WORKER_ACTIVE_MARKER_NAME,
   BACKGROUND_WORKER_ATTEMPT_NAME,
 } from "./constants.js";
 import type { BackgroundWorkerOptions, BackgroundWorkerScope } from "./models.js";
-import { workerDirectory, workerLaunchPath, workerLockPath, workerPendingPath } from "./paths.js";
+import {
+  scopedWorkerFileName,
+  workerDirectory,
+  workerLaunchPath,
+  workerLockPath,
+  workerPendingPath,
+} from "./paths.js";
 import { createBackgroundWorker } from "./worker.js";
 
 const scope: BackgroundWorkerScope = {
@@ -77,7 +83,9 @@ function worker(root: string, options: Partial<BackgroundWorkerOptions> = {}) {
 
 function stateNames(root: string, pattern: RegExp): string[] {
   const directory = workerDirectory(root, scope);
-  return existsSync(directory) ? readdirSync(directory).filter((name) => pattern.test(name)) : [];
+  return existsSync(directory)
+    ? readdirSync(directory).filter((name) => pattern.test(scopedWorkerFileName(scope, name) ?? ""))
+    : [];
 }
 
 it("waits for the launched child to claim the lock before reporting a handoff", async () => {
@@ -228,4 +236,27 @@ it("rechecks the account around every task and keeps sessions apart", async () =
   await expect(switching.run()).resolves.toBe("completed");
   expect(drains).toEqual(["drain", "drain", "none"]);
   expect(stateNames(root, BACKGROUND_WORKER_ACTIVE_MARKER_NAME)).toEqual([]);
+});
+
+it("drains one account without consuming another account's wake in the same session", async () => {
+  const root = temporaryRoot();
+  const otherScope = { ...scope, accountFingerprint: "other-account" };
+  const firstDrain = vi.fn(() => "idle" as const);
+  const otherDrain = vi.fn(() => "idle" as const);
+  const first = worker(root, { drainPending: firstDrain });
+  const other = worker(root, {
+    scope: otherScope,
+    resolveScope: () => otherScope,
+    drainPending: otherDrain,
+  });
+  await first.wake().catch(() => undefined);
+  await other.wake().catch(() => undefined);
+  expect(workerDirectory(root, scope)).toBe(workerDirectory(root, otherScope));
+  expect(workerLockPath(root, scope)).not.toBe(workerLockPath(root, otherScope));
+  await expect(first.run()).resolves.toBe("completed");
+  expect(existsSync(workerPendingPath(root, otherScope))).toBe(true);
+  expect(otherDrain).not.toHaveBeenCalled();
+  await expect(other.run()).resolves.toBe("completed");
+  expect(firstDrain).toHaveBeenCalledTimes(1);
+  expect(otherDrain).toHaveBeenCalledTimes(1);
 });

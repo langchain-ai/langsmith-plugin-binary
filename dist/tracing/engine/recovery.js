@@ -1,7 +1,7 @@
+import { CAPTURE_JOBS_DIRECTORY } from "../../storage/capture/constants.js";
 import { isWaitingForRetry } from "../../storage/capture/retry-state.js";
-import { join } from "node:path";
 import { createCaptureStore } from "../../storage/capture/index.js";
-import { RECONSTRUCTION_DIRECTORY, RECONSTRUCTION_JOB_KIND } from "../reconstruction/constants.js";
+import { RECONSTRUCTION_JOB_KIND } from "../reconstruction/constants.js";
 import { LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLEMENT_EVENT_KIND, } from "../lifecycle/constants.js";
 import { isWaitingForOtherSetting } from "../../storage/capture/account.js";
 import { compareText } from "../../utils/compare.js";
@@ -24,7 +24,7 @@ function validateRecoveryRequest(request) {
 }
 async function loadRecoveryIndex(runtime) {
     const lifecycleStore = createCaptureStore(runtime.storageRoot);
-    const reconstructionStore = createCaptureStore(join(runtime.storageRoot, RECONSTRUCTION_DIRECTORY));
+    const reconstructionStore = createCaptureStore(runtime.storageRoot, CAPTURE_JOBS_DIRECTORY);
     const [lifecycleSessions, reconstructionSessions] = await Promise.all([
         lifecycleStore.enumerateSessions(runtime.integration),
         reconstructionStore.enumerateSessions(runtime.integration),

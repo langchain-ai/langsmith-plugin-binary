@@ -1,5 +1,4 @@
 import { utimesSync } from "node:fs";
-import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import type { CaptureStore } from "../../storage/capture/models.js";
@@ -269,10 +268,7 @@ it("wakes stale current, foreign and reconstruction work but skips young and oth
   for (const sessionId of ["stale", "other-account"])
     ageFile(eventPath(root, captureScope(sessionId, "turn", "root")), 120);
   for (const sessionId of ["reconstruction", "other-reconstruction"])
-    ageFile(
-      eventPath(join(root, "reconstruction-v1"), captureScope(sessionId, "turn", "job")),
-      120,
-    );
+    ageFile(eventPath({ root, directory: "jobs" }, captureScope(sessionId, "turn", "job")), 120);
   await pending(root, "young");
   await pending(root, "current");
   const { report, created, wakes } = recover(root, { minimumForeignAgeMs: 60_000, now });

@@ -12,11 +12,7 @@ import {
 import { fillTemplate } from "../../utils/format.js";
 import { isWaitingForOtherSetting } from "../../storage/capture/account.js";
 import { ensurePrivateDirectory } from "../../storage/capture/utils/atomic-file.js";
-import {
-  DELIVERY_ACCOUNT_MISMATCH_WARNING,
-  DELIVERY_DIRECTORY,
-  DELIVERY_DRAIN_LOCK,
-} from "./constants.js";
+import { DELIVERY_ACCOUNT_MISMATCH_WARNING, DELIVERY_DRAIN_LOCK } from "./constants.js";
 import type {
   DeliveryCoordinator,
   DeliveryCoordinatorContext,
@@ -39,7 +35,7 @@ async function drainUnderLock(
   const { captureStore, integration, sessionId, storageRoot, policy } = context;
   const sessionDirectory = await ensurePrivateDirectory(
     storageRoot,
-    sessionSegments(DELIVERY_DIRECTORY, integration, identifierHash(sessionId)),
+    sessionSegments(identifierHash(sessionId)),
   );
   const lockPath = join(sessionDirectory, DELIVERY_DRAIN_LOCK);
   const lock = await tryAcquireFileLock(lockPath);

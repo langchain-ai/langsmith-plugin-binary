@@ -1,7 +1,3 @@
-export const BACKGROUND_WORKER_DIRECTORY = "background-worker";
-export const BACKGROUND_WORKER_INTEGRATIONS_DIRECTORY = "integrations";
-export const BACKGROUND_WORKER_SESSIONS_DIRECTORY = "sessions";
-export const BACKGROUND_WORKER_ACCOUNTS_DIRECTORY = "accounts";
 export const BACKGROUND_WORKER_LOCK_FILE = "worker";
 export const BACKGROUND_WORKER_PENDING_FILE = "wake.pending";
 export const BACKGROUND_WORKER_ACTIVE_PREFIX = "wake.active.";
@@ -67,3 +63,8 @@ export const BACKGROUND_WORKER_STATE_DISAPPEARED_MESSAGE = "Background worker st
 export const BACKGROUND_WORKER_INVALID_MARKER_MESSAGE = "Invalid background worker marker";
 export const BACKGROUND_WORKER_INVALID_RETRY_ATTEMPT_MESSAGE =
   "Invalid background worker retry attempt";
+export const BACKGROUND_WORKER_FILE_PREFIX = "wake";
+export const BACKGROUND_WORKER_SCOPED_FILE =
+  /^wake-[0-9a-f]{64}\.(?:pending|launching|active\.[0-9a-f-]{36}(?:\.attempt\.[1-9]\d*)?\.json)$/u;
+export const BACKGROUND_WORKER_SHARED_DIRECTORY =
+  /^(?:turns|jobs|delivery\.claims|reconstruction\.claims|(?:worker|settlement)-[0-9a-f]{64}\.claims)$/u;

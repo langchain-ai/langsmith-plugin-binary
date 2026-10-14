@@ -23,6 +23,7 @@ export const NODE_ERROR_PREFIX = "ERR_";
 export const MACH_O_ARCHES: Readonly<Record<string, string>> = { arm64: "arm64", x64: "x86_64" };
 
 export const VERSION_DEFINE = "__LS_INTEGRATION_VERSION__";
+export const COMPILED_BINARY_DEFINE = "LS_COMPILED_BINARY";
 
 export const DEVELOPER_ID_PREFIX = "Developer ID Application:";
 export const IDENTITY_LINE = /^\s*\d+\)\s+[0-9A-Fa-f]{40}\s+"([^"]+)"$/gm;

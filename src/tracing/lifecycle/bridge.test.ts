@@ -182,10 +182,10 @@ it("drops work past its age limit with a warning and clears old leftover files o
   const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const stray = join(
     root,
-    "background-worker",
-    "wake.active.11111111-0000-4000-8000-000000000000.json",
+    "sessions",
+    "wake-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.active.11111111-0000-4000-8000-000000000000.json",
   );
-  mkdirSync(join(root, "background-worker"));
+  mkdirSync(join(root, "sessions"));
   writeFileSync(stray, "{}");
   const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
   utimesSync(stray, threeHoursAgo, threeHoursAgo);

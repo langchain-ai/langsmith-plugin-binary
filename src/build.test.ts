@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { build, buildArguments, buildPlan, outputPath, requestedArches } from "./build.js";
 import { loadConfig } from "./config.js";
-import { VERSION_DEFINE } from "./constants.js";
+import { COMPILED_BINARY_DEFINE, VERSION_DEFINE } from "./constants.js";
 import type { BuildSteps } from "./models.js";
 
 function planFor(consumer: string) {
@@ -114,7 +114,7 @@ describe("the command handed to Bun", () => {
 
   it("leaves out an extra value the plugin did not ask for", () => {
     const args = buildArguments(planFor("codex").plan, "arm64", "out");
-    expect(Object.keys(definesIn(args))).toEqual([VERSION_DEFINE]);
+    expect(Object.keys(definesIn(args))).toEqual([VERSION_DEFINE, COMPILED_BINARY_DEFINE]);
   });
 
   it("minifies only when the plugin asks for it", () => {

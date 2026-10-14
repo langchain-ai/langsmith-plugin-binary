@@ -1,7 +1,3 @@
-export declare const BACKGROUND_WORKER_DIRECTORY = "background-worker";
-export declare const BACKGROUND_WORKER_INTEGRATIONS_DIRECTORY = "integrations";
-export declare const BACKGROUND_WORKER_SESSIONS_DIRECTORY = "sessions";
-export declare const BACKGROUND_WORKER_ACCOUNTS_DIRECTORY = "accounts";
 export declare const BACKGROUND_WORKER_LOCK_FILE = "worker";
 export declare const BACKGROUND_WORKER_PENDING_FILE = "wake.pending";
 export declare const BACKGROUND_WORKER_ACTIVE_PREFIX = "wake.active.";
@@ -43,4 +39,7 @@ export declare const BACKGROUND_WORKER_INVALID_LAUNCH_MARKER_MESSAGE = "Invalid 
 export declare const BACKGROUND_WORKER_STATE_DISAPPEARED_MESSAGE = "Background worker state disappeared";
 export declare const BACKGROUND_WORKER_INVALID_MARKER_MESSAGE = "Invalid background worker marker";
 export declare const BACKGROUND_WORKER_INVALID_RETRY_ATTEMPT_MESSAGE = "Invalid background worker retry attempt";
+export declare const BACKGROUND_WORKER_FILE_PREFIX = "wake";
+export declare const BACKGROUND_WORKER_SCOPED_FILE: RegExp;
+export declare const BACKGROUND_WORKER_SHARED_DIRECTORY: RegExp;
 //# sourceMappingURL=constants.d.ts.map

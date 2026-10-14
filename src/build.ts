@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { VERSION_DEFINE } from "./constants.js";
+import { COMPILED_BINARY_DEFINE, VERSION_DEFINE } from "./constants.js";
 import type { BuildPlan, BuildSteps, LoadedConfig } from "./models.js";
 import { checkBuiltArch, checkReportedVersion } from "./utils/binary-checks.js";
 import { readVersion } from "./utils/fs.js";
@@ -15,7 +15,10 @@ export function buildPlan({ config, repositoryRoot }: LoadedConfig): BuildPlan {
   }
   const platform = platforms[0]!;
   const version = readVersion(repositoryRoot, buildConfig.versionFile);
-  const defines: Record<string, string> = { [VERSION_DEFINE]: version };
+  const defines: Record<string, string> = {
+    [VERSION_DEFINE]: version,
+    [COMPILED_BINARY_DEFINE]: "true",
+  };
   for (const [name, file] of Object.entries(buildConfig.defines)) {
     defines[name] = readFileSync(resolve(repositoryRoot, file), "utf-8");
   }

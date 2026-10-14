@@ -66,6 +66,20 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "trusts the build's compiled flag over an unfamiliar binary path",
+  async () => {
+    process.argv[1] = "/renamed-bun-root/hooks.js";
+    vi.stubGlobal("LS_COMPILED_BINARY", "true");
+    try {
+      await launchDetachedWorker(["--engine-worker", "session-1"], { executable: recorder });
+      expect((await recorded()).slice(2)).toEqual(["--engine-worker", "session-1"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "writes the worker's output to the log file when given one",
   async () => {
     const logFile = join(directory, "worker.log");

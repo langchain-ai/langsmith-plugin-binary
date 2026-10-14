@@ -1,3 +1,9 @@
+export type CaptureDirectory = "turns" | "jobs";
+export interface CaptureStorage {
+    root: string;
+    directory: CaptureDirectory;
+}
+export type CaptureStorageRoot = string | CaptureStorage;
 export type JsonValue = string | number | boolean | null | JsonValue[] | {
     [key: string]: JsonValue;
 };

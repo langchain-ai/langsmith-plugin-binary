@@ -6,8 +6,9 @@ import { isPlainRecord, parseJsonObject } from "../../utils/validation/objects.j
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
 import { removeEmptyAncestors, removeFileIfPresent } from "../../utils/files/cleanup.js";
 import {
-  CAPTURE_DIRECTORY,
   CAPTURE_HASH,
+  CAPTURE_FILE_EXTENSION,
+  CAPTURE_JOBS_DIRECTORY,
   CAPTURE_MARKER_INVALID_MESSAGE,
   CAPTURE_MARKER_INVALID_WARNING,
   CAPTURE_MARKER_FILE,
@@ -21,10 +22,13 @@ import type {
   CaptureOutcomeMarker,
   CaptureSettledTurn,
   CaptureScope,
+  CaptureStorageRoot,
   StoredCapture,
 } from "./models.js";
 import {
   eventPath,
+  captureRoot,
+  captureDirectory,
   eventSegments,
   eventsDirectory,
   identifierHash,
@@ -33,12 +37,15 @@ import {
 } from "./paths.js";
 import { publishExclusive, readPrivateFile, replacePrivateFile } from "./utils/atomic-file.js";
 
-function markerPath(root: string, scope: CaptureScope): string {
+function markerPath(root: CaptureStorageRoot, scope: CaptureScope): string {
   const path = eventPath(root, scope);
-  return join(dirname(path), `${identifierHash(scope.eventId)}${CAPTURE_MARKER_SUFFIX}`);
+  return join(
+    dirname(path),
+    `${basename(eventPath(root, scope), CAPTURE_FILE_EXTENSION)}${CAPTURE_MARKER_SUFFIX}`,
+  );
 }
 
-function turnMarkerPath(root: string, scope: CaptureScope): string {
+function turnMarkerPath(root: CaptureStorageRoot, scope: CaptureScope): string {
   return join(dirname(eventPath(root, scope)), CAPTURE_TURN_MARKER_FILE);
 }
 
@@ -65,7 +72,7 @@ function markerOf(records: readonly StoredCapture[]): CaptureOutcomeMarker {
 }
 
 export async function writeOutcomeMarker(
-  root: string,
+  root: CaptureStorageRoot,
   scope: CaptureScope,
   record: StoredCapture,
 ): Promise<void> {
@@ -74,7 +81,7 @@ export async function writeOutcomeMarker(
 }
 
 export async function writeTurnMarker(
-  root: string,
+  root: CaptureStorageRoot,
   records: readonly StoredCapture[],
   settled: CaptureSettledTurn | undefined,
 ): Promise<void> {
@@ -91,16 +98,16 @@ export async function writeTurnMarker(
       : { settled: (settled ?? previous?.settled)! }),
   };
   if (previous === undefined) await publishExclusive(path, JSON.stringify(marker));
-  else await replacePrivateFile(root, path, JSON.stringify(marker));
+  else await replacePrivateFile(captureRoot(root), path, JSON.stringify(marker));
 }
 
 export async function readSettledTurn(
-  root: string,
+  root: CaptureStorageRoot,
   scope: Pick<CaptureScope, "integration" | "sessionId" | "turnId">,
 ): Promise<CaptureSettledTurn | undefined> {
   const marker = await readMarker(
     root,
-    join(root, ...eventSegments(CAPTURE_DIRECTORY, scope), CAPTURE_TURN_MARKER_FILE),
+    join(captureRoot(root), ...eventSegments(root, scope), CAPTURE_TURN_MARKER_FILE),
   );
   return marker?.settled;
 }
@@ -152,8 +159,11 @@ function parseMarker(contents: string): CaptureOutcomeMarker | undefined {
   }
 }
 
-async function readMarker(root: string, path: string): Promise<CaptureOutcomeMarker | undefined> {
-  const contents = await readPrivateFile(root, path);
+async function readMarker(
+  root: CaptureStorageRoot,
+  path: string,
+): Promise<CaptureOutcomeMarker | undefined> {
+  const contents = await readPrivateFile(captureRoot(root), path);
   if (contents === undefined) return undefined;
   const marker = parseMarker(contents);
   if (marker !== undefined) return marker;
@@ -163,7 +173,7 @@ async function readMarker(root: string, path: string): Promise<CaptureOutcomeMar
 }
 
 export async function readMarkerOutcome(
-  root: string,
+  root: CaptureStorageRoot,
   scope: CaptureScope,
   destination: string,
 ): Promise<CaptureOutcome | undefined> {
@@ -177,11 +187,11 @@ export async function readMarkerOutcome(
 }
 
 export async function readDroppedRunIds(
-  root: string,
+  root: CaptureStorageRoot,
   scope: Pick<CaptureScope, "integration" | "sessionId" | "turnId">,
 ): Promise<Set<string>> {
   const runIds = new Set<string>();
-  const directory = join(root, ...eventSegments(CAPTURE_DIRECTORY, scope));
+  const directory = join(captureRoot(root), ...eventSegments(root, scope));
   for (const path of await markersIn(root, directory)) {
     const marker = await readMarker(root, path);
     for (const { runId, outcomes } of Object.values(marker?.entries ?? {})) {
@@ -191,40 +201,60 @@ export async function readDroppedRunIds(
   return runIds;
 }
 
-export async function forgetTurnMarkers(root: string, scope: CaptureScope): Promise<void> {
-  for (const path of await markersIn(root, dirname(eventPath(root, scope))))
-    await removeFileIfPresent(path);
+export async function forgetTurnMarkers(
+  root: CaptureStorageRoot,
+  scope: CaptureScope,
+): Promise<void> {
+  const paths =
+    captureDirectory(root) === CAPTURE_JOBS_DIRECTORY
+      ? [markerPath(root, scope)]
+      : await markersIn(root, dirname(eventPath(root, scope)));
+  for (const path of paths) await removeFileIfPresent(path);
 }
 
-async function markersIn(root: string, directory: string): Promise<string[]> {
-  return ((await listPrivateDirectory(root, directory)) ?? [])
+async function markersIn(root: CaptureStorageRoot, directory: string): Promise<string[]> {
+  return ((await listPrivateDirectory(captureRoot(root), directory)) ?? [])
     .filter((entry) => entry.isFile() && CAPTURE_MARKER_FILE.test(entry.name))
     .map((entry) => join(directory, entry.name));
 }
 
 export async function removeStaleMarkers(
-  root: string,
+  root: CaptureStorageRoot,
   integration: string,
   modifiedBeforeMs: number,
 ): Promise<number> {
   const sessions = sessionsDirectory(root, integration);
   let removed = 0;
-  for (const session of (await listPrivateDirectory(root, sessions)) ?? []) {
+  for (const session of (await listPrivateDirectory(captureRoot(root), sessions)) ?? []) {
     if (!session.isDirectory() || !CAPTURE_HASH.test(session.name)) continue;
     const turns = turnsDirectory(root, integration, session.name);
-    for (const turn of (await listPrivateDirectory(root, turns)) ?? []) {
-      if (!turn.isDirectory() || !CAPTURE_HASH.test(turn.name)) continue;
-      const events = eventsDirectory(turns, turn.name);
-      for (const path of await markersIn(root, events)) {
-        const info = await lstat(path).catch((error: unknown) => {
-          if (errorCode(error) === FILE_MISSING_CODE) return undefined;
-          throw error;
-        });
-        if (info === undefined || info.mtimeMs >= modifiedBeforeMs) continue;
-        if (await removeFileIfPresent(path)) removed += 1;
-      }
-      await removeEmptyAncestors(events, root);
+    const directories =
+      captureDirectory(root) === CAPTURE_JOBS_DIRECTORY
+        ? [turns]
+        : ((await listPrivateDirectory(captureRoot(root), turns)) ?? [])
+            .filter((turn) => turn.isDirectory() && CAPTURE_HASH.test(turn.name))
+            .map((turn) => eventsDirectory(turns, turn.name));
+    for (const directory of directories) {
+      removed += await removeOldMarkers(root, directory, modifiedBeforeMs);
+      await removeEmptyAncestors(directory, captureRoot(root));
     }
+  }
+  return removed;
+}
+
+async function removeOldMarkers(
+  root: CaptureStorageRoot,
+  directory: string,
+  modifiedBeforeMs: number,
+): Promise<number> {
+  let removed = 0;
+  for (const path of await markersIn(root, directory)) {
+    const info = await lstat(path).catch((error: unknown) => {
+      if (errorCode(error) === FILE_MISSING_CODE) return undefined;
+      throw error;
+    });
+    if (info === undefined || info.mtimeMs >= modifiedBeforeMs) continue;
+    if (await removeFileIfPresent(path)) removed += 1;
   }
   return removed;
 }

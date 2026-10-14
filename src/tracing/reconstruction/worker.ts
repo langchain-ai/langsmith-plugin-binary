@@ -1,10 +1,12 @@
-import { dirname, join, resolve } from "node:path";
+import { CAPTURE_JOBS_DIRECTORY } from "../../storage/capture/constants.js";
+import { join, resolve } from "node:path";
 import { tryAcquireFileLock } from "../../storage/index.js";
 import { removeEmptyLockFolders } from "../../storage/lock-folders.js";
 import { createCaptureStore, removeExpiredCaptures } from "../../storage/capture/index.js";
 import type { CaptureWriteResult } from "../../storage/capture/models.js";
 import {
   identifierHash,
+  sessionSegments,
   validateIdentifier,
   validateIntegration,
 } from "../../storage/capture/paths.js";
@@ -20,11 +22,8 @@ import {
   RECONSTRUCTION_DRAIN_TIME_MESSAGE,
   RECONSTRUCTION_JOB_MISSING_MESSAGE,
   RECONSTRUCTION_RECORD_UNSUPPORTED_MESSAGE,
-  RECONSTRUCTION_DIRECTORY,
   RECONSTRUCTION_JOB_KIND,
   RECONSTRUCTION_MAPPING_KIND,
-  RECONSTRUCTION_SESSIONS_DIRECTORY,
-  RECONSTRUCTION_WORKER_DIRECTORY,
 } from "./constants.js";
 import type {
   ReconstructionCandidate,
@@ -60,8 +59,8 @@ export function createReconstructionWorker(
   validateIdentifier(sessionId, "session ID");
   validateIdentifier(accountFingerprint, "account fingerprint");
   const policy = resolvePolicy(options.policy);
-  const storageRoot = join(resolve(options.storageRoot), RECONSTRUCTION_DIRECTORY);
-  const captureStore = createCaptureStore(storageRoot);
+  const storageRoot = resolve(options.storageRoot);
+  const captureStore = createCaptureStore(storageRoot, CAPTURE_JOBS_DIRECTORY);
   const context: ReconstructionWorkerContext = {
     integration,
     sessionId,
@@ -105,12 +104,10 @@ async function drainJobs(
 ): Promise<ReconstructionDrainResult> {
   const now = request.now ?? Date.now();
   if (!Number.isFinite(now)) throw new RangeError(RECONSTRUCTION_DRAIN_TIME_MESSAGE);
-  const lockDirectory = await ensurePrivateDirectory(context.storageRoot, [
-    RECONSTRUCTION_WORKER_DIRECTORY,
-    context.integration,
-    RECONSTRUCTION_SESSIONS_DIRECTORY,
-    identifierHash(context.sessionId),
-  ]);
+  const lockDirectory = await ensurePrivateDirectory(
+    context.storageRoot,
+    sessionSegments(identifierHash(context.sessionId)),
+  );
   const lockPath = join(lockDirectory, RECONSTRUCTION_DRAIN_LOCK);
   const lock = await tryAcquireFileLock(lockPath);
   if (!lock) return { status: "busy" };
@@ -130,7 +127,7 @@ async function drainJobs(
     await processCandidates(context, candidates.slice(overCapacity), counts);
   } finally {
     await lock.release();
-    await removeEmptyLockFolders(lockPath, dirname(context.storageRoot));
+    await removeEmptyLockFolders(lockPath, context.storageRoot);
   }
   return { status: "drained", ...counts, ...(await summarizePending(context)) };
 }

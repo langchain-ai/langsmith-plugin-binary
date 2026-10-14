@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { COMPILED_BINARY_ENTRY_PREFIXES, WORKER_LOG_APPEND_FLAG, WORKER_LOG_MAX_BYTES, WORKER_LOG_MODE, WORKER_LOG_TRUNCATE_FLAG, WORKER_NO_PID_MESSAGE, } from "./constants.js";
+import { builtAsBinary } from "../utils/binary-runtime.js";
 export function launchDetachedWorker(args, options = {}) {
     const log = options.logFile === undefined ? undefined : openLog(options.logFile);
     const child = spawn(options.executable ?? process.execPath, [...scriptArguments(), ...args], {
@@ -25,7 +26,8 @@ export function launchDetachedWorker(args, options = {}) {
 }
 function scriptArguments() {
     const entry = process.argv[1];
-    const compiled = entry === undefined ||
+    const compiled = builtAsBinary() ||
+        entry === undefined ||
         COMPILED_BINARY_ENTRY_PREFIXES.some((prefix) => entry.startsWith(prefix));
     return compiled ? [] : [entry];
 }

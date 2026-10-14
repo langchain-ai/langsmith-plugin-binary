@@ -3,10 +3,9 @@ import { describe, errorCode } from "../../utils/errors.js";
 import { lstat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { withFileLock } from "../index.js";
-import { FILE_LOCK_DIRECTORY_SUFFIX } from "../constants.js";
+import { removeEmptyLockFolders } from "../lock-folders.js";
 import type { FileLockCallback, FileLockHandle } from "../models.js";
 import {
-  CAPTURE_DIRECTORY,
   CAPTURE_DEPENDENCIES_INVALID_MESSAGE,
   CAPTURE_DEPENDENCY_INTEGRATION_MESSAGE,
   CAPTURE_DEPENDENCY_INVALID_MESSAGE,
@@ -15,10 +14,10 @@ import {
   CAPTURE_EVENT_FILE,
   CAPTURE_FIELD_UNSUPPORTED_MESSAGE,
   CAPTURE_HASH,
+  CAPTURE_TURNS_DIRECTORY,
   CAPTURE_NAMESPACE_MISMATCH_MESSAGE,
   CAPTURE_OUTCOME_INVALID_MESSAGE,
   CAPTURE_OUTCOME_UNSUPPORTED_MESSAGE,
-  CAPTURE_RECORD_LOCK_DIRECTORY,
   CAPTURE_RECORD_UNSUPPORTED_MESSAGE,
   CAPTURE_RECORD_VERSION,
   CAPTURE_RETRY_LOST_MESSAGE,
@@ -39,6 +38,8 @@ import type {
   CaptureSettledTurn,
   CaptureRetry,
   CaptureScope,
+  CaptureStorageRoot,
+  CaptureDirectory,
   CaptureStore,
   CaptureWriteResult,
   EnumeratedCapture,
@@ -52,6 +53,9 @@ import type {
 } from "./models.js";
 import {
   eventPath,
+  recordLockPath,
+  captureRoot,
+  captureDirectory,
   eventSegments,
   eventsDirectory,
   identifierHash,
@@ -88,8 +92,12 @@ import {
 } from "./markers.js";
 import { canonicalJson, canonicalValue } from "./utils/serialization.js";
 
-export function createCaptureStore(root: string): CaptureStore {
-  const storageRoot = resolve(root);
+export function createCaptureStore(
+  root: string,
+  directory: CaptureDirectory = CAPTURE_TURNS_DIRECTORY,
+): CaptureStore {
+  const storageRoot = { root: resolve(root), directory };
+  captureDirectory(storageRoot);
   return {
     capture: (input) => captureEvent(storageRoot, input),
     read: (scope) => readCapture(storageRoot, scope),
@@ -161,7 +169,7 @@ function buildCaptureRecord(input: CaptureInput): StoredCapture {
 }
 
 async function publishCapture(
-  root: string,
+  root: CaptureStorageRoot,
   input: CaptureInput,
   record: StoredCapture,
   contents: string,
@@ -187,7 +195,10 @@ async function publishCapture(
   });
 }
 
-async function captureEvent(root: string, input: CaptureInput): Promise<CaptureWriteResult> {
+async function captureEvent(
+  root: CaptureStorageRoot,
+  input: CaptureInput,
+): Promise<CaptureWriteResult> {
   let record: StoredCapture;
   let contents: string;
   try {
@@ -203,7 +214,10 @@ async function captureEvent(root: string, input: CaptureInput): Promise<CaptureW
   }
 }
 
-async function readCapture(root: string, scope: CaptureScope): Promise<StoredCapture | undefined> {
+async function readCapture(
+  root: CaptureStorageRoot,
+  scope: CaptureScope,
+): Promise<StoredCapture | undefined> {
   validateScope(scope);
   const record = await readRecord(root, eventPath(root, scope));
   if (record === undefined) return undefined;
@@ -212,13 +226,13 @@ async function readCapture(root: string, scope: CaptureScope): Promise<StoredCap
 }
 
 async function enumerateIntegrationSessions(
-  root: string,
+  root: CaptureStorageRoot,
   integration: string,
 ): Promise<EnumeratedCaptureSession[]> {
   validateIntegration(integration);
   const sessions: EnumeratedCaptureSession[] = [];
   for (const directory of (await listPrivateDirectory(
-    root,
+    captureRoot(root),
     sessionsDirectory(root, integration),
   )) ?? []) {
     if (!directory.isDirectory() || !CAPTURE_HASH.test(directory.name)) continue;
@@ -231,7 +245,7 @@ async function enumerateIntegrationSessions(
 }
 
 async function recordRetryState(
-  root: string,
+  root: CaptureStorageRoot,
   scope: CaptureScope,
   destination: string,
   retry: CaptureRetry,
@@ -266,7 +280,7 @@ function validateOutcomeInput(input: OutcomeInput): void {
 }
 
 async function recordDeliveryOutcome(
-  root: string,
+  root: CaptureStorageRoot,
   input: OutcomeInput,
 ): Promise<OutcomeWriteResult> {
   try {
@@ -301,7 +315,7 @@ async function recordDeliveryOutcome(
 }
 
 async function readDeliveryOutcome(
-  root: string,
+  root: CaptureStorageRoot,
   scope: CaptureScope,
   destination: string,
 ): Promise<OutcomeReadResult> {
@@ -326,7 +340,7 @@ async function readDeliveryOutcome(
 }
 
 async function removeTurnWithMarker(
-  root: string,
+  root: CaptureStorageRoot,
   records: readonly StoredCapture[],
   settled: CaptureSettledTurn | undefined,
 ): Promise<void> {
@@ -335,7 +349,7 @@ async function removeTurnWithMarker(
 }
 
 async function removeCapture(
-  root: string,
+  root: CaptureStorageRoot,
   scope: CaptureScope,
   options: CaptureRemoveOptions = {},
   leaveMarker = true,
@@ -344,50 +358,47 @@ async function removeCapture(
   await withRecordLock(root, scope, async () => {
     const path = eventPath(root, scope);
     const record = options.forgetTurn || !leaveMarker ? undefined : await readRecord(root, path);
-    if (record !== undefined) await writeOutcomeMarker(root, scope, record);
+    if (record !== undefined && captureDirectory(root) === CAPTURE_TURNS_DIRECTORY)
+      await writeOutcomeMarker(root, scope, record);
     await removeFileIfPresent(path);
   });
   if (options.forgetTurn) await forgetTurnMarkers(root, scope);
-  const lockEvents = join(root, ...recordLockSegments(scope));
-  await removeEmptyAncestors(
-    join(lockEvents, `${identifierHash(scope.eventId)}.lock${FILE_LOCK_DIRECTORY_SUFFIX}`),
-    root,
-  );
-  await removeEmptyAncestors(dirname(eventPath(root, scope)), root);
+  await removeEmptyLockFolders(recordLockPath(root, scope), captureRoot(root));
+  await removeEmptyAncestors(dirname(eventPath(root, scope)), captureRoot(root));
 }
 
 async function saveDelivery(
-  root: string,
+  root: CaptureStorageRoot,
   path: string,
   record: StoredCapture,
   delivery: CaptureDelivery,
   lock: FileLockHandle,
 ): Promise<void> {
-  await replacePrivateFile(root, path, canonicalJson({ ...record, delivery }), () =>
+  await replacePrivateFile(captureRoot(root), path, canonicalJson({ ...record, delivery }), () =>
     lock.assertHeld(),
   );
 }
 
 async function ensureEventDirectory(
-  root: string,
+  root: CaptureStorageRoot,
   integration: string,
   sessionId: string,
   turnId: string,
 ): Promise<void> {
   await ensurePrivateDirectory(
-    root,
-    eventSegments(CAPTURE_DIRECTORY, { integration, sessionId, turnId }),
+    captureRoot(root),
+    eventSegments(root, { integration, sessionId, turnId }),
   );
 }
 
 async function withRecordLock<T>(
-  root: string,
+  root: CaptureStorageRoot,
   scope: CaptureScope,
   operation: FileLockCallback<T>,
 ): Promise<T> {
   validateScope(scope);
-  const directory = await ensurePrivateDirectory(root, recordLockSegments(scope));
-  return withFileLock(join(directory, `${identifierHash(scope.eventId)}.lock`), operation);
+  await ensurePrivateDirectory(captureRoot(root), eventSegments(root, scope));
+  return withFileLock(recordLockPath(root, scope), operation);
 }
 
 function compareCaptures(left: EnumeratedCapture, right: EnumeratedCapture): number {
@@ -398,38 +409,62 @@ function compareCaptures(left: EnumeratedCapture, right: EnumeratedCapture): num
 }
 
 async function enumerateTurns(
-  root: string,
+  root: CaptureStorageRoot,
   integration: string,
   sessionHash: string,
   wanted: (turnHash: string) => boolean,
 ): Promise<EnumeratedCapture[]> {
   const turns = turnsDirectory(root, integration, sessionHash);
   const captures: EnumeratedCapture[] = [];
-  for (const turn of (await listPrivateDirectory(root, turns)) ?? []) {
+  if (captureDirectory(root) !== CAPTURE_TURNS_DIRECTORY)
+    return enumerateEvents(root, turns, integration, sessionHash, wanted);
+  for (const turn of (await listPrivateDirectory(captureRoot(root), turns)) ?? []) {
     if (!turn.isDirectory() || !CAPTURE_HASH.test(turn.name) || !wanted(turn.name)) continue;
     const eventDirectory = eventsDirectory(turns, turn.name);
-    for (const event of (await listPrivateDirectory(root, eventDirectory)) ?? []) {
-      if (!event.isFile() || !CAPTURE_EVENT_FILE.test(event.name)) continue;
-      const path = join(eventDirectory, event.name);
-      const record = await readEvent(root, path);
-      if (
-        record === undefined ||
-        record.integration !== integration ||
-        identifierHash(record.sessionId) !== sessionHash ||
-        identifierHash(record.turnId) !== turn.name ||
-        `${identifierHash(record.eventId)}.json` !== event.name
-      ) {
-        if (record !== undefined) await discardEvent(path, "it does not match its folder");
-        continue;
-      }
-      const info = await lstat(path);
-      captures.push({ record, capturedAtMs: record.capturedAtMs, modifiedAtMs: info.mtimeMs });
-    }
+    captures.push(
+      ...(await enumerateEvents(
+        root,
+        eventDirectory,
+        integration,
+        sessionHash,
+        (turnHash) => turnHash === turn.name,
+      )),
+    );
   }
   return captures.toSorted(compareCaptures);
 }
 
-async function readEvent(root: string, path: string): Promise<StoredCapture | undefined> {
+async function enumerateEvents(
+  root: CaptureStorageRoot,
+  directory: string,
+  integration: string,
+  sessionHash: string,
+  wanted: (turnHash: string) => boolean,
+): Promise<EnumeratedCapture[]> {
+  const captures: EnumeratedCapture[] = [];
+  for (const event of (await listPrivateDirectory(captureRoot(root), directory)) ?? []) {
+    if (!event.isFile() || !CAPTURE_EVENT_FILE.test(event.name)) continue;
+    const path = join(directory, event.name);
+    const record = await readEvent(root, path);
+    if (
+      record === undefined ||
+      identifierHash(record.sessionId) !== sessionHash ||
+      eventPath(root, record) !== path
+    ) {
+      if (record !== undefined) await discardEvent(path, "it does not match its folder");
+      continue;
+    }
+    if (record.integration !== integration || !wanted(identifierHash(record.turnId))) continue;
+    const info = await lstat(path);
+    captures.push({ record, capturedAtMs: record.capturedAtMs, modifiedAtMs: info.mtimeMs });
+  }
+  return captures.toSorted(compareCaptures);
+}
+
+async function readEvent(
+  root: CaptureStorageRoot,
+  path: string,
+): Promise<StoredCapture | undefined> {
   try {
     return await readRecord(root, path);
   } catch (error) {
@@ -442,10 +477,6 @@ async function readEvent(root: string, path: string): Promise<StoredCapture | un
 async function discardEvent(path: string, reason: string): Promise<void> {
   await removeFileIfPresent(path);
   console.warn(CAPTURE_UNREADABLE_WARNING, `${basename(path)} (${reason})`);
-}
-
-function recordLockSegments(scope: CaptureScope): string[] {
-  return eventSegments(CAPTURE_RECORD_LOCK_DIRECTORY, scope);
 }
 
 function sameCapture(left: StoredCapture, right: StoredCapture): boolean {
@@ -474,8 +505,11 @@ function sameOutcome(outcome: CaptureOutcome, input: OutcomeInput): boolean {
   return outcome.outcome === input.outcome && outcome.reason === input.reason;
 }
 
-async function readRecord(root: string, path: string): Promise<StoredCapture | undefined> {
-  const contents = await readPrivateFile(root, path);
+async function readRecord(
+  root: CaptureStorageRoot,
+  path: string,
+): Promise<StoredCapture | undefined> {
+  const contents = await readPrivateFile(captureRoot(root), path);
   if (contents === undefined) return undefined;
   let value: Record<string, unknown>;
   try {

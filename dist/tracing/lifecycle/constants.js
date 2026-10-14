@@ -1,7 +1,4 @@
-import { CAPTURE_DIRECTORY, CAPTURE_RECORD_LOCK_DIRECTORY, } from "../../storage/capture/constants.js";
-import { BACKGROUND_WORKER_DIRECTORY } from "../background-worker/constants.js";
-import { DELIVERY_DIRECTORY } from "../delivery/constants.js";
-import { RECONSTRUCTION_DIRECTORY } from "../reconstruction/constants.js";
+import { CAPTURE_SESSIONS_DIRECTORY } from "../../storage/capture/constants.js";
 export const ROOT_RUN_EXECUTION_ORDER = 1;
 export const DOTTED_ORDER_TIME_PREFIX_LENGTH = 18;
 export const DOTTED_ORDER_SEGMENT_PATTERN = /^(\d{8}T\d{12}Z)([^.]+)$/u;
@@ -10,19 +7,8 @@ export const LIFECYCLE_POST_EVENT_KIND = "run-post";
 export const LIFECYCLE_PATCH_EVENT_KIND = "run-patch";
 export const LIFECYCLE_SETTLEMENT_EVENT_KIND = "run-settlement-patch";
 export const LIFECYCLE_ATTRIBUTION_READY_FIELD = "attributionReady";
-export const LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY = "lifecycle-settlement-v1";
-export const LIFECYCLE_ENGINE_FOLDERS = [
-    CAPTURE_DIRECTORY,
-    CAPTURE_RECORD_LOCK_DIRECTORY,
-    DELIVERY_DIRECTORY,
-    BACKGROUND_WORKER_DIRECTORY,
-    RECONSTRUCTION_DIRECTORY,
-    LIFECYCLE_SETTLEMENT_LOCK_DIRECTORY,
-];
-export const LIFECYCLE_SETTLEMENT_LOCK_FILE = "drain";
-export const LIFECYCLE_SETTLEMENT_LOCK_INTEGRATIONS_DIRECTORY = "integrations";
-export const LIFECYCLE_SETTLEMENT_LOCK_SESSIONS_DIRECTORY = "sessions";
-export const LIFECYCLE_SETTLEMENT_LOCK_ACCOUNTS_DIRECTORY = "accounts";
+export const LIFECYCLE_ENGINE_FOLDERS = [CAPTURE_SESSIONS_DIRECTORY];
+export const LIFECYCLE_SETTLEMENT_LOCK_PREFIX = "settlement-";
 export const LIFECYCLE_TURN_CLOSURE_STATES = ["open", "provisional", "authoritative"];
 export const LIFECYCLE_SWEEP_WARNING = "Could not clean up old trace files:";
 export const LIFECYCLE_CHILD_TURN_GRACE_MS = 60 * 60 * 1000;
