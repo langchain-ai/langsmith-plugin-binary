@@ -30,7 +30,7 @@ export async function drainLocked(captureStore, integration, sessionId, policy, 
         drainCache,
         policy,
         request,
-        attempted: new Set(),
+        attempted: request.attempted ?? new Set(),
         sendable: active,
     };
     let progressed;

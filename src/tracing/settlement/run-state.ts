@@ -3,17 +3,16 @@ import type { ProjectedCapture } from "./models.js";
 
 export function hasCausalRunError(events: readonly ProjectedCapture[]): boolean {
   let hasError = false;
-  for (const event of events) hasError = causalErrorAfter(event, hasError);
+  for (const { payload } of events) {
+    if (payload.operation === "post") {
+      hasError = payload.run.error !== undefined || payload.privacyContext?.status === "error";
+    } else if (payload.patch.fields.includes("error")) {
+      hasError = payload.patch.values.error !== undefined;
+    } else if (payload.privacyContext.status === "error") {
+      hasError = true;
+    }
+  }
   return hasError;
-}
-
-function causalErrorAfter(event: ProjectedCapture, previous: boolean): boolean {
-  const { payload } = event;
-  if (payload.operation === "post")
-    return payload.run.error !== undefined || payload.privacyContext?.status === "error";
-  if (payload.patch.fields.includes("error")) return payload.patch.values.error !== undefined;
-  if (payload.privacyContext.status === "error") return true;
-  return previous;
 }
 
 export function capturedEndTime(event: ProjectedCapture): number | string | undefined {

@@ -1,5 +1,8 @@
+import { compareCaptureOrder } from "../../storage/capture/order.js";
+import { compareText } from "../../utils/compare.js";
 import type { CaptureScope, StoredCapture } from "../../storage/capture/models.js";
 import type { TurnSettlementReport } from "./models.js";
+import { scopeKey, scopeOf } from "../../storage/capture/scope.js";
 
 export function uniqueScopes(scopes: readonly CaptureScope[]): CaptureScope[] {
   const unique = new Map<string, CaptureScope>();
@@ -7,56 +10,35 @@ export function uniqueScopes(scopes: readonly CaptureScope[]): CaptureScope[] {
   return [...unique.values()].toSorted(compareScopes);
 }
 
-export function captureScope(record: StoredCapture): CaptureScope {
-  return {
-    integration: record.integration,
-    sessionId: record.sessionId,
-    turnId: record.turnId,
-    eventId: record.eventId,
-  };
-}
-
-export function captureScopeKey(scope: CaptureScope): string {
-  return JSON.stringify([scope.integration, scope.sessionId, scope.turnId, scope.eventId]);
-}
-
-function captureKey(record: StoredCapture): string {
-  return captureScopeKey(captureScope(record));
-}
-
 export function compareScopes(left: CaptureScope, right: CaptureScope): number {
-  return JSON.stringify(left).localeCompare(JSON.stringify(right));
-}
-
-function compareCaptures(left: StoredCapture, right: StoredCapture): number {
-  if (left.capturedAtMs !== right.capturedAtMs) return left.capturedAtMs - right.capturedAtMs;
-  return left.eventId.localeCompare(right.eventId);
+  return compareText(JSON.stringify(left), JSON.stringify(right));
 }
 
 export function orderSourceCaptures(records: readonly StoredCapture[]): StoredCapture[] {
-  const byScope = new Map(records.map((record) => [captureKey(record), record]));
-  const dependents = new Map(records.map((record) => [captureKey(record), [] as StoredCapture[]]));
-  const dependencyCounts = new Map(records.map((record) => [captureKey(record), 0]));
+  const byScope = new Map(records.map((record) => [scopeKey(scopeOf(record)), record]));
+  const dependents = new Map(
+    records.map((record) => [scopeKey(scopeOf(record)), [] as StoredCapture[]]),
+  );
+  const dependencyCounts = new Map(records.map((record) => [scopeKey(scopeOf(record)), 0]));
   for (const record of records) {
-    const recordKey = captureKey(record);
+    const recordKey = scopeKey(scopeOf(record));
     for (const dependency of record.dependencies ?? []) {
-      const prerequisiteKey = captureScopeKey(dependency);
-      const prerequisite = byScope.get(prerequisiteKey);
+      const prerequisite = byScope.get(scopeKey(dependency));
       if (prerequisite === undefined) continue;
-      dependents.get(prerequisiteKey)!.push(record);
+      dependents.get(scopeKey(scopeOf(prerequisite)))!.push(record);
       dependencyCounts.set(recordKey, dependencyCounts.get(recordKey)! + 1);
     }
   }
   const ready: StoredCapture[] = [];
   for (const record of records) {
-    if (dependencyCounts.get(captureKey(record)) === 0) pushOrderedCapture(ready, record);
+    if (dependencyCounts.get(scopeKey(scopeOf(record))) === 0) pushOrderedCapture(ready, record);
   }
   const ordered: StoredCapture[] = [];
   while (ready.length > 0) {
     const record = popOrderedCapture(ready)!;
     ordered.push(record);
-    for (const dependent of dependents.get(captureKey(record)) ?? []) {
-      const key = captureKey(dependent);
+    for (const dependent of dependents.get(scopeKey(scopeOf(record))) ?? []) {
+      const key = scopeKey(scopeOf(dependent));
       const count = dependencyCounts.get(key)! - 1;
       dependencyCounts.set(key, count);
       if (count === 0) pushOrderedCapture(ready, dependent);
@@ -68,7 +50,7 @@ export function orderSourceCaptures(records: readonly StoredCapture[]): StoredCa
 }
 
 function compareSourceCaptures(left: StoredCapture, right: StoredCapture): number {
-  return compareCaptures(left, right) || compareScopes(captureScope(left), captureScope(right));
+  return compareCaptureOrder(left, right) || compareScopes(scopeOf(left), scopeOf(right));
 }
 
 function pushOrderedCapture(heap: StoredCapture[], record: StoredCapture): void {

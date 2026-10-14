@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { expect } from "vitest";
 import type { CaptureScope, StoredCapture } from "../../storage/capture/models.js";
 import type {
   DeliveryCaptureInput,
@@ -80,7 +81,7 @@ export function exitCode(error: unknown): number | undefined {
     : undefined;
 }
 
-export function pathsUnder(root: string): string[] {
+function pathsUnder(root: string): string[] {
   return readdirSync(root, { recursive: true, withFileTypes: true }).map((entry) =>
     join(entry.parentPath, entry.name),
   );
@@ -90,4 +91,25 @@ export function filesUnder(root: string): string[] {
   return readdirSync(root, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => join(entry.parentPath, entry.name));
+}
+
+const MARKER_FILE = /\.outcome$/u;
+
+export function recordFilesUnder(root: string): string[] {
+  return filesUnder(root).filter((path) => !MARKER_FILE.test(path));
+}
+
+function withoutMarkers(root: string, paths: readonly string[]): string[] {
+  const markers = filesUnder(root).filter((path) => MARKER_FILE.test(path));
+  return paths.filter(
+    (path) => !markers.some((marker) => marker === path || marker.startsWith(`${path}${sep}`)),
+  );
+}
+
+export function expectNoFilesLeft(root: string): void {
+  expect(withoutMarkers(root, filesUnder(root))).toEqual([]);
+}
+
+export function expectNoPathsLeft(root: string): void {
+  expect(withoutMarkers(root, pathsUnder(root))).toEqual([]);
 }

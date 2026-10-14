@@ -1,2 +1,2 @@
-export { createRunIdentity } from "./identity.js";
+export { createLifecycleBridge } from "./bridge.js";
 //# sourceMappingURL=index.js.map

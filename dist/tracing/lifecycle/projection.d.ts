@@ -1,4 +1,4 @@
-import { type CodingAgentIntegration } from "../../metadata/index.js";
+import type { CodingAgentIntegration } from "../../metadata/index.js";
 import type { JsonValue } from "../../storage/capture/models.js";
 import type { NormalizedRunContext } from "../upload/models.js";
 import type { SubmissionProjectionResult } from "./models.js";

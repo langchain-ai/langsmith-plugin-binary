@@ -2,18 +2,27 @@ import type { CodingAgentIntegration, CodingAgentMetadataOptions } from "../../m
 import type {
   CaptureDependency,
   CaptureScope,
+  CaptureSettledTurn,
+  CaptureStore,
   CaptureWriteResult,
+  EnumeratedCapture,
   OutcomeReadResult,
   StoredCapture,
 } from "../../storage/capture/models.js";
 import type {
+  DeliveryCoordinator,
   DeliveryDestination,
   DeliveryDrainResult,
   DeliveryPolicy,
 } from "../delivery/models.js";
-import type { PreparedRunPatchSubmission, PreparedRunPostSubmission } from "../upload/models.js";
+import type {
+  LangSmithUploadWriter,
+  PreparedRunPatchSubmission,
+  PreparedRunPostSubmission,
+  RedactedRunField,
+} from "../upload/models.js";
 import type { LangSmithUploadWriterOptions, PreparedRunSubmission } from "../upload/index.js";
-import type { TurnSettlementReport } from "../settlement/models.js";
+import type { TurnSettlementReport, TurnSettlementWork } from "../settlement/models.js";
 import type { CodingAgentPrivacyStatus } from "../../privacy/index.js";
 
 export type ProjectedPayload =
@@ -26,7 +35,18 @@ export interface ProjectedSubmission {
   privacyStatus: CodingAgentPrivacyStatus;
 }
 
-export type LifecycleTurnClosureState = "open" | "provisional" | "authoritative";
+export interface RemoveSettledTurnsOptions {
+  integration: CodingAgentIntegration;
+  sessionId: string;
+  destinationFingerprint: string;
+  store: CaptureStore;
+  destinations: readonly DeliveryDestination[];
+  settledTurnIds: readonly string[];
+  settledTurns?: ReadonlyMap<string, CaptureSettledTurn>;
+  knownScopes: readonly CaptureScope[];
+}
+
+type LifecycleTurnClosureState = "open" | "provisional" | "authoritative";
 
 export interface LifecycleTurnEvidence {
   rootRunId?: string | undefined;
@@ -101,7 +121,7 @@ export interface LifecycleDrainInput {
   now?: number;
 }
 
-export interface LifecycleSettlementProgress {
+interface LifecycleSettlementProgress {
   captured: number;
   turns: TurnSettlementReport[];
 }
@@ -116,4 +136,49 @@ export interface LifecycleBridge {
   readonly accountFingerprint: string;
   capture(input: LifecycleCaptureInput): Promise<LifecycleCaptureResult>;
   drain(input?: LifecycleDrainInput): Promise<LifecycleDrainResult>;
+}
+
+export interface LifecycleBridgeContext {
+  integration: CodingAgentIntegration;
+  sessionId: string;
+  storageRoot: string;
+  captureStore: CaptureStore;
+  coordinator: DeliveryCoordinator;
+  writer: LangSmithUploadWriter;
+  policy: DeliveryPolicy;
+  wake: LifecycleBridgeOptions["wake"];
+}
+
+export interface LifecycleCaptureRequest {
+  record: Record<string, unknown>;
+  turnId: string;
+  eventId: string;
+  sourceAgeStartedAtMs: number | undefined;
+}
+
+export interface SuppliedRunIdentity {
+  startTime: boolean;
+  traceId: boolean;
+  dottedOrder: boolean;
+}
+
+export type LifecycleDrainedResult = Extract<DeliveryDrainResult, { status: "drained" }>;
+
+export interface LifecycleSettlementPass {
+  captures: EnumeratedCapture[];
+  work: TurnSettlementWork;
+}
+
+export interface ProjectionCommon {
+  integration: CodingAgentIntegration;
+  privacyMode: "full" | "metadata";
+  redaction: { redactedFields?: readonly RedactedRunField[] };
+}
+
+export interface CapturedRunsSend {
+  sourceSnapshot: StoredCapture[];
+  sourceByScope: ReadonlyMap<string, StoredCapture>;
+  records: readonly StoredCapture[];
+  destination: DeliveryDestination;
+  fingerprint: string;
 }

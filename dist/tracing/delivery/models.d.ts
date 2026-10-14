@@ -27,6 +27,7 @@ export interface DeliveryWriter {
 }
 export interface DrainOptions {
     writer: DeliveryWriter;
+    attempted?: Set<string>;
 }
 export interface DeliveryCoordinator {
     capture(input: DeliveryCaptureInput): Promise<CaptureWriteResult>;

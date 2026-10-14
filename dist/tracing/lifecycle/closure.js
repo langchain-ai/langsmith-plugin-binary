@@ -1,6 +1,7 @@
 import { buildCodingAgentMetadata, prepareCodingAgentMetadataProvenance, } from "../../metadata/index.js";
 import { ownDataField, requireBoolean, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireStringArray, } from "../../utils/validation/objects.js";
 import { LIFECYCLE_ATTRIBUTION_READY_FIELD, LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_TURN_CLOSURE_STATES, } from "./constants.js";
+import { scopeKey, scopeOf } from "../../storage/capture/scope.js";
 export function deriveAttributionReadiness(value, integration) {
     const source = requirePlainRecord(value, "Prepared run submission");
     const metadata = prepareCodingAgentMetadataProvenance(requireOwnDataField(source, "metadata"), integration, "full");
@@ -23,7 +24,7 @@ export function storedAttributionReadiness(record, integration) {
     return attributionMetadataReady(buildCodingAgentMetadata(metadata.value));
 }
 export function indexCaptureSources(sources) {
-    return new Map(sources.map((source) => [captureScopeKey(captureScope(source)), source]));
+    return new Map(sources.map((source) => [scopeKey(scopeOf(source)), source]));
 }
 function attributionMetadataReady(projected) {
     return (typeof projected["repository_name"] === "string" &&
@@ -64,7 +65,7 @@ function hasPriorEndTime(record, sourceByScope) {
     const visited = new Set();
     while (pending.length > 0) {
         const scope = pending.pop();
-        const key = captureScopeKey(scope);
+        const key = scopeKey(scope);
         if (visited.has(key))
             continue;
         visited.add(key);
@@ -110,7 +111,7 @@ async function hasMissingChildReceipts(record, evidence, sourceSnapshot, destina
         if (childCaptures.length === 0)
             return true;
         for (const child of childCaptures) {
-            const scope = captureScope(child);
+            const scope = scopeOf(child);
             for (const destination of destinations) {
                 const outcome = await readOutcome(scope, destination.id);
                 if (outcome.status === "failed")
@@ -153,16 +154,5 @@ function removeOutgoingEndTime(submission) {
         patch: { fields, values },
         ...(privacyContext === undefined ? {} : { privacyContext }),
     };
-}
-function captureScope(record) {
-    return {
-        integration: record.integration,
-        sessionId: record.sessionId,
-        turnId: record.turnId,
-        eventId: record.eventId,
-    };
-}
-function captureScopeKey(scope) {
-    return JSON.stringify([scope.integration, scope.sessionId, scope.turnId, scope.eventId]);
 }
 //# sourceMappingURL=closure.js.map

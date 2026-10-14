@@ -4,7 +4,7 @@ import { lstat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { withFileLock } from "../index.js";
 import { FILE_LOCK_DIRECTORY_SUFFIX } from "../constants.js";
-import { CAPTURE_DIRECTORY, CAPTURE_DEPENDENCIES_INVALID_MESSAGE, CAPTURE_DEPENDENCY_INTEGRATION_MESSAGE, CAPTURE_DEPENDENCY_INVALID_MESSAGE, CAPTURE_DEPENDENCY_SELF_MESSAGE, CAPTURE_DEPENDENCY_UNIQUE_MESSAGE, CAPTURE_EVENT_FILE, CAPTURE_FIELD_UNSUPPORTED_MESSAGE, CAPTURE_HASH, CAPTURE_NAMESPACE_MISMATCH_MESSAGE, CAPTURE_OUTCOME_INVALID_MESSAGE, CAPTURE_OUTCOME_UNSUPPORTED_MESSAGE, CAPTURE_RECORD_LOCK_DIRECTORY, CAPTURE_RECORD_UNSUPPORTED_MESSAGE, CAPTURE_RECORD_VERSION, CAPTURE_RETRY_LOST_MESSAGE, CAPTURE_SKIPPED_WARNING, CAPTURE_UNREADABLE_WARNING, CAPTURE_VERSION_UNSUPPORTED_MESSAGE, } from "./constants.js";
+import { CAPTURE_DIRECTORY, CAPTURE_DEPENDENCIES_INVALID_MESSAGE, CAPTURE_DEPENDENCY_INTEGRATION_MESSAGE, CAPTURE_DEPENDENCY_INVALID_MESSAGE, CAPTURE_DEPENDENCY_SELF_MESSAGE, CAPTURE_DEPENDENCY_UNIQUE_MESSAGE, CAPTURE_EVENT_FILE, CAPTURE_FIELD_UNSUPPORTED_MESSAGE, CAPTURE_HASH, CAPTURE_NAMESPACE_MISMATCH_MESSAGE, CAPTURE_OUTCOME_INVALID_MESSAGE, CAPTURE_OUTCOME_UNSUPPORTED_MESSAGE, CAPTURE_RECORD_LOCK_DIRECTORY, CAPTURE_RECORD_UNSUPPORTED_MESSAGE, CAPTURE_RECORD_VERSION, CAPTURE_RETRY_LOST_MESSAGE, CAPTURE_ROUTES_INVALID_MESSAGE, CAPTURE_ROUTE_INVALID_MESSAGE, CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE, CAPTURE_SKIPPED_WARNING, CAPTURE_UNREADABLE_WARNING, CAPTURE_VERSION_UNSUPPORTED_MESSAGE, } from "./constants.js";
 import { eventPath, eventSegments, eventsDirectory, identifierHash, sessionsDirectory, turnsDirectory, validateIdentifier, validateIntegration, } from "./paths.js";
 import { ensurePrivateDirectory, publishExclusive, readPrivateFile, replacePrivateFile, retryRemovedDirectory, } from "./utils/atomic-file.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
@@ -68,6 +68,9 @@ function buildCaptureRecord(input) {
                 sourceAgeStartedAtMs: requireSafeEpochMilliseconds(input.sourceAgeStartedAtMs, "Source age"),
             }),
         ...(dependencies === undefined ? {} : { dependencies }),
+        ...(input.destinationRoutes === undefined
+            ? {}
+            : { destinationRoutes: normalizeDestinationRoutes(input.destinationRoutes) }),
     };
 }
 async function publishCapture(root, input, record, contents) {
@@ -358,6 +361,8 @@ function validateRecord(value) {
     };
     validateScope(scope);
     const dependencies = normalizeDependencies(value.dependencies, scope);
+    if ("destinationRoutes" in value)
+        normalizeDestinationRoutes(value.destinationRoutes);
     const normalizedPayload = canonicalValue(value.normalizedPayload, new Set());
     const delivery = "delivery" in value ? readDelivery(value.delivery) : undefined;
     return {
@@ -437,6 +442,32 @@ function normalizeDependencies(value, dependent) {
         seen.add(key);
         return dependency;
     });
+}
+function normalizeDestinationRoutes(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value))
+        throw new TypeError(CAPTURE_ROUTES_INVALID_MESSAGE);
+    const routes = {};
+    for (const [destination, route] of Object.entries(value)) {
+        validateIdentifier(destination, "destination");
+        if (route === null || typeof route !== "object" || Array.isArray(route))
+            throw new TypeError(CAPTURE_ROUTE_INVALID_MESSAGE);
+        const { projectName, sourceProjectName, ...extra } = route;
+        if (Object.keys(extra).length > 0)
+            throw new TypeError(CAPTURE_ROUTE_INVALID_MESSAGE);
+        if (typeof projectName !== "string")
+            throw new TypeError(CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE);
+        validateIdentifier(projectName, "route project");
+        if (sourceProjectName !== undefined) {
+            if (typeof sourceProjectName !== "string")
+                throw new TypeError(CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE);
+            validateIdentifier(sourceProjectName, "route project");
+        }
+        routes[destination] = {
+            projectName,
+            ...(sourceProjectName === undefined ? {} : { sourceProjectName }),
+        };
+    }
+    return routes;
 }
 function sameScope(record, scope) {
     return (record.integration === scope.integration &&

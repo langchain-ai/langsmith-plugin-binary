@@ -2,6 +2,7 @@ import { buildCodingAgentMetadata } from "../../metadata/index.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
 import type { Client, RunTreeConfig } from "langsmith";
 import type { RunCreate, RunUpdate } from "langsmith/schemas";
+import type { CaptureDestinationRoute } from "../../storage/capture/models.js";
 import type {
   LangSmithUploadWriter,
   LangSmithUploadWriterOptions,
@@ -11,6 +12,7 @@ import type {
   PreparedRunPostSubmission,
   PreparedRunSubmission,
   ResolvedUploadDestination,
+  UploadBatchItem,
   PreparedUploadItem,
   UploadClientCache,
   UploadIngest,
@@ -21,6 +23,7 @@ import {
   UPLOAD_BATCH_LIMITS,
   UPLOAD_PATCH_FIELDS,
   UPLOAD_RECEIPT_MISSING_MESSAGE,
+  UPLOAD_UNKNOWN_DESTINATION_MESSAGE,
 } from "./constants.js";
 import { createUploadClientCache } from "./client-cache.js";
 import { UploadError, isAlreadyReceived } from "./errors.js";
@@ -38,18 +41,35 @@ export function createLangSmithUploadWriter(
   const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
   const byId = new Map(resolved.destinations.map((destination) => [destination.id, destination]));
   const clients = createUploadClientCache();
+  const routes = Object.freeze(
+    Object.fromEntries(
+      resolved.destinations.map(({ id, projectName, sourceProjectName }) => [
+        id,
+        Object.freeze({
+          projectName,
+          ...(sourceProjectName === undefined ? {} : { sourceProjectName }),
+        }),
+      ]),
+    ),
+  );
 
   async function sendBatch(
-    submissions: readonly PreparedRunSubmission[],
+    items: readonly UploadBatchItem[],
     destinationId: string,
   ): Promise<UploadReceipt[]> {
-    const destination = byId.get(destinationId);
-    if (!destination) throw new TypeError("Unknown upload destination");
-    const prepared = submissions.map((submission) => prepareItem(clients, destination, submission));
+    const configured = byId.get(destinationId);
+    if (!configured) throw new TypeError(UPLOAD_UNKNOWN_DESTINATION_MESSAGE);
+    const prepared = items.map(({ submission, route }) =>
+      prepareItem(
+        clients,
+        route === undefined ? configured : routedDestination(configured, route),
+        submission,
+      ),
+    );
     const clientOptions = {
-      apiKey: destination.apiKey,
-      apiUrl: destination.apiUrl,
-      ...(destination.workspaceId === undefined ? {} : { workspaceId: destination.workspaceId }),
+      apiKey: configured.apiKey,
+      apiUrl: configured.apiUrl,
+      ...(configured.workspaceId === undefined ? {} : { workspaceId: configured.workspaceId }),
     };
     for (const [client, group] of segmentByClient(prepared)) {
       try {
@@ -70,14 +90,32 @@ export function createLangSmithUploadWriter(
   return Object.freeze({
     accountFingerprint: resolved.accountFingerprint,
     destinations: Object.freeze(destinations),
+    routes,
     batchLimits: UPLOAD_BATCH_LIMITS,
     sendBatch,
-    async send(submission: PreparedRunSubmission, destinationId: string): Promise<UploadReceipt> {
-      const [receipt] = await sendBatch([submission], destinationId);
+    async send(
+      submission: PreparedRunSubmission,
+      destinationId: string,
+      route?: CaptureDestinationRoute,
+    ): Promise<UploadReceipt> {
+      const [receipt] = await sendBatch(
+        [route === undefined ? { submission } : { submission, route }],
+        destinationId,
+      );
       if (receipt === undefined) throw new Error(UPLOAD_RECEIPT_MISSING_MESSAGE);
       return receipt;
     },
   });
+}
+
+function routedDestination(
+  destination: ResolvedUploadDestination,
+  route: CaptureDestinationRoute,
+): ResolvedUploadDestination {
+  const routed: ResolvedUploadDestination = { ...destination, projectName: route.projectName };
+  if (route.sourceProjectName === undefined) delete routed.sourceProjectName;
+  else routed.sourceProjectName = route.sourceProjectName;
+  return routed;
 }
 
 function prepareItem(

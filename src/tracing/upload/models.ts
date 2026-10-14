@@ -6,6 +6,10 @@ import type {
   CodingAgentMetadataOptions,
 } from "../../metadata/index.js";
 import type { CodingAgentPrivacyContext } from "../../privacy/index.js";
+import type {
+  CaptureDestinationRoute,
+  CaptureDestinationRoutes,
+} from "../../storage/capture/models.js";
 
 export interface UploadRedactRule {
   pattern: string;
@@ -150,6 +154,11 @@ interface UploadDestination {
 
 export type UploadIngest = NonNullable<Parameters<Client["batchIngestRuns"]>[0]>;
 
+export interface UploadBatchItem {
+  submission: PreparedRunSubmission;
+  route?: CaptureDestinationRoute;
+}
+
 interface UploadBatchLimits {
   readonly maxRuns: number;
   readonly maxBytes: number;
@@ -172,12 +181,14 @@ export interface UploadReceipt {
 export interface LangSmithUploadWriter {
   readonly accountFingerprint: string;
   readonly destinations: readonly UploadDestination[];
+  readonly routes: Readonly<CaptureDestinationRoutes>;
   readonly batchLimits: UploadBatchLimits;
-  sendBatch(
-    submissions: readonly PreparedRunSubmission[],
+  sendBatch(items: readonly UploadBatchItem[], destinationId: string): Promise<UploadReceipt[]>;
+  send(
+    submission: PreparedRunSubmission,
     destinationId: string,
-  ): Promise<UploadReceipt[]>;
-  send(submission: PreparedRunSubmission, destinationId: string): Promise<UploadReceipt>;
+    route?: CaptureDestinationRoute,
+  ): Promise<UploadReceipt>;
 }
 
 export interface UploadClientCache {

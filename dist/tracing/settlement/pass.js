@@ -62,37 +62,26 @@ export async function refreshSettlementProgress(work, destinations, readOutcome)
             continue;
         }
         const readiness = await captureReadiness(patches.map(({ scope }) => scope), destinations, readOutcome);
-        turns.push(refreshedReport(entry, readiness));
+        const { reason: previousReason, destinations: previousDestinations, ...unchanged } = entry;
+        const reason = readiness.status === "delivered"
+            ? previousReason === "settlement-pending"
+                ? undefined
+                : previousReason
+            : readiness.status === "dropped"
+                ? "settlement-dropped"
+                : "settlement-pending";
+        const reportDestinations = readiness.destinations.length > 0
+            ? readiness.destinations
+            : previousReason === "settlement-pending"
+                ? undefined
+                : previousDestinations;
+        turns.push({
+            ...unchanged,
+            status: readiness.status === "pending" ? "pending" : "settled",
+            ...(reason === undefined ? {} : { reason }),
+            ...(reportDestinations === undefined ? {} : { destinations: reportDestinations }),
+        });
     }
     return { captured: work.progress.captured, turns };
-}
-function refreshedReport(entry, readiness) {
-    const { reason: previousReason, destinations: previousDestinations, ...unchanged } = entry;
-    let status = "settled";
-    let reason = previousReason;
-    if (readiness.status === "dropped") {
-        status = "blocked";
-        reason = "settlement-dropped";
-    }
-    else if (readiness.status === "pending") {
-        status = "pending";
-        reason = "settlement-pending";
-    }
-    else if (previousReason === "settlement-pending") {
-        reason = undefined;
-    }
-    let destinations = previousDestinations;
-    if (readiness.destinations.length > 0) {
-        destinations = readiness.destinations;
-    }
-    else if (previousReason === "settlement-pending") {
-        destinations = undefined;
-    }
-    return {
-        ...unchanged,
-        status,
-        ...(reason === undefined ? {} : { reason }),
-        ...(destinations === undefined ? {} : { destinations }),
-    };
 }
 //# sourceMappingURL=pass.js.map
