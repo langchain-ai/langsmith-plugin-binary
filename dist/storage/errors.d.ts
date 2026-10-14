@@ -1,4 +1,5 @@
 export declare class FileLockTimeoutError extends Error {
-    constructor(filePath: string);
+    readonly blockedPath: string;
+    constructor(blockedPath: string);
 }
 //# sourceMappingURL=errors.d.ts.map

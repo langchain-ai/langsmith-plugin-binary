@@ -5,12 +5,19 @@ import { performance } from "node:perf_hooks";
 import { beforeEach, expect, it, vi } from "vitest";
 import { tryAcquireFileLock, withFileLock } from "./file-lock.js";
 
-const fault = vi.hoisted(() => ({ attempts: 0, failures: 0, code: "EPERM" }));
+const fault = vi.hoisted(() => ({ attempts: 0, failures: 0, code: "EPERM", readFailures: 0 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      if (fault.readFailures > 0 && String(args[0]).endsWith(".json")) {
+        fault.readFailures -= 1;
+        throw Object.assign(new Error("injected sharing violation"), { code: fault.code });
+      }
+      return actual.readFile(...args);
+    },
     rename: async (...args: Parameters<typeof actual.rename>) => {
       fault.attempts += 1;
       if (fault.failures > 0) {
@@ -28,6 +35,7 @@ beforeEach(() => {
   fault.attempts = 0;
   fault.failures = 1;
   fault.code = "EPERM";
+  fault.readFailures = 0;
 });
 
 it("retries a sharing violation without removing the published claim", async () => {
@@ -100,6 +108,22 @@ it("does not retry unrelated filesystem failures", async () => {
     expect(fault.attempts).toBe(1);
     expect(callback).not.toHaveBeenCalled();
     expect(await readdir(`${path}.claims`)).toEqual([]);
+  } finally {
+    await rmdir(`${path}.claims`);
+    await rmdir(directory);
+  }
+});
+
+it("still wins a try-acquire when reading a peer's claim hits a sharing violation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lock-read-busy-"));
+  const path = join(directory, "state.lock");
+  fault.failures = 0;
+  fault.code = "EBUSY";
+  fault.readFailures = 3;
+  try {
+    const handle = await tryAcquireFileLock(path);
+    expect(handle).toBeDefined();
+    await handle?.release();
   } finally {
     await rmdir(`${path}.claims`);
     await rmdir(directory);
