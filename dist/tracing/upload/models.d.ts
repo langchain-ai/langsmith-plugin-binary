@@ -57,6 +57,7 @@ export type UploadAnonymizer = <T>(data: T) => T;
 export interface UploadClientOptions extends Omit<LangSmithUploadDestinationConfig, "projectName"> {
     anonymizer?: UploadAnonymizer;
     redactedFields?: readonly RedactedRunField[];
+    includeRuntimeMetadata?: boolean;
 }
 export interface PreparedRunSubmissionBase {
     integration: CodingAgentIntegration;
@@ -95,7 +96,9 @@ export interface LangSmithUploadIdentityOptions {
     redact: boolean;
     redactExtraRules?: readonly UploadRedactRule[];
 }
-export type LangSmithUploadWriterOptions = LangSmithUploadIdentityOptions;
+export interface LangSmithUploadWriterOptions extends LangSmithUploadIdentityOptions {
+    includeRuntimeMetadata?: boolean;
+}
 export interface ResolvedUploadDestinationIdentity {
     id: string;
     apiKey: string;
@@ -112,6 +115,7 @@ export interface ResolvedUploadDestinationIdentities {
 export interface ResolvedUploadDestination extends ResolvedUploadDestinationIdentity {
     anonymizer?: UploadAnonymizer;
     client: Client;
+    includeRuntimeMetadata?: boolean;
 }
 export interface ResolvedUploadDestinations {
     accountFingerprint: string;
@@ -131,5 +135,8 @@ export interface LangSmithUploadWriter {
     readonly accountFingerprint: string;
     readonly destinations: readonly UploadDestination[];
     send(submission: PreparedRunSubmission, destinationId: string): Promise<UploadReceipt>;
+}
+export interface UploadClientCache {
+    forSubmission(destination: ResolvedUploadDestination, submission: PreparedRunSubmission): Client;
 }
 //# sourceMappingURL=models.d.ts.map
