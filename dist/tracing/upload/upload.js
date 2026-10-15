@@ -9,12 +9,14 @@ import { applyRuntimeMetadata } from "./runtime-metadata.js";
 import { contextForDestination, runIdForDestination } from "./replica-identifiers.js";
 import { applyReplicaPatchUpdates } from "./replica-updates.js";
 import { withDeadline } from "./deadline.js";
+import { isSampled, samplingRate } from "./sampling.js";
 import { startTimeText } from "./timestamps.js";
 export function createLangSmithUploadWriter(options) {
     const resolved = resolveUploadDestinations(options);
     const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
     const byId = new Map(resolved.destinations.map((destination) => [destination.id, destination]));
     const clients = createUploadClientCache();
+    const rate = samplingRate(process.env);
     const routes = Object.freeze(Object.fromEntries(resolved.destinations.map(({ id, projectName, sourceProjectName }) => [
         id,
         Object.freeze({
@@ -33,8 +35,9 @@ export function createLangSmithUploadWriter(options) {
             ...(configured.workspaceId === undefined ? {} : { workspaceId: configured.workspaceId }),
         };
         for (const [client, group] of segmentByClient(prepared)) {
+            const sampled = group.filter((item) => isSampled(item, rate));
             try {
-                await withDeadline(client.batchIngestRuns(ingestFor(group), clientOptions)).catch(ignoreAlreadyReceived);
+                await withDeadline(client.batchIngestRuns(ingestFor(sampled), clientOptions)).catch(ignoreAlreadyReceived);
             }
             catch (error) {
                 throw new UploadError(error);
