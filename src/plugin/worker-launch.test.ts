@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { childEnvironment, moduleUrl } from "../test-support/tracing/delivery.js";
@@ -14,6 +15,9 @@ vi.mock("node:child_process", async (importOriginal) => ({
 }));
 vi.mock("node:fs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:fs")>()),
+}));
+vi.mock("node:tls", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:tls")>()),
 }));
 
 let directory: string;
@@ -80,10 +84,10 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "writes the worker's output to the log file when given one",
+  "writes the worker's output to its log in the engine folder",
   async () => {
     const logFile = join(directory, "worker.log");
-    await launchDetachedWorker(["x"], { executable: recorder, logFile });
+    await launchDetachedWorker(["x"], { executable: recorder, storageRoot: directory });
     await recorded();
     await vi.waitFor(() => expect(readFileSync(logFile, "utf8")).toContain("to stderr"), {
       timeout: 10_000,
@@ -110,8 +114,7 @@ it.skipIf(process.platform === "win32")("starts the worker in its own process gr
 it("starts the worker without a console window and closes its own copy of the log", async () => {
   const spawned = vi.spyOn(childProcess, "spawn");
   const closed = vi.spyOn(fs, "closeSync");
-  const logFile = join(directory, "worker.log");
-  await launchDetachedWorker(["x"], { executable: recorder, logFile });
+  await launchDetachedWorker(["x"], { executable: recorder, storageRoot: directory });
   const spawnOptions = spawned.mock.calls[0]?.[2] as { stdio: unknown[] };
   expect(spawnOptions).toMatchObject({ detached: true, windowsHide: true });
   expect(closed).toHaveBeenCalledWith(spawnOptions.stdio[1]);
@@ -119,19 +122,21 @@ it("starts the worker without a console window and closes its own copy of the lo
 
 it.skipIf(process.platform === "win32")("keeps the worker log private to its owner", async () => {
   const logFile = join(directory, "worker.log");
-  await launchDetachedWorker(["x"], { executable: recorder, logFile });
+  await launchDetachedWorker(["x"], { executable: recorder, storageRoot: directory });
   expect(statSync(logFile).mode & 0o777).toBe(0o600);
 });
 
 it.skipIf(process.platform === "win32")(
   "creates a missing log folder and keeps launching when the log cannot be opened",
   async () => {
-    const nested = join(directory, "logs", "deeper", "worker.log");
-    await launchDetachedWorker(["x"], { executable: recorder, logFile: nested });
+    const nested = join(directory, "logs", "deeper");
+    await launchDetachedWorker(["x"], { executable: recorder, storageRoot: nested });
     await recorded();
-    await vi.waitFor(() => expect(readFileSync(nested, "utf8")).toContain("to stderr"));
-    const blocked = join(directory, "args.txt", "worker.log");
-    const pid = await launchDetachedWorker(["y"], { executable: recorder, logFile: blocked });
+    await vi.waitFor(() =>
+      expect(readFileSync(join(nested, "worker.log"), "utf8")).toContain("to stderr"),
+    );
+    const blocked = join(directory, "args.txt");
+    const pid = await launchDetachedWorker(["y"], { executable: recorder, storageRoot: blocked });
     expect(pid).toBeGreaterThan(0);
   },
 );
@@ -141,7 +146,7 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const logFile = join(directory, "worker.log");
     writeFileSync(logFile, "old\n".repeat(400_000));
-    await launchDetachedWorker(["x"], { executable: recorder, logFile });
+    await launchDetachedWorker(["x"], { executable: recorder, storageRoot: directory });
     await recorded();
     await vi.waitFor(() => expect(readFileSync(logFile, "utf8")).toContain("to stderr"));
     expect(readFileSync(logFile, "utf8")).not.toContain("old");
@@ -173,5 +178,38 @@ it.skipIf(process.platform === "win32")(
       ).once("exit", () => resolve());
     });
     expect(Date.now() - started).toBeLessThan(5_000);
+  },
+);
+
+it("hands the computer's certificates to the worker it starts", async () => {
+  const root = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----";
+  vi.spyOn(tls, "getCACertificates").mockReturnValue([root]);
+  vi.stubEnv("NODE_EXTRA_CA_CERTS", "");
+  try {
+    process.argv[1] = fileURLToPath(new URL("./fixtures/record-certificates.mjs", import.meta.url));
+    await launchDetachedWorker([output], { storageRoot: directory });
+    const [file, ...certificates] = await recorded();
+    expect(file).toBe(join(directory, "system_certificates.pem"));
+    expect(certificates.join("\n")).toBe(root);
+    expect(tls.getCACertificates).toHaveBeenCalledWith("system");
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "still starts the worker and logs a warning when the computer's certificates cannot be read",
+  async () => {
+    vi.spyOn(tls, "getCACertificates").mockImplementation(() => {
+      throw new Error("store locked");
+    });
+    const logFile = join(directory, "worker.log");
+    const pid = await launchDetachedWorker(["x"], {
+      executable: recorder,
+      storageRoot: directory,
+    });
+    expect(pid).toBeGreaterThan(0);
+    await recorded();
+    expect(readFileSync(logFile, "utf8")).toContain("store locked");
   },
 );

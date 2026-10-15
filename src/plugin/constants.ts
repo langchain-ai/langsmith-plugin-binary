@@ -25,10 +25,12 @@ export const COMPILED_BINARY_ENTRY_PREFIXES: readonly string[] = [
   "B:/~BUN/",
   "B:\\~BUN\\",
 ];
+export const WORKER_LOG_FILE_NAME = "worker.log";
 export const WORKER_LOG_MODE = 0o600;
 export const WORKER_LOG_MAX_BYTES = 1024 * 1024;
 export const WORKER_LOG_APPEND_FLAG = "a";
 export const WORKER_LOG_TRUNCATE_FLAG = "w";
+export const SYSTEM_CERTIFICATES_FILE_NAME = "system_certificates.pem";
 export const WORKER_NO_PID_MESSAGE = "Background worker did not report a process ID";
 export const UNAVAILABLE_ACCOUNT_FINGERPRINT = "unavailable";
 export const HOOK_HELP_FLAGS: readonly string[] = ["--help", "-h"];

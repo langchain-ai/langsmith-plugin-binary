@@ -43,6 +43,6 @@ export interface HookCommandOptions {
 }
 export interface DetachedWorkerOptions {
     executable?: string;
-    logFile?: string;
+    storageRoot?: string;
 }
 //# sourceMappingURL=models.d.ts.map
