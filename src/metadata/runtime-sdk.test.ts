@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,12 +17,14 @@ const ENDPOINT_NAMES = [
   "LANGCHAIN_EXTRA_HEADERS",
   "LANGSMITH_HTTPS_PROXY",
 ];
-const sdkEnvironmentPath = join(
-  dirname(createRequire(import.meta.url).resolve("langsmith")),
-  "lib",
-  "utils",
-  "env.mjs",
-);
+const SDK_ENVIRONMENT_FILES = [
+  ["dist", "utils", "env.js"],
+  ["lib", "utils", "env.mjs"],
+];
+const sdkRoot = dirname(createRequire(import.meta.url).resolve("langsmith"));
+const sdkEnvironmentPath =
+  SDK_ENVIRONMENT_FILES.map((parts) => join(sdkRoot, ...parts)).find((path) => existsSync(path)) ??
+  join(sdkRoot, ...SDK_ENVIRONMENT_FILES[0]!);
 const sdkSource = readFileSync(sdkEnvironmentPath, "utf8");
 const { runtime: contract } = CODING_AGENT_V1_CONTRACT;
 let sdk: {
