@@ -58,4 +58,11 @@ export const UPLOAD_RECEIPT_MISSING_MESSAGE = "The upload returned no receipt";
 export const UPLOAD_ERROR_NAME = "UploadError";
 export const UPLOAD_SERVER_ERROR_MIN_STATUS = 500;
 export const UPLOAD_UNKNOWN_DESTINATION_MESSAGE = "Unknown upload destination";
+export const UPLOAD_SAMPLING_RATE_VARIABLES = [
+    "LANGSMITH_TRACING_SAMPLING_RATE",
+    "LANGCHAIN_TRACING_SAMPLING_RATE",
+];
+export const UPLOAD_SAMPLING_HASH = "sha256";
+export const UPLOAD_SAMPLING_BUCKET_BYTES = 6;
+export const UPLOAD_DOTTED_ORDER_ROOT_ID = /^\d{8}T\d+Z([0-9a-f-]{36})/i;
 //# sourceMappingURL=constants.js.map

@@ -32,4 +32,8 @@ export declare const UPLOAD_RECEIPT_MISSING_MESSAGE = "The upload returned no re
 export declare const UPLOAD_ERROR_NAME = "UploadError";
 export declare const UPLOAD_SERVER_ERROR_MIN_STATUS = 500;
 export declare const UPLOAD_UNKNOWN_DESTINATION_MESSAGE = "Unknown upload destination";
+export declare const UPLOAD_SAMPLING_RATE_VARIABLES: readonly ["LANGSMITH_TRACING_SAMPLING_RATE", "LANGCHAIN_TRACING_SAMPLING_RATE"];
+export declare const UPLOAD_SAMPLING_HASH = "sha256";
+export declare const UPLOAD_SAMPLING_BUCKET_BYTES = 6;
+export declare const UPLOAD_DOTTED_ORDER_ROOT_ID: RegExp;
 //# sourceMappingURL=constants.d.ts.map

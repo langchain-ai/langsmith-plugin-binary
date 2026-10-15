@@ -2,7 +2,7 @@ import { CHILD_ID, RUN_ID } from "../../test-support/constants.js";
 import type { LocalRequest } from "../../test-support/models/upload.js";
 import { runUnits } from "../../test-support/tracing/ingest.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CodingAgentMetadataOptions } from "../../metadata/index.js";
 import { createLangSmithUploadWriter } from "./index.js";
 import { createUploadClient } from "./client.js";
@@ -710,7 +710,7 @@ describe("bound LangSmith upload writer", () => {
     expect(Reflect.get(client, "timeout_ms")).toBe(UPLOAD_REQUEST_TIMEOUT_MS);
   });
 
-  it("leaves trace sampling to the SDK default like the plugins on main", () => {
+  it("does not force a sample rate on the SDK client", () => {
     const client = createUploadClient({ apiKey: PRIMARY_KEY, apiUrl: "http://127.0.0.1:9" });
     expect(Reflect.get(client, "tracingSampleRate")).toBeUndefined();
   });
@@ -817,5 +817,112 @@ describe("bound LangSmith upload writer", () => {
     ).toBe(changedRedactionRules.accountFingerprint);
     expect(first.destinations.map(({ id }) => id).join(" ")).not.toContain(PRIMARY_KEY);
     expect(first.destinations.map(({ id }) => id).join(" ")).not.toContain(REPLICA_KEY);
+  });
+});
+
+function samplingTraceIds(index: number) {
+  const suffix = index.toString(16).padStart(12, "0");
+  const root = `00000000-0000-4000-8000-${suffix}`;
+  return {
+    root,
+    child: `00000000-0000-4000-9000-${suffix}`,
+    order: `20261009T200000000000Z${root}`,
+  };
+}
+
+function samplingTraceRuns(index: number): PreparedRunPostSubmission[] {
+  const { root, child, order } = samplingTraceIds(index);
+  const run = submission().run;
+  return [
+    submission({ run: { ...run, id: root, trace_id: root.toUpperCase(), dotted_order: order } }),
+    submission({
+      run: {
+        ...run,
+        id: child,
+        name: "child run",
+        parent_run_id: root,
+        dotted_order: `${order.toUpperCase()}.20261009T200000500000Z${child}`,
+      },
+    }),
+  ];
+}
+
+function samplingPatches(index: number): PreparedRunPatchSubmission[] {
+  const { root, child } = samplingTraceIds(index);
+  const { trace_id: _trace, dotted_order: _order, ...run } = patchSubmission().run;
+  const patch = { fields: ["end_time" as const], values: { end_time: "2026-10-09T20:00:02.000Z" } };
+  return [
+    patchSubmission({ run: { ...run, id: root }, patch }),
+    patchSubmission({ run: { ...run, id: child, parent_run_id: root, trace_id: root }, patch }),
+  ];
+}
+
+function samplingWriter(): LangSmithUploadWriter {
+  return createLangSmithUploadWriter({
+    redact: true,
+    destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+  });
+}
+
+function sentIds(method: string): Set<unknown> {
+  return new Set(
+    requests.filter((request) => request.method === method).map(({ payload }) => payload["id"]),
+  );
+}
+
+async function sendSampledTrace() {
+  const writer = samplingWriter();
+  return writer.sendBatch(
+    samplingTraceRuns(0).map((run) => ({ submission: run })),
+    destinationByIndex(writer.destinations, 0),
+  );
+}
+
+describe("trace sampling", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("keeps or drops each whole trace the same way in every process", async () => {
+    vi.stubEnv("LANGSMITH_TRACING_SAMPLING_RATE", "0.5");
+    const indexes = Array.from({ length: 20 }, (_, index) => index);
+    const posts = samplingWriter();
+    const receipts = await posts.sendBatch(
+      indexes.flatMap((index) => samplingTraceRuns(index).map((run) => ({ submission: run }))),
+      destinationByIndex(posts.destinations, 0),
+    );
+    const patches = samplingWriter();
+    await patches.sendBatch(
+      indexes.flatMap((index) => samplingPatches(index).map((run) => ({ submission: run }))),
+      destinationByIndex(patches.destinations, 0),
+    );
+    const posted = sentIds("POST");
+    const patched = sentIds("PATCH");
+    const kept = indexes.filter((index) => posted.has(samplingTraceIds(index).root));
+    for (const index of indexes) {
+      const { root, child } = samplingTraceIds(index);
+      const rootKept = posted.has(root);
+      expect([posted.has(child), patched.has(root), patched.has(child)]).toEqual([
+        rootKept,
+        rootKept,
+        rootKept,
+      ]);
+    }
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(indexes.length);
+    expect(receipts).toHaveLength(40);
+  });
+
+  it("sends everything without a valid rate and nothing at a rate of zero", async () => {
+    await sendSampledTrace();
+    vi.stubEnv("LANGSMITH_TRACING_SAMPLING_RATE", " ");
+    await sendSampledTrace();
+    vi.stubEnv("LANGSMITH_TRACING_SAMPLING_RATE", "not-a-number");
+    vi.stubEnv("LANGCHAIN_TRACING_SAMPLING_RATE", "0");
+    await sendSampledTrace();
+    expect(requests).toHaveLength(6);
+    vi.stubEnv("LANGSMITH_TRACING_SAMPLING_RATE", "");
+    await expect(sendSampledTrace()).resolves.toHaveLength(2);
+    expect(requests).toHaveLength(6);
   });
 });
