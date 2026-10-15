@@ -19,9 +19,9 @@ const ENDPOINT_NAMES = [
 ];
 const sdkEnvironmentPath = join(
   dirname(createRequire(import.meta.url).resolve("langsmith")),
-  "dist",
+  "lib",
   "utils",
-  "env.js",
+  "env.mjs",
 );
 const sdkSource = readFileSync(sdkEnvironmentPath, "utf8");
 const { runtime: contract } = CODING_AGENT_V1_CONTRACT;
