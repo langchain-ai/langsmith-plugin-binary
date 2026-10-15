@@ -1,6 +1,8 @@
 import { closeSync, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { COMMON_BOOLEAN_SETTINGS, COMMON_CONFIG_FILE_NAME, COMMON_CONFIG_OPEN_FLAGS, COMMON_CONFIG_ROOT_FILE_NAME, COMMON_CONFIG_USER_ROOT_FILE_NAME, } from "./constants.js";
+import { userInfo } from "node:os";
+import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { COMMON_BOOLEAN_SETTINGS, COMMON_CONFIG_FILE_NAME, COMMON_CONFIG_OPEN_FLAGS, COMMON_CONFIG_ROOT_FILE_NAME, COMMON_CONFIG_USER_ROOT_FILE_NAME, LOCKABLE_FIELDS, MANAGED_CONFIG_IGNORED_KEYS, MANAGED_CONFIG_INVALID, MANAGED_CONFIG_OPEN_FLAGS, MANAGED_CONFIG_OVERRIDE_SOURCES, MANAGED_CONFIG_OWNER_UID, MANAGED_CONFIG_DIRECTORY, MANAGED_CONFIG_FILE_NAME, MANAGED_CONFIG_UNSAFE_MODE, MANAGED_CONFIG_UNTRUSTED, UTF8_BOM, } from "./constants.js";
 function object(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -145,6 +147,84 @@ export function readCommonConfigFile(path) {
 function absent() {
     return { status: "absent", common: {}, diagnostics: [] };
 }
+function ownedSafely(stats, ownerUid) {
+    return (!stats.isSymbolicLink() &&
+        stats.uid === ownerUid &&
+        (stats.mode & MANAGED_CONFIG_UNSAFE_MODE) === 0);
+}
+function managedConfigPath(home) {
+    if (process.platform === "win32")
+        return undefined;
+    let accountHome = home;
+    try {
+        accountHome = userInfo().homedir;
+    }
+    catch { }
+    return accountHome === undefined
+        ? undefined
+        : join(accountHome, MANAGED_CONFIG_DIRECTORY, MANAGED_CONFIG_FILE_NAME);
+}
+function refuseManaged(diagnostic) {
+    return { status: "invalid", common: {}, diagnostics: [diagnostic] };
+}
+export function readManagedConfigFile(options = {}, home) {
+    const path = options.path ?? managedConfigPath(home);
+    if (path === undefined)
+        return absent();
+    const ownerUid = options.ownerUid ?? MANAGED_CONFIG_OWNER_UID;
+    let fd;
+    try {
+        fd = openSync(path, MANAGED_CONFIG_OPEN_FLAGS);
+    }
+    catch (error) {
+        const code = error.code;
+        if (code === "ENOENT")
+            return absent();
+        return refuseManaged(code === "ELOOP" ? MANAGED_CONFIG_UNTRUSTED : MANAGED_CONFIG_INVALID);
+    }
+    let raw;
+    try {
+        const file = fstatSync(fd);
+        if (!file.isFile())
+            return refuseManaged(MANAGED_CONFIG_INVALID);
+        if ((options.checkOwnership ?? true) &&
+            !(ownedSafely(file, ownerUid) && ownedSafely(lstatSync(dirname(path)), ownerUid))) {
+            return refuseManaged(MANAGED_CONFIG_UNTRUSTED);
+        }
+        raw = JSON.parse(readFileSync(fd, "utf8").replace(UTF8_BOM, ""));
+    }
+    catch {
+        return refuseManaged(MANAGED_CONFIG_INVALID);
+    }
+    finally {
+        try {
+            closeSync(fd);
+        }
+        catch { }
+    }
+    if (!object(raw))
+        return refuseManaged(MANAGED_CONFIG_INVALID);
+    const lockable = LOCKABLE_FIELDS.filter((field) => Object.hasOwn(raw, field));
+    const parsed = parseCommonConfig(Object.fromEntries(lockable.map((field) => [field, raw[field]])));
+    if (parsed.status === "invalid")
+        return refuseManaged(MANAGED_CONFIG_INVALID);
+    if (parsed.common.api_url !== undefined)
+        parsed.common.replicas ??= [];
+    const ignoresKeys = Object.keys(raw).length > lockable.length;
+    return {
+        status: "valid",
+        common: parsed.common,
+        diagnostics: ignoresKeys ? [MANAGED_CONFIG_IGNORED_KEYS] : [],
+    };
+}
+function overrideDiagnostics(sources, locked) {
+    return LOCKABLE_FIELDS.flatMap((field) => locked[field] === undefined
+        ? []
+        : MANAGED_CONFIG_OVERRIDE_SOURCES.filter((source) => {
+            const value = sources[source]?.[field];
+            return value !== undefined && !isDeepStrictEqual(value, locked[field]);
+        }).map((source) => `Ignored ${field} from ${source} because the managed config locks it.`));
+}
 export function readCommonConfigFiles(options) {
     const { cwd, home, harnessDirectory } = options;
     return {
@@ -154,6 +234,7 @@ export function readCommonConfigFiles(options) {
             ? readCommonConfigFile(join(home, harnessDirectory, COMMON_CONFIG_FILE_NAME))
             : absent(),
         userRoot: home ? readCommonConfigFile(join(home, COMMON_CONFIG_USER_ROOT_FILE_NAME)) : absent(),
+        managed: readManagedConfigFile(options.managed, home),
     };
 }
 /** Resolve the first supplied value from sources ordered highest priority first. */
@@ -165,20 +246,29 @@ function resolveField(sources, field) {
  * precedence; by default switches retain the legacy file-first precedence.
  */
 export function mergeCommonConfig(sources, options = {}) {
-    const { harness = {}, root = {}, user = {}, userRoot = {}, env = {}, defaults = {} } = sources;
+    const { harness = {}, root = {}, user = {}, userRoot = {}, env = {}, defaults = {}, managed, } = sources;
     const files = [harness, root, user, userRoot];
     const precedence = [env, ...files, defaults];
+    const lockedPrecedence = [managed.common, ...precedence];
     const switches = options.envFirst ? precedence : [...files, env, defaults];
-    const merged = { enabled: false, defaultMuted: false, redact: true };
+    const merged = {
+        enabled: false,
+        defaultMuted: false,
+        redact: true,
+        locked: LOCKABLE_FIELDS.filter((field) => managed.common[field] !== undefined),
+        diagnostics: [...managed.diagnostics, ...overrideDiagnostics(sources, managed.common)],
+    };
     for (const field of ["enabled", "defaultMuted"]) {
         merged[field] = resolveField(switches, field) ?? COMMON_BOOLEAN_SETTINGS[field].default;
     }
+    if (managed.status === "invalid")
+        merged.enabled = false;
     merged.api_key = resolveField(precedence, "api_key");
-    merged.api_url = resolveField(precedence, "api_url");
+    merged.api_url = resolveField(lockedPrecedence, "api_url");
     merged.project = resolveField(precedence, "project");
-    merged.replicas = resolveField(precedence, "replicas");
-    merged.redact = resolveField(precedence, "redact") ?? true;
-    merged.redact_extra_rules = resolveField(precedence, "redact_extra_rules");
+    merged.replicas = resolveField(lockedPrecedence, "replicas");
+    merged.redact = resolveField(lockedPrecedence, "redact") ?? true;
+    merged.redact_extra_rules = resolveField(lockedPrecedence, "redact_extra_rules");
     if (precedence.some((source) => source.metadata !== undefined)) {
         // Spread defines own properties (including __proto__), unlike assignment into a target.
         merged.metadata = [...precedence]
