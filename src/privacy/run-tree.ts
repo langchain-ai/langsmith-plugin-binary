@@ -149,8 +149,9 @@ export function createCodingAgentRunTree(
   mode: CodingAgentMetadataMode = "full",
   privacyContext?: CodingAgentPrivacyContext,
 ): RunTree {
+  const routed = config.replicas === undefined ? { ...config, replicas: [] } : config;
   const run = new RunTree(
-    mode === "metadata" ? configForMetadataMode(config, integration, privacyContext) : config,
+    mode === "metadata" ? configForMetadataMode(routed, integration, privacyContext) : routed,
   );
   return mode === "metadata" ? protectRunTree(run, integration) : preserveFullModePatchInputs(run);
 }

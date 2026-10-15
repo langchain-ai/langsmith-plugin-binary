@@ -42,6 +42,7 @@ export interface CommonConfigSources {
   /** Already parsed by the adapter's existing environment discovery/parsers. */
   env?: CommonConfig;
   defaults?: CommonConfig;
+  managed?: CommonConfigResult;
 }
 
 export interface MergeCommonConfigOptions {
@@ -52,7 +53,18 @@ export type MergedCommonConfig = CommonConfig & {
   enabled: boolean;
   defaultMuted: boolean;
   redact: boolean;
+  locked: LockableField[];
+  diagnostics: string[];
+  managedConfigProblem?: string;
 };
+
+export type LockableField = keyof CommonConfig;
+
+export interface ManagedConfigFileOptions {
+  path?: string;
+  ownerUid?: number;
+  checkOwnership?: boolean;
+}
 
 export interface SdkReplica {
   apiUrl?: string;
@@ -65,6 +77,7 @@ export interface CommonConfigFileOptions {
   cwd: string;
   home: string | undefined;
   harnessDirectory: string;
+  managed?: ManagedConfigFileOptions;
 }
 
 export interface CommonConfigFiles {
@@ -72,4 +85,5 @@ export interface CommonConfigFiles {
   root: CommonConfigResult;
   user: CommonConfigResult;
   userRoot: CommonConfigResult;
+  managed: CommonConfigResult;
 }

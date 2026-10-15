@@ -9,7 +9,7 @@ function write(path: string, value: unknown): void {
   fs.writeFileSync(path, JSON.stringify(value));
 }
 
-describe("reading the four common config files", () => {
+describe("reading the five common config files", () => {
   it("reads each file from its own place and keeps their results apart", () => {
     const cwd = fs.mkdtempSync(join(tmpdir(), "plugins base cwd "));
     const home = fs.mkdtempSync(join(tmpdir(), "plugins base home "));
@@ -17,24 +17,35 @@ describe("reading the four common config files", () => {
     write(join(cwd, "langsmith-plugins.json"), { project: "root" });
     write(join(home, ".harness", "langsmith.json"), { project: "user" });
     write(join(home, ".langsmith-plugins.json"), { project: "user-root" });
-    const files = readCommonConfigFiles({ cwd, home, harnessDirectory: ".harness" });
+    write(join(cwd, "managed.json"), { redact: true });
+    const managed = { path: join(cwd, "managed.json"), checkOwnership: false };
+    const files = readCommonConfigFiles({ cwd, home, harnessDirectory: ".harness", managed });
+    expect(files.managed.common).toEqual({ redact: true });
     expect(Object.entries(files).map(([name, { common }]) => [name, common.project])).toEqual([
       ["harness", "harness"],
       ["root", "root"],
       ["user", "user"],
       ["userRoot", "user-root"],
+      ["managed", undefined],
     ]);
   });
 
   it("reports missing files as absent and skips the home files without a home", () => {
     const cwd = fs.mkdtempSync(join(tmpdir(), "plugins base cwd "));
     write(join(cwd, ".harness", "langsmith.json"), { project: "harness" });
-    const files = readCommonConfigFiles({ cwd, home: undefined, harnessDirectory: ".harness" });
+    const managed = { path: join(cwd, "managed.json") };
+    const files = readCommonConfigFiles({
+      cwd,
+      home: undefined,
+      harnessDirectory: ".harness",
+      managed,
+    });
     expect(Object.entries(files).map(([name, { status }]) => [name, status])).toEqual([
       ["harness", "valid"],
       ["root", "absent"],
       ["user", "absent"],
       ["userRoot", "absent"],
+      ["managed", "absent"],
     ]);
   });
 });

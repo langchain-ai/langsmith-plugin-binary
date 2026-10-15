@@ -22,7 +22,10 @@ beforeEach(async () => {
   root = temporaryRoot();
 });
 
-afterEach(() => endpoint.close());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  return endpoint.close();
+});
 
 function open(overrides: Partial<PluginSessionOptions> = {}) {
   const writer = writerFor(endpoint.url);
@@ -159,4 +162,48 @@ it("publishes without waiting for a worker that never starts", async () => {
     }),
   ).resolves.toMatchObject({ status: "published" });
   expect(Date.now() - started).toBeLessThan(1_000);
+});
+
+async function deliverOneRun(plugin: ReturnType<typeof open>) {
+  await plugin.session
+    .capture({
+      turnId: "turn",
+      eventId: "event",
+      submission: runPost("root"),
+      turnEvidence: turnEvidence("authoritative", [], ROOT_ID),
+    })
+    .catch(() => undefined);
+  return plugin.session.drain();
+}
+
+it("delivers only to the writer's endpoint when the SDK's endpoint variables point elsewhere", async () => {
+  const elsewhere = await localEndpoint();
+  vi.stubEnv("LANGSMITH_ENDPOINT", elsewhere.url);
+  vi.stubEnv("LANGSMITH_RUNS_ENDPOINTS", JSON.stringify({ [elsewhere.url]: "k" }));
+  try {
+    await expect(deliverOneRun(open({ scheduleWake: async () => 1 }))).resolves.toBe("completed");
+    expect(endpoint.requests.map(({ method }) => method)).toEqual(["POST"]);
+    expect(elsewhere.requests).toEqual([]);
+  } finally {
+    await elsewhere.close();
+  }
+});
+
+it("still sends to every replica the writer was given", async () => {
+  const replica = await localEndpoint();
+  const writer = {
+    ...writerFor(endpoint.url),
+    replicas: [
+      { apiUrl: endpoint.url, apiKey: "primary-key", projectName: "primary-project" },
+      { apiUrl: replica.url, apiKey: "replica-key", projectName: "replica-project" },
+    ],
+  };
+  try {
+    const plugin = open({ writer, currentWriter: () => writer, scheduleWake: async () => 1 });
+    await expect(deliverOneRun(plugin)).resolves.toBe("completed");
+    expect(endpoint.requests.map(({ method }) => method)).toEqual(["POST"]);
+    expect(replica.requests.map(({ method }) => method)).toEqual(["POST"]);
+  } finally {
+    await replica.close();
+  }
 });

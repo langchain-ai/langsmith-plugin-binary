@@ -10,11 +10,13 @@ import {
   readCommonConfigFile,
   toSdkReplicas,
   type CommonConfig,
+  type CommonConfigResult,
 } from "./index.js";
 
 vi.mock("node:fs", { spy: true });
 
 const restrictive = { enabled: false, defaultMuted: true };
+const noManaged: CommonConfigResult = { status: "absent", common: {}, diagnostics: [] };
 afterEach(() => vi.restoreAllMocks());
 
 describe("canonical common schema fixtures", () => {
@@ -166,6 +168,7 @@ describe("per-field precedence fixtures", () => {
       harness: parseCommonConfig({ project: null }).common,
       userRoot: { api_key: "home-key", metadata: { home: true } },
       env: { enabled: true },
+      managed: noManaged,
     };
     expect(mergeCommonConfig(sources)).toMatchObject({ enabled: false, defaultMuted: true });
     expect(mergeCommonConfig(sources, { envFirst: true })).toMatchObject({
@@ -200,6 +203,7 @@ describe("per-field precedence fixtures", () => {
           root: { [field]: root },
           user: { [field]: user },
           env: { [field]: env },
+          managed: noManaged,
         })[field],
       ).toBe(harness ?? root ?? user ?? env ?? false);
     },
@@ -220,11 +224,11 @@ describe("per-field precedence fixtures", () => {
               ? [{ pattern: "x" }]
               : "default";
       sources.defaults = { [field]: nonempty };
-      expect(mergeCommonConfig(sources)[field]).toEqual(nonempty);
+      expect(mergeCommonConfig({ ...sources, managed: noManaged })[field]).toEqual(nonempty);
       for (const scope of ["userRoot", "user", "root", "harness", "env"]) {
         for (const source of Object.values(sources)) source[field] = nonempty as never;
         sources[scope] = { [field]: empty };
-        expect(mergeCommonConfig(sources)[field]).toEqual(empty);
+        expect(mergeCommonConfig({ ...sources, managed: noManaged })[field]).toEqual(empty);
       }
     },
   );
@@ -234,7 +238,7 @@ describe("per-field precedence fixtures", () => {
     const root = { metadata: { nested: { b: 2 }, winner: "root" } };
     const harness = { metadata: {} };
     const env = { metadata: JSON.parse('{"winner":"env","__proto__":{"polluted":true}}') };
-    const metadata = mergeCommonConfig({ user, root, harness, env }).metadata!;
+    const metadata = mergeCommonConfig({ user, root, harness, env, managed: noManaged }).metadata!;
     expect(metadata).toEqual(
       JSON.parse('{"keep":1,"nested":{"b":2},"winner":"env","__proto__":{"polluted":true}}'),
     );
@@ -255,6 +259,7 @@ describe("per-field precedence fixtures", () => {
         user: { api_key: "lower", metadata: { kept: true }, enabled: true },
         harness: { enabled: true, defaultMuted: false },
         env: { enabled: false },
+        managed: noManaged,
       }),
     ).toMatchObject({
       enabled: true,
@@ -262,9 +267,9 @@ describe("per-field precedence fixtures", () => {
       api_key: "lower",
       metadata: { kept: true },
     });
-    expect(mergeCommonConfig({ root, env: { enabled: true, defaultMuted: false } })).toMatchObject(
-      restrictive,
-    );
+    expect(
+      mergeCommonConfig({ root, env: { enabled: true, defaultMuted: false }, managed: noManaged }),
+    ).toMatchObject(restrictive);
   });
 });
 
