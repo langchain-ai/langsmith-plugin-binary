@@ -1,8 +1,9 @@
-import { lstatSync, readFileSync, statSync } from "node:fs";
+import { closeSync, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   COMMON_BOOLEAN_SETTINGS,
   COMMON_CONFIG_FILE_NAME,
+  COMMON_CONFIG_OPEN_FLAGS,
   COMMON_CONFIG_ROOT_FILE_NAME,
   COMMON_CONFIG_USER_ROOT_FILE_NAME,
 } from "./constants.js";
@@ -117,8 +118,9 @@ export function parseCommonConfig(value: unknown): CommonConfigResult {
 
 /** Follow readable symlinks, but never read directories/devices/FIFOs. Only true ENOENT is absent. */
 export function readCommonConfigFile(path: string): CommonConfigResult {
+  let fd: number;
   try {
-    if (!statSync(path).isFile()) return invalid();
+    fd = openSync(path, COMMON_CONFIG_OPEN_FLAGS);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       try {
@@ -132,9 +134,14 @@ export function readCommonConfigFile(path: string): CommonConfigResult {
     return invalid();
   }
   try {
-    return parseCommonConfig(JSON.parse(readFileSync(path, "utf8")));
+    if (!fstatSync(fd).isFile()) return invalid();
+    return parseCommonConfig(JSON.parse(readFileSync(fd, "utf8")));
   } catch {
     return invalid();
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {}
   }
 }
 

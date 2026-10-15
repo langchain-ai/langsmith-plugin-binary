@@ -290,10 +290,59 @@ describe("filesystem fixtures", () => {
     expect(readCommonConfigFile(dir)).toMatchObject({ status: "invalid", common: restrictive });
   });
 
-  it.skipIf(process.platform === "win32")("rejects FIFO without opening/blocking", () => {
+  it("reads the same open file it checked", () => {
+    const path = setup();
+    fs.writeFileSync(path, "{}");
+    const read = vi.spyOn(fs, "readFileSync");
+    expect(readCommonConfigFile(path)).toMatchObject({ status: "valid" });
+    expect(read.mock.calls.every(([target]) => typeof target === "number")).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("rejects FIFO without blocking", () => {
     const path = setup();
     execFileSync("mkfifo", [path]);
     expect(readCommonConfigFile(path)).toMatchObject({ status: "invalid", common: restrictive });
+  });
+
+  it.skipIf(process.platform === "win32")("rejects a FIFO even when it holds valid JSON", () => {
+    const path = setup();
+    execFileSync("mkfifo", [path]);
+    const writer = fs.openSync(path, fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+    fs.writeSync(writer, "{}");
+    const open = vi.spyOn(fs, "openSync").mockImplementation((...args) => {
+      open.mockRestore();
+      const reader = fs.openSync(...args);
+      fs.closeSync(writer);
+      return reader;
+    });
+    expect(readCommonConfigFile(path)).toMatchObject({ status: "invalid", common: restrictive });
+  });
+
+  it.skipIf(process.getuid?.() === 0)("reads a read-only config file", () => {
+    const path = setup();
+    fs.writeFileSync(path, "{}");
+    fs.chmodSync(path, 0o444);
+    expect(readCommonConfigFile(path)).toMatchObject({ status: "valid" });
+  });
+
+  it("closes the file it opened", () => {
+    const path = setup();
+    fs.writeFileSync(path, "{}");
+    const open = vi.spyOn(fs, "openSync");
+    const close = vi.spyOn(fs, "closeSync");
+    expect(readCommonConfigFile(path)).toMatchObject({ status: "valid" });
+    expect(close).toHaveBeenCalledWith(open.mock.results[0]?.value);
+  });
+
+  it("keeps a valid result when closing the file fails", () => {
+    const path = setup();
+    fs.writeFileSync(path, "{}");
+    const close = vi.spyOn(fs, "closeSync").mockImplementation((fd) => {
+      close.mockRestore();
+      fs.closeSync(fd);
+      throw Object.assign(new Error("SECRET"), { code: "EIO" });
+    });
+    expect(readCommonConfigFile(path)).toMatchObject({ status: "valid" });
   });
 
   it.each(["", "{SECRET", "null", "[]", '"SECRET"'])(
@@ -320,9 +369,9 @@ describe("filesystem fixtures", () => {
     },
   );
 
-  it.each(["EACCES", "EPERM", "EIO", "ENOTDIR"])("restricts stat failure %s", (code) => {
+  it.each(["EACCES", "EPERM", "EIO", "ENOTDIR"])("restricts open failure %s", (code) => {
     const path = setup();
-    vi.spyOn(fs, "statSync").mockImplementation(() => {
+    vi.spyOn(fs, "openSync").mockImplementation(() => {
       throw Object.assign(new Error("SECRET"), { code });
     });
     expect(readCommonConfigFile(path)).toMatchObject({ status: "invalid", common: restrictive });

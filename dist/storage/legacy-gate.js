@@ -2,13 +2,13 @@ import { lstat, mkdir, readFile, rename, rmdir, writeFile } from "node:fs/promis
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
-import { FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS, FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE, FILE_LOCK_COMPATIBLE_OWNER_FILE, FILE_LOCK_COMPATIBLE_OWNER_MESSAGE, FILE_LOCK_COMPATIBLE_OWNER_PID_PATTERN, FILE_LOCK_COMPATIBLE_STALE_SUFFIX, FILE_LOCK_DIRECTORY_CONTENTION_CODES, FILE_LOCK_DIRECTORY_MODE, FILE_LOCK_ENCODING, FILE_LOCK_EXCLUSIVE_FLAG, FILE_LOCK_FILE_MODE, FILE_LOCK_GATE_CLEANUP_WARNING, FILE_LOCK_LEGACY_DIRECTORY_SUFFIX, FILE_LOCK_STALE_CLAIM_MS, FILE_LOCK_STALE_GATE_CLEANUP_WARNING, } from "./constants.js";
+import { FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS, FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE, FILE_LOCK_COMPATIBLE_OWNER_FILE, FILE_LOCK_COMPATIBLE_OWNER_MESSAGE, FILE_LOCK_COMPATIBLE_OWNER_PID_PATTERN, FILE_LOCK_COMPATIBLE_STALE_SUFFIX, FILE_LOCK_DIRECTORY_CONTENTION_CODES, FILE_LOCK_DIRECTORY_MODE, FILE_LOCK_ENCODING, FILE_LOCK_EXCLUSIVE_FLAG, FILE_LOCK_FILE_MODE, FILE_LOCK_GATE_CLEANUP_WARNING, FILE_LOCK_LEGACY_DIRECTORY_SUFFIX, FILE_LOCK_STALE_CLAIM_MS, FILE_LOCK_STALE_GATE_CLEANUP_WARNING, FILE_LOCK_WINDOWS_DENIED_RETRIES, } from "./constants.js";
 import { startHeartbeat, stopHeartbeat } from "./file-lock-heartbeat.js";
 import { isBusyFileError, processIsAlive, removeFile, waitForNextScan, } from "./file-lock-support.js";
-import { FileLockTimeoutError } from "./errors.js";
+import { FileLockTimeoutError, StorageNotWritableError } from "./errors.js";
 import { errorCode } from "../utils/errors.js";
 import { removeDirectoryBestEffort } from "../utils/files/cleanup.js";
-import { FILE_EXISTS_CODE, FILE_MISSING_CODE } from "../utils/constants.js";
+import { FILE_EXISTS_CODE, FILE_MISSING_CODE, PERMISSION_DENIED_CODE, WINDOWS_PLATFORM, } from "../utils/constants.js";
 async function createLegacyGate(gatePath) {
     await mkdir(gatePath, { mode: FILE_LOCK_DIRECTORY_MODE });
     const stat = await lstat(gatePath);
@@ -17,6 +17,10 @@ async function createLegacyGate(gatePath) {
     await recordLegacyGateOwner(gatePath);
     startHeartbeat(join(gatePath, FILE_LOCK_COMPATIBLE_OWNER_FILE), gatePath);
     return { path: gatePath, dev: stat.dev, ino: stat.ino, birthtimeMs: stat.birthtimeMs };
+}
+function resetMissingPermission(attempt) {
+    attempt.missingPermissionError = undefined;
+    attempt.windowsDeniedRetries = 0;
 }
 async function waitOutContention(attempt, error) {
     const { gatePath, filePath, deadline, tryAcquire } = attempt;
@@ -38,12 +42,22 @@ async function waitOutContention(attempt, error) {
     catch (statError) {
         if (errorCode(statError) === FILE_MISSING_CODE) {
             if (code === FILE_EXISTS_CODE) {
-                attempt.retriedMissingPermission = false;
+                resetMissingPermission(attempt);
                 await waitForNextScan(deadline, gatePath);
                 return;
             }
-            if (permissionDenied && !attempt.retriedMissingPermission) {
-                attempt.retriedMissingPermission = true;
+            if (permissionDenied) {
+                const firstRetry = attempt.missingPermissionError === undefined;
+                attempt.missingPermissionError = new StorageNotWritableError(dirname(gatePath), error);
+                if (firstRetry)
+                    return;
+                if (process.platform !== WINDOWS_PLATFORM ||
+                    code !== PERMISSION_DENIED_CODE ||
+                    attempt.windowsDeniedRetries >= FILE_LOCK_WINDOWS_DENIED_RETRIES)
+                    throw attempt.missingPermissionError;
+                attempt.windowsDeniedRetries += 1;
+                const denied = attempt.missingPermissionError;
+                await waitForNextScan(deadline, gatePath).catch(() => Promise.reject(denied));
                 return;
             }
         }
@@ -51,7 +65,7 @@ async function waitOutContention(attempt, error) {
     }
     if (!isContended)
         throw error;
-    attempt.retriedMissingPermission = false;
+    resetMissingPermission(attempt);
     await waitForNextScan(deadline, gatePath);
 }
 export async function acquireLegacyDirectoryGate(filePath, deadline, tryAcquire) {
@@ -62,11 +76,12 @@ export async function acquireLegacyDirectoryGate(filePath, deadline, tryAcquire)
         filePath,
         deadline,
         tryAcquire,
-        retriedMissingPermission: false,
+        windowsDeniedRetries: 0,
     };
     for (;;) {
-        if (performance.now() >= deadline)
-            throw new FileLockTimeoutError(gatePath);
+        if (performance.now() >= deadline) {
+            throw attempt.missingPermissionError ?? new FileLockTimeoutError(gatePath);
+        }
         try {
             return await createLegacyGate(gatePath);
         }
