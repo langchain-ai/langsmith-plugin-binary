@@ -17,10 +17,12 @@ export declare const POLICY_CANNOT_READ_PREFIX = "Cannot read tracing preference
 export declare const POLICY_DURABILITY_WARNING = "Preference is effective, but crash durability could not be confirmed; retry saving";
 export declare const POLICY_LOCK_RELEASE_WARNING = "Before retrying, remove the lock only after confirming no preference writer is running";
 export declare const COMPILED_BINARY_ENTRY_PREFIXES: readonly string[];
+export declare const WORKER_LOG_FILE_NAME = "worker.log";
 export declare const WORKER_LOG_MODE = 384;
 export declare const WORKER_LOG_MAX_BYTES: number;
 export declare const WORKER_LOG_APPEND_FLAG = "a";
 export declare const WORKER_LOG_TRUNCATE_FLAG = "w";
+export declare const SYSTEM_CERTIFICATES_FILE_NAME = "system_certificates.pem";
 export declare const WORKER_NO_PID_MESSAGE = "Background worker did not report a process ID";
 export declare const UNAVAILABLE_ACCOUNT_FINGERPRINT = "unavailable";
 export declare const HOOK_HELP_FLAGS: readonly string[];
