@@ -93,13 +93,13 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc --build tsconfig.json tsconfig.settings.json",
-    "clean": "tsc --build --clean tsconfig.json tsconfig.settings.json",
+    "build": "tsc --build tsconfig.json tsconfig/tsconfig.settings.json",
+    "clean": "tsc --build --clean tsconfig.json tsconfig/tsconfig.settings.json",
     "format": "oxfmt --write",
     "lint": "npm run lint:format && npm run lint:oxlint && npm run lint:types && npm run lint:dist",
     "lint:format": "oxfmt --check",
     "lint:oxlint": "oxlint",
-    "lint:types": "tsc --noEmit -p tsconfig.check.json && tsc --noEmit -p tsconfig.settings-check.json",
+    "lint:types": "tsc --noEmit -p tsconfig/tsconfig.check.json && tsc --noEmit -p tsconfig/tsconfig.settings-check.json",
     "lint:dist": "npm run build && git diff --exit-code -- dist",
     "test": "vitest run"
   },

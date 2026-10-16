@@ -1,44 +1,31 @@
 # @langchain/plugins-base
 
-Shared build and signing pipeline for LangChain plugin binaries.
+The shared engine behind the LangSmith plugins for Claude Code, Cursor and Codex. It handles each agent's hooks, uploads every turn, tool call and subagent to LangSmith in the background and fills in git metadata once it's known, so all three plugins trace the same way. It also builds and signs each plugin's macOS binary.
 
-Runtime modules support Node 20. The CLI, build, lint and test tooling uses Node 22 or newer.
-
-Plugin binary releases land in each plugin's own repo. Shared settings are available from `@langchain/plugins-base/settings`:
-
-```ts
-import { parseCommonConfig } from "@langchain/plugins-base/settings";
+```sh
+pnpm add @langchain/plugins-base
 ```
 
-## Onboarded plugins
+## How it works
 
-| Plugin      | Repo                            | Status      |
-| ----------- | ------------------------------- | ----------- |
-| Claude Code | `langsmith-claude-code-plugins` | not started |
-| Codex       | `langsmith-codex-plugins`       | not started |
+```mermaid
+flowchart LR
+  A["Claude Code, Cursor or Codex"] -- "hooks" --> P["Plugin"]
+  P --> E["Engine"]
+  E -- "uploads in the background" --> L["LangSmith"]
+```
 
-## What happens on a release
+The agent never waits on the upload and anything that fails is retried later. The engine is a library each plugin ships inside itself rather than a separate service.
 
-1. Compile the plugin into two macOS binaries. One per chip
-2. Run the Intel one on a real Intel machine
-3. Sign both and wait for Apple to notarize them
-4. Attach both to a draft release with a checksum beside each
-5. Commit both binaries onto the branch the tag was cut from, so one merge ships the version
-   and the builds together
+## Building the plugin binaries
 
-Three things stop a release instead of shipping something broken. A binary built for the
-wrong chip. A binary reporting the wrong version. A missing Apple credential.
+Each plugin calls this repo's reusable `build-binary.yml` workflow pinned to a release tag's commit. On a tag it builds Apple chip and Intel binaries, tests and signs them, has Apple notarize them and attaches them to the plugin's release. See [ONBOARDING.md](docs/ONBOARDING.md) to set up a new plugin.
 
-Every step gets the file name from the same settings file. Nothing drifts apart.
+## Developing
 
-## Where the code is
-
-|                                      |                             |
-| ------------------------------------ | --------------------------- |
-| `src/build.ts`                       | compiles                    |
-| `src/sign.ts`                        | signs and notarizes         |
-| `.github/workflows/build-binary.yml` | the pipeline a plugin calls |
-
-## Onboarding a plugin
-
-See [ONBOARDING.md](ONBOARDING.md).
+```sh
+pnpm install
+pnpm test
+pnpm run lint
+pnpm run build   # dist/ is committed, so rebuild it after changes
+```
