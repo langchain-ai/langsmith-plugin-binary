@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterQuiet } from "../../test-support/clock.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import { eventPath } from "../../storage/capture/paths.js";
 import type { LocalEndpoint } from "../../test-support/models/lifecycle.js";
@@ -344,8 +345,7 @@ it("restores muted end times after a restart without attribution", async () => {
     delivered: 3,
     settlement: { turns: [{ status: "deferred", reason: "provisional" }] },
   });
-  expect(endTimes()).toEqual([undefined, undefined, undefined]);
-  expect(metadataOf(2)).toMatchObject({ metadata: { status: "running" } });
+  expect(endTimes()).toEqual([undefined, undefined]);
   const restarted = bridge();
   const closing = runPatch(
     "root",
@@ -448,7 +448,10 @@ it("keeps an explicit empty error after a later sparse status update", async () 
   await save(lifecycle, "turn", "error", error, turnEvidence(), [scope("turn", "child")]);
   const sparse = runPatch("child", { outputs: { result: "done" } }, { privacyMode: "metadata" });
   await save(lifecycle, "turn", "sparse", sparse, turnEvidence(), [scope("turn", "error")]);
-  await expect(lifecycle.drain()).resolves.toMatchObject({ delivered: 5, pending: 0 });
+  await expect(afterQuiet(() => lifecycle.drain())).resolves.toMatchObject({
+    delivered: 5,
+    pending: 0,
+  });
   const patches = endpoint.requests.filter(({ path }) => path.endsWith(CHILD_ID));
   expect(patches.map(({ payload }) => payload["error"])).toEqual(["", undefined, undefined]);
   const statuses = patches.map(
@@ -477,7 +480,10 @@ it("keeps a child's explicit Git commit across a sparse patch and a conflicting 
     base: { ls_git_repo: "acme/project", ls_git_commit_hash: "B" },
   });
   await save(lifecycle, "turn", "sibling", sibling, open, [scope("turn", "root")]);
-  await expect(lifecycle.drain()).resolves.toMatchObject({ delivered: 6, pending: 0 });
+  await expect(afterQuiet(() => lifecycle.drain())).resolves.toMatchObject({
+    delivered: 6,
+    pending: 0,
+  });
   const patches = endpoint.requests.filter(({ path }) => path.endsWith(CHILD_ID));
   expect(patches.at(-1)?.payload["extra"]).toMatchObject({
     metadata: { ls_git_repo: "acme/project", ls_git_commit_hash: "A" },

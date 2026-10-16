@@ -64,8 +64,9 @@ export function patchPayload(
   source: ProjectedCapture,
   metadata: CodingAgentMetadataOptions,
   integration: SettleCapturedTurnsOptions["integration"],
-  endTime?: number | string,
-  causalRunError = false,
+  endTime: number | string | undefined,
+  causalRunError: boolean,
+  runEvents: readonly ProjectedCapture[],
 ): ProjectedSubmission {
   const context = source.payload.run;
   const submission: PreparedRunPatchSubmission = {
@@ -105,14 +106,28 @@ export function patchPayload(
                   ? "completed"
                   : (source.payload.privacyContext?.status ?? "running"),
           },
-    patch:
-      endTime === undefined
-        ? { fields: [], values: {} }
-        : { fields: ["end_time"], values: { end_time: endTime } },
+    patch: carriedPatch(runEvents, endTime),
   };
   const projected = projectSubmission(submission, integration);
   if (projected.status === "deferred") throw new Error("Settlement patch lost thread identity");
   return projected.value;
+}
+
+function carriedPatch(
+  runEvents: readonly ProjectedCapture[],
+  endTime: number | string | undefined,
+): PreparedRunPatchSubmission["patch"] {
+  const carried = runEvents.flatMap(({ payload }) =>
+    payload.operation === "patch" ? [payload.patch] : [],
+  );
+  const fields = [...new Set(carried.flatMap((patch) => patch.fields))].filter(
+    (field) => field !== "end_time",
+  );
+  const values = Object.assign({}, ...carried.map((patch) => patch.values));
+  delete values.end_time;
+  return endTime === undefined
+    ? { fields, values }
+    : { fields: [...fields, "end_time"], values: { ...values, end_time: endTime } };
 }
 
 export function addAttribution(

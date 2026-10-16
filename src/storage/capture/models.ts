@@ -178,4 +178,5 @@ export interface ExpiredCaptureOptions {
   accountFingerprint?: string;
   now: number;
   maxAgeMs: number;
+  heldUpdate?: (record: StoredCapture, captures: readonly EnumeratedCapture[]) => boolean;
 }

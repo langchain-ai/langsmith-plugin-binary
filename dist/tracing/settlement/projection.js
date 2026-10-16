@@ -29,7 +29,7 @@ function captureIsOpen(payload) {
         return true;
     return false;
 }
-export function patchPayload(source, metadata, integration, endTime, causalRunError = false) {
+export function patchPayload(source, metadata, integration, endTime, causalRunError, runEvents) {
     const context = source.payload.run;
     const submission = {
         operation: "patch",
@@ -66,14 +66,21 @@ export function patchPayload(source, metadata, integration, endTime, causalRunEr
                         ? "completed"
                         : (source.payload.privacyContext?.status ?? "running"),
             },
-        patch: endTime === undefined
-            ? { fields: [], values: {} }
-            : { fields: ["end_time"], values: { end_time: endTime } },
+        patch: carriedPatch(runEvents, endTime),
     };
     const projected = projectSubmission(submission, integration);
     if (projected.status === "deferred")
         throw new Error("Settlement patch lost thread identity");
     return projected.value;
+}
+function carriedPatch(runEvents, endTime) {
+    const carried = runEvents.flatMap(({ payload }) => payload.operation === "patch" ? [payload.patch] : []);
+    const fields = [...new Set(carried.flatMap((patch) => patch.fields))].filter((field) => field !== "end_time");
+    const values = Object.assign({}, ...carried.map((patch) => patch.values));
+    delete values.end_time;
+    return endTime === undefined
+        ? { fields, values }
+        : { fields: [...fields, "end_time"], values: { ...values, end_time: endTime } };
 }
 export function addAttribution(metadata, attribution) {
     const layer = CODING_AGENT_INTEGRATION_POLICIES[metadata.integration].fullModePrecedence === "custom-wins"

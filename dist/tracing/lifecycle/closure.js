@@ -1,7 +1,7 @@
 import { buildCodingAgentMetadata, prepareCodingAgentMetadataProvenance, } from "../../metadata/index.js";
 import { ATTRIBUTION_IDENTIFIER_KEY, GIT_METADATA_KEYS } from "../../metadata/constants.js";
 import { ownDataField, requireBoolean, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireStringArray, } from "../../utils/validation/objects.js";
-import { LIFECYCLE_ATTRIBUTION_READY_FIELD, LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_TURN_CLOSURE_STATES, } from "./constants.js";
+import { LIFECYCLE_ATTRIBUTION_READY_FIELD, LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_SETTLEMENT_EVENT_KIND, LIFECYCLE_TURN_CLOSURE_STATES, } from "./constants.js";
 import { scopeKey, scopeOf } from "../../storage/capture/scope.js";
 export function deriveAttributionReadiness(value, integration) {
     const source = requirePlainRecord(value, "Prepared run submission");
@@ -127,35 +127,39 @@ async function hasMissingChildReceipts(record, evidence, sourceSnapshot, destina
     return false;
 }
 function removeOutgoingEndTime(submission) {
+    if (submission.operation === "patch")
+        return undefined;
     const privacyContext = submission.privacyMode !== "metadata"
         ? undefined
-        : submission.operation === "post"
-            ? {
-                status: submission.run.error !== undefined || submission.privacyContext?.status === "error"
-                    ? "error"
-                    : "running",
-            }
-            : {
-                status: submission.privacyContext.status === "error"
-                    ? "error"
-                    : "running",
-            };
-    if (submission.operation === "post") {
-        const run = { ...submission.run };
-        delete run.end_time;
-        return {
-            ...submission,
-            run,
-            ...(privacyContext === undefined ? {} : { privacyContext }),
+        : {
+            status: submission.run.error !== undefined || submission.privacyContext?.status === "error"
+                ? "error"
+                : "running",
         };
-    }
-    const fields = submission.patch.fields.filter((field) => field !== "end_time");
-    const values = { ...submission.patch.values };
-    delete values.end_time;
+    const run = { ...submission.run };
+    delete run.end_time;
     return {
         ...submission,
-        patch: { fields, values },
+        run,
         ...(privacyContext === undefined ? {} : { privacyContext }),
     };
+}
+export function isHeldUpdate(record, captures, integration) {
+    if (record.eventKind !== LIFECYCLE_PATCH_EVENT_KIND)
+        return false;
+    if (field(record.metadataProvenance, "runType") !== "tool")
+        return false;
+    const fields = field(field(record.normalizedPayload, "patch"), "fields");
+    if (!Array.isArray(fields) || !fields.includes("end_time"))
+        return false;
+    if (storedAttributionReadiness(record, integration))
+        return false;
+    return !captures.some((capture) => capture.record.eventKind === LIFECYCLE_SETTLEMENT_EVENT_KIND &&
+        capture.record.runId === record.runId);
+}
+function field(value, key) {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+        ? value[key]
+        : undefined;
 }
 //# sourceMappingURL=closure.js.map

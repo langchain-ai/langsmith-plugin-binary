@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { CHILD_ID, ROOT_ID, SIBLING_ID } from "../constants.js";
+import { CHILD_ID, ROOT_ID, SIBLING_ID, STRICT_DUPLICATE_UPDATE } from "../constants.js";
 import { runUnits } from "./ingest.js";
 import type { CodingAgentMetadataOptions } from "../../metadata/models.js";
 import type { CaptureScope } from "../../storage/capture/models.js";
@@ -61,8 +61,10 @@ export async function localEndpoint(): Promise<LocalEndpoint> {
   const failing = new Set<number>();
   const failingPaths = new Set<string>();
   const rejectedIds = new Set<string>();
+  const updatedIds = new Set<string>();
   const state: LocalEndpoint["state"] = { mode: "ok" };
   let httpRequests = 0;
+  let schemaRejections = 0;
   const server = createServer((request, response) => {
     let body = "";
     request.setEncoding("utf8");
@@ -80,6 +82,23 @@ export async function localEndpoint(): Promise<LocalEndpoint> {
           payload: unit.payload,
         });
       if (state.mode === "hang") return;
+      if (state.mode === "strict") {
+        const updates = units.filter((unit) => unit.method === "PATCH");
+        if (updates.some((unit) => unit.payload["end_time"] === undefined)) {
+          schemaRejections += 1;
+          response.writeHead(422, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({ detail: "batch schema error patch.0: end_time is required" }),
+          );
+          return;
+        }
+        const repeated = updates.filter((unit) => updatedIds.has(String(unit.payload["id"])));
+        for (const unit of updates) updatedIds.add(String(unit.payload["id"]));
+        const onlyRepeats = units.length > 0 && repeated.length === units.length;
+        response.writeHead(onlyRepeats ? 409 : 200, { "content-type": "application/json" });
+        response.end(onlyRepeats ? JSON.stringify({ detail: STRICT_DUPLICATE_UPDATE }) : "{}");
+        return;
+      }
       const refuse =
         state.mode === "down" ||
         failing.has(index) ||
@@ -106,6 +125,10 @@ export async function localEndpoint(): Promise<LocalEndpoint> {
     failing,
     failingPaths,
     rejectedIds,
+    updatedIds,
+    get schemaRejections() {
+      return schemaRejections;
+    },
     state,
     close: () => {
       server.closeAllConnections();

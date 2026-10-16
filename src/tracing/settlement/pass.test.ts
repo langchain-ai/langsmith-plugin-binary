@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { afterQuiet } from "../../test-support/clock.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import type { EnumeratedCapture } from "../../storage/capture/models.js";
 import type { TestSubmissionOptions } from "../../test-support/models/lifecycle.js";
@@ -77,11 +78,11 @@ it("waits for authoritative root evidence but not for every destination to confi
     [scope("root")],
   );
   await turn.receipts((await turn.sources()).filter(({ record }) => record.eventId === "closing"));
-  expect((await turn.settle(["a", "b"])).progress.turns).toMatchObject([
+  expect((await afterQuiet(() => turn.settle(["a", "b"]))).progress.turns).toMatchObject([
     { status: "pending", reason: "settlement-pending", patches: 1 },
   ]);
   await turn.receipts(await turn.sources(), ["b"]);
-  expect((await turn.settle(["a", "b"])).progress.turns).toMatchObject([
+  expect((await afterQuiet(() => turn.settle(["a", "b"]))).progress.turns).toMatchObject([
     { status: "pending", reason: "settlement-pending", patches: 1 },
   ]);
 });
@@ -102,7 +103,7 @@ it("keeps settling the rest of a turn when one destination dropped a child", asy
     ["a"],
     "dropped",
   );
-  const work = await turn.settle();
+  const work = await afterQuiet(() => turn.settle());
   expect(work.progress.turns).toMatchObject([{ status: "pending", reason: "settlement-pending" }]);
   expect(work.patches.length).toBeGreaterThan(0);
 });
