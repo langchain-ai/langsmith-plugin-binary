@@ -43,6 +43,7 @@ export interface LegacyGateAttempt {
     filePath: string;
     deadline: number;
     tryAcquire: TryAcquireFileLock;
-    retriedMissingPermission: boolean;
+    missingPermissionError?: unknown;
+    windowsDeniedRetries: number;
 }
 //# sourceMappingURL=models.d.ts.map

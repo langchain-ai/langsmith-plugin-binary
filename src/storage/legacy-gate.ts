@@ -18,6 +18,7 @@ import {
   FILE_LOCK_LEGACY_DIRECTORY_SUFFIX,
   FILE_LOCK_STALE_CLAIM_MS,
   FILE_LOCK_STALE_GATE_CLEANUP_WARNING,
+  FILE_LOCK_WINDOWS_DENIED_RETRIES,
 } from "./constants.js";
 import type {
   LegacyDirectoryFileLockGate,
@@ -31,10 +32,15 @@ import {
   removeFile,
   waitForNextScan,
 } from "./file-lock-support.js";
-import { FileLockTimeoutError } from "./errors.js";
+import { FileLockTimeoutError, StorageNotWritableError } from "./errors.js";
 import { errorCode } from "../utils/errors.js";
 import { removeDirectoryBestEffort } from "../utils/files/cleanup.js";
-import { FILE_EXISTS_CODE, FILE_MISSING_CODE } from "../utils/constants.js";
+import {
+  FILE_EXISTS_CODE,
+  FILE_MISSING_CODE,
+  PERMISSION_DENIED_CODE,
+  WINDOWS_PLATFORM,
+} from "../utils/constants.js";
 
 async function createLegacyGate(gatePath: string): Promise<LegacyDirectoryFileLockGate> {
   await mkdir(gatePath, { mode: FILE_LOCK_DIRECTORY_MODE });
@@ -43,6 +49,11 @@ async function createLegacyGate(gatePath: string): Promise<LegacyDirectoryFileLo
   await recordLegacyGateOwner(gatePath);
   startHeartbeat(join(gatePath, FILE_LOCK_COMPATIBLE_OWNER_FILE), gatePath);
   return { path: gatePath, dev: stat.dev, ino: stat.ino, birthtimeMs: stat.birthtimeMs };
+}
+
+function resetMissingPermission(attempt: LegacyGateAttempt): void {
+  attempt.missingPermissionError = undefined;
+  attempt.windowsDeniedRetries = 0;
 }
 
 async function waitOutContention(attempt: LegacyGateAttempt, error: unknown): Promise<void> {
@@ -63,19 +74,30 @@ async function waitOutContention(attempt: LegacyGateAttempt, error: unknown): Pr
   } catch (statError) {
     if (errorCode(statError) === FILE_MISSING_CODE) {
       if (code === FILE_EXISTS_CODE) {
-        attempt.retriedMissingPermission = false;
+        resetMissingPermission(attempt);
         await waitForNextScan(deadline, gatePath);
         return;
       }
-      if (permissionDenied && !attempt.retriedMissingPermission) {
-        attempt.retriedMissingPermission = true;
+      if (permissionDenied) {
+        const firstRetry = attempt.missingPermissionError === undefined;
+        attempt.missingPermissionError = new StorageNotWritableError(dirname(gatePath), error);
+        if (firstRetry) return;
+        if (
+          process.platform !== WINDOWS_PLATFORM ||
+          code !== PERMISSION_DENIED_CODE ||
+          attempt.windowsDeniedRetries >= FILE_LOCK_WINDOWS_DENIED_RETRIES
+        )
+          throw attempt.missingPermissionError;
+        attempt.windowsDeniedRetries += 1;
+        const denied = attempt.missingPermissionError;
+        await waitForNextScan(deadline, gatePath).catch(() => Promise.reject(denied));
         return;
       }
     }
     throw error;
   }
   if (!isContended) throw error;
-  attempt.retriedMissingPermission = false;
+  resetMissingPermission(attempt);
   await waitForNextScan(deadline, gatePath);
 }
 
@@ -91,10 +113,12 @@ export async function acquireLegacyDirectoryGate(
     filePath,
     deadline,
     tryAcquire,
-    retriedMissingPermission: false,
+    windowsDeniedRetries: 0,
   };
   for (;;) {
-    if (performance.now() >= deadline) throw new FileLockTimeoutError(gatePath);
+    if (performance.now() >= deadline) {
+      throw attempt.missingPermissionError ?? new FileLockTimeoutError(gatePath);
+    }
     try {
       return await createLegacyGate(gatePath);
     } catch (error) {

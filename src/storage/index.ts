@@ -6,4 +6,4 @@ export {
 } from "./file-lock.js";
 export { processIsAlive } from "./file-lock-support.js";
 export type { FileLockHandle } from "./models.js";
-export { FileLockTimeoutError } from "./errors.js";
+export { FileLockTimeoutError, StorageNotWritableError } from "./errors.js";

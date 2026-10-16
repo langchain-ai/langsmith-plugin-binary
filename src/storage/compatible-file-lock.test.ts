@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -17,9 +18,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { waitFor } from "../test-support/wait.js";
-import { FileLockTimeoutError } from "./index.js";
+import { FILE_LOCK_WINDOWS_DENIED_RETRIES, STORAGE_NOT_WRITABLE_FIX } from "./constants.js";
+import { FileLockTimeoutError, StorageNotWritableError } from "./index.js";
+import { waitForNextScan } from "./file-lock-support.js";
 import {
   acquireCompatibleDirectoryFileLock,
   tryAcquireFileLock,
@@ -129,6 +132,22 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
+vi.mock("./file-lock-support.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./file-lock-support.js")>();
+  return { ...actual, waitForNextScan: vi.fn(actual.waitForNextScan) };
+});
+
+const scanWaits = vi.mocked(waitForNextScan);
+const hostPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+
+function setPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(process, "platform", { value: platform, configurable: true });
+}
+
+function gateWaits(gatePath: string): number {
+  return scanWaits.mock.calls.filter(([, path]) => path === gatePath).length;
+}
+
 const CLAIM_SUFFIX = ".claims";
 const CLAIM_EXTENSION = ".json";
 
@@ -175,7 +194,12 @@ function startSharedHolder(filePath: string) {
   return { entered, finish: () => signals.finish?.(), run };
 }
 
+afterEach(() => {
+  if (hostPlatform) Object.defineProperty(process, "platform", hostPlatform);
+});
+
 beforeEach(() => {
+  scanWaits.mockClear();
   faults.gatePath = "";
   faults.mkdirCodes = [];
   faults.mkdirAttempts = 0;
@@ -357,17 +381,18 @@ it("treats Windows mkdir errors as contention only for an actual directory", asy
 
     const deniedArea = createArea();
     faults.gatePath = deniedArea.gatePath;
-    faults.mkdirCodes = [code, code];
+    faults.mkdirCodes = Array.from({ length: 100 }, () => code);
     const previousDenials = faults.mkdirFailures;
     try {
       await expect(
         acquireCompatibleDirectoryFileLock(deniedArea.filePath, { timeoutMs: 60 }),
       ).rejects.toMatchObject({ code });
-      expect(faults.mkdirFailures).toBe(previousDenials + 2);
+      expect(faults.mkdirFailures).toBeGreaterThanOrEqual(previousDenials + 2);
       expect(existsSync(deniedArea.gatePath)).toBe(false);
       expect(existsSync(deniedArea.claimsPath)).toBe(false);
     } finally {
       faults.gatePath = "";
+      faults.mkdirCodes = [];
       cleanDirectory(deniedArea.directory);
     }
   }
@@ -392,6 +417,156 @@ it("retries missing-gate permission errors after an existence race", async () =>
       faults.gatePath = "";
       cleanDirectory(area.directory);
     }
+  }
+});
+
+it("keeps retrying a Windows mid-delete permission error until the folder can be created", async () => {
+  setPlatform("win32");
+  const area = createArea();
+  faults.gatePath = area.gatePath;
+  faults.mkdirCodes = ["EPERM", "EPERM", "EPERM", "EPERM", "EPERM"];
+  try {
+    const handle = await acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 1_000 });
+    expect(faults.mkdirFailures).toBe(5);
+    expect(gateWaits(area.gatePath)).toBe(4);
+    expect(lstatSync(area.gatePath).isDirectory()).toBe(true);
+    await handle.release();
+  } finally {
+    faults.gatePath = "";
+    cleanDirectory(area.directory);
+  }
+});
+
+it.each([
+  ["linux", "EACCES"],
+  ["linux", "EPERM"],
+  ["win32", "EACCES"],
+] as const)("fails at once on a %s %s for a missing lock folder", async (platform, code) => {
+  setPlatform(platform);
+  const area = createArea();
+  faults.gatePath = area.gatePath;
+  faults.mkdirCodes = Array.from({ length: 100 }, () => code);
+  try {
+    const pending = acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 5_000 });
+    await expect(pending).rejects.toBeInstanceOf(StorageNotWritableError);
+    await expect(pending).rejects.toMatchObject({ code, folder: area.directory });
+    expect(faults.mkdirFailures).toBe(2);
+    expect(gateWaits(area.gatePath)).toBe(0);
+  } finally {
+    faults.gatePath = "";
+    faults.mkdirCodes = [];
+    cleanDirectory(area.directory);
+  }
+});
+
+it("reports the Windows permission error when the deadline passes", async () => {
+  setPlatform("win32");
+  const deniedArea = createArea();
+  faults.gatePath = deniedArea.gatePath;
+  faults.mkdirCodes = Array.from({ length: 1_000 }, () => "EPERM");
+  try {
+    const pending = acquireCompatibleDirectoryFileLock(deniedArea.filePath, { timeoutMs: 20 });
+    await expect(pending).rejects.toMatchObject({ code: "EPERM" });
+    await expect(pending).rejects.not.toBeInstanceOf(FileLockTimeoutError);
+  } finally {
+    faults.gatePath = "";
+    faults.mkdirCodes = [];
+    cleanDirectory(deniedArea.directory);
+  }
+
+  const area = createArea();
+  faults.gatePath = area.gatePath;
+  faults.mkdirCodes = ["EPERM", "EPERM"];
+  scanWaits.mockImplementationOnce((_deadline, path) =>
+    Promise.reject(new FileLockTimeoutError(path)),
+  );
+  try {
+    const pending = acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 1_000 });
+    await expect(pending).rejects.toBeInstanceOf(StorageNotWritableError);
+    await expect(pending).rejects.toMatchObject({ code: "EPERM" });
+  } finally {
+    faults.gatePath = "";
+    faults.mkdirCodes = [];
+    cleanDirectory(area.directory);
+  }
+});
+
+it("gives up on a denied Windows lock folder after a few quick tries", async () => {
+  setPlatform("win32");
+  const area = createArea();
+  faults.gatePath = area.gatePath;
+  faults.mkdirCodes = Array.from({ length: 1_000 }, () => "EPERM");
+  const started = performance.now();
+  try {
+    const pending = acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 5_000 });
+    await expect(pending).rejects.toBeInstanceOf(StorageNotWritableError);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(gateWaits(area.gatePath)).toBe(FILE_LOCK_WINDOWS_DENIED_RETRIES);
+    expect(faults.mkdirFailures).toBe(FILE_LOCK_WINDOWS_DENIED_RETRIES + 2);
+  } finally {
+    faults.gatePath = "";
+    faults.mkdirCodes = [];
+    cleanDirectory(area.directory);
+  }
+});
+
+it("gives each Windows mid-delete a fresh set of quick tries", async () => {
+  setPlatform("win32");
+  const area = createArea();
+  const deleting = Array.from({ length: FILE_LOCK_WINDOWS_DENIED_RETRIES + 1 }, () => "EPERM");
+  faults.gatePath = area.gatePath;
+  faults.mkdirCodes = [...deleting, "EEXIST", ...deleting];
+  try {
+    const handle = await acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 5_000 });
+    expect(lstatSync(area.gatePath).isDirectory()).toBe(true);
+    await handle.release();
+  } finally {
+    faults.gatePath = "";
+    faults.mkdirCodes = [];
+    cleanDirectory(area.directory);
+  }
+});
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "tells the user which storage folder needs its permissions fixed",
+  async () => {
+    const area = createArea();
+    chmodSync(area.directory, 0o500);
+    try {
+      const pending = acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 5_000 });
+      await expect(pending).rejects.toThrow(`${area.directory}. ${STORAGE_NOT_WRITABLE_FIX}`);
+    } finally {
+      chmodSync(area.directory, 0o700);
+      cleanDirectory(area.directory);
+    }
+  },
+);
+
+it("times out rather than reporting an earlier permission error once the folder was seen", async () => {
+  const raceArea = createArea();
+  faults.gatePath = raceArea.gatePath;
+  faults.mkdirCodes = ["EPERM", ...Array.from({ length: 1_000 }, () => "EEXIST")];
+  try {
+    await expect(
+      acquireCompatibleDirectoryFileLock(raceArea.filePath, { timeoutMs: 60 }),
+    ).rejects.toBeInstanceOf(FileLockTimeoutError);
+  } finally {
+    faults.gatePath = "";
+    faults.mkdirCodes = [];
+    cleanDirectory(raceArea.directory);
+  }
+
+  const heldArea = createArea();
+  faults.gatePath = heldArea.gatePath;
+  faults.mkdirCodes = ["EPERM", "EEXIST"];
+  faults.createGateBeforeRejectAt = faults.mkdirAttempts + 2;
+  try {
+    await expect(
+      acquireCompatibleDirectoryFileLock(heldArea.filePath, { timeoutMs: 60 }),
+    ).rejects.toBeInstanceOf(FileLockTimeoutError);
+  } finally {
+    faults.gatePath = "";
+    cleanDirectory(heldArea.directory);
   }
 });
 

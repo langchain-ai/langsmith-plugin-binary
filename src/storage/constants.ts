@@ -51,6 +51,11 @@ export const FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS = 5_000;
 export const FILE_LOCK_COMPATIBLE_STALE_SUFFIX = ".stale";
 export const FILE_LOCK_GATE_CLEANUP_WARNING = "Could not remove a half-created lock folder:";
 export const FILE_LOCK_STALE_GATE_CLEANUP_WARNING = "Could not remove an old lock folder:";
+export const FILE_LOCK_WINDOWS_DENIED_RETRIES = 5;
+export const STORAGE_NOT_WRITABLE_ERROR_NAME = "StorageNotWritableError";
+export const STORAGE_NOT_WRITABLE_MESSAGE = "LangSmith can't write to its storage folder";
+export const STORAGE_NOT_WRITABLE_FIX =
+  "Fix that folder's permissions so your user account can create files in it, and tracing will resume.";
 export const STORAGE_STALE_FILE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 export const STORAGE_STALE_DIRECTORY_WARNING = "Could not remove an old empty folder:";
 export const STORAGE_STALE_REMOVAL_WARNING = "Removed an old leftover file:";
