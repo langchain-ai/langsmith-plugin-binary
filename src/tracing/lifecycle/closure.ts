@@ -2,6 +2,7 @@ import {
   buildCodingAgentMetadata,
   prepareCodingAgentMetadataProvenance,
 } from "../../metadata/index.js";
+import { ATTRIBUTION_IDENTIFIER_KEY, GIT_METADATA_KEYS } from "../../metadata/constants.js";
 import type { CodingAgentIntegration } from "../../metadata/models.js";
 import type {
   CaptureScope,
@@ -71,11 +72,13 @@ export function indexCaptureSources(
 }
 
 function attributionMetadataReady(projected: Record<string, unknown>): boolean {
+  const repository = projected[GIT_METADATA_KEYS.repository];
+  const identifier = projected[ATTRIBUTION_IDENTIFIER_KEY];
   return (
-    typeof projected["repository_name"] === "string" &&
-    projected["repository_name"].length > 0 &&
-    typeof projected["ls_attribution_identifier"] === "string" &&
-    projected["ls_attribution_identifier"].length > 0
+    typeof repository === "string" &&
+    repository.length > 0 &&
+    typeof identifier === "string" &&
+    identifier.length > 0
   );
 }
 

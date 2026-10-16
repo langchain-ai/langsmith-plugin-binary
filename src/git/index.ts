@@ -6,6 +6,7 @@ export {
   getRepoName,
   getRepoRoot,
   getRepoUrl,
+  getRepositoryMetadata,
   parseRepoName,
 } from "./repository.js";
 export { nearestExistingDirectory } from "../utils/paths.js";

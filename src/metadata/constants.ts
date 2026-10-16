@@ -11,6 +11,36 @@ import type {
 export const CODING_AGENT_SCHEMA_VERSION = "coding-agent-v1";
 export const CODING_AGENT_PURPOSE = "coding";
 
+// Repository and author keys attached to runs
+export const GIT_METADATA_KEYS = {
+  repository: "ls_git_repo",
+  repositoryUrl: "ls_git_repo_url",
+  provider: "ls_repo_provider",
+  branch: "ls_git_branch",
+  commit: "ls_git_commit_hash",
+} as const;
+export const LEGACY_GIT_METADATA_KEYS = {
+  repository: "repository_name",
+  repositoryUrl: "repository_url",
+  provider: "repository_provider",
+  branch: "git_branch",
+  commit: "git_commit_sha",
+} as const satisfies Record<keyof typeof GIT_METADATA_KEYS, string>;
+export const ATTRIBUTION_IDENTIFIER_KEY = "ls_attribution_identifier";
+export const REPOSITORY_METADATA_KEYS = [
+  GIT_METADATA_KEYS.repository,
+  GIT_METADATA_KEYS.provider,
+  GIT_METADATA_KEYS.repositoryUrl,
+  GIT_METADATA_KEYS.branch,
+  GIT_METADATA_KEYS.commit,
+  LEGACY_GIT_METADATA_KEYS.repository,
+  LEGACY_GIT_METADATA_KEYS.provider,
+  LEGACY_GIT_METADATA_KEYS.repositoryUrl,
+  LEGACY_GIT_METADATA_KEYS.branch,
+  LEGACY_GIT_METADATA_KEYS.commit,
+  ATTRIBUTION_IDENTIFIER_KEY,
+] as const;
+
 // Run and agent types
 export const CODING_AGENT_RUN_TYPES = [
   "root",

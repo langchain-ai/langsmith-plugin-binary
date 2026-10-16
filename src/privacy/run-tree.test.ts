@@ -26,7 +26,7 @@ function metadata(threadId: string): Record<string, unknown> {
     usageMetadata: { input_tokens: 2, output_tokens: 1, provider_note: "kept" },
     base: {
       thread_id: `${PRIVATE_MARKER}_spoofed_thread`,
-      repository_name: PRIVATE_MARKER,
+      ls_git_repo: PRIVATE_MARKER,
       custom: PRIVATE_MARKER,
     },
   });

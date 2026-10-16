@@ -1,5 +1,6 @@
 import { CODING_AGENT_INTEGRATION_POLICIES, CODING_AGENT_PURPOSE, CODING_AGENT_SCHEMA_VERSION, TRUSTED_METADATA, } from "./constants.js";
 import { CODING_AGENT_V1_CONTRACT } from "./contract.js";
+import { withBothGitMetadataNames } from "./git-names.js";
 import { normalizeProviderMetadata } from "./validation.js";
 export function buildCodingAgentMetadata(options) {
     const policy = CODING_AGENT_INTEGRATION_POLICIES[options.integration];
@@ -56,11 +57,12 @@ export function buildCodingAgentMetadata(options) {
     }
     const pieces = [identity, explicit, provider, options.runSpecific, options.base];
     const full = policy.fullModePrecedence === "custom-wins" ? pieces : pieces.toReversed();
-    const result = {};
+    const merged = {};
     for (const piece of full) {
         if (piece)
-            Object.assign(result, piece);
+            Object.assign(merged, piece);
     }
+    const result = withBothGitMetadataNames(merged);
     Object.defineProperty(result, TRUSTED_METADATA, { value: trusted });
     return result;
 }

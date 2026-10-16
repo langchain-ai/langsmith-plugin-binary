@@ -182,7 +182,7 @@ it("uses a new settlement event when attribution changes and orders same-time re
   await turn.receipts(await turn.sources());
   const first = (await turn.settle()).patches[0]?.scope.eventId;
   await new Promise((resolve) => setTimeout(resolve, 5));
-  const release = runPatch("root", {}, { base: { ...REPOSITORY, git_branch: "release" } });
+  const release = runPatch("root", {}, { base: { ...REPOSITORY, ls_git_branch: "release" } });
   await save(turn.bridge, "turn", "b-revision", release, turnEvidence(), [scope("a-child")]);
   const captures = await turn.store.enumerate("claude-code", "session-1");
   await turn.receipts(captures);
@@ -198,7 +198,7 @@ it("uses a new settlement event when attribution changes and orders same-time re
     ({ record }) => record.eventKind === "run-settlement-patch" && record.runId === CHILD_ID,
   );
   expect(settlements.at(-1)?.record.metadataProvenance).toMatchObject({
-    base: { git_branch: "release" },
+    base: { ls_git_branch: "release" },
   });
 });
 

@@ -1,6 +1,5 @@
-declare const REPOSITORY_METADATA_KEYS: readonly ["repository_name", "repository_provider", "repository_url", "git_branch", "git_commit_sha", "ls_attribution_identifier"];
-declare const REPOSITORY_NAME_KEY = "repository_name";
-declare const ATTRIBUTION_IDENTIFIER_KEY = "ls_attribution_identifier";
+import { ATTRIBUTION_IDENTIFIER_KEY, REPOSITORY_METADATA_KEYS } from "../../metadata/constants.js";
+declare const REPOSITORY_NAME_KEY: "ls_git_repo";
 export declare const SETTLEMENT_EVENT_ID_PREFIX = "turn-settlement-";
 export { ATTRIBUTION_IDENTIFIER_KEY, REPOSITORY_METADATA_KEYS, REPOSITORY_NAME_KEY };
 export declare const SETTLEMENT_DROPPED_RUN_WARNING = "Trace work for run {runId} was dropped, so it is left out; the rest of its turn is still being finished.";
