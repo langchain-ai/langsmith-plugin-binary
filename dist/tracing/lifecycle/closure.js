@@ -1,4 +1,5 @@
 import { buildCodingAgentMetadata, prepareCodingAgentMetadataProvenance, } from "../../metadata/index.js";
+import { ATTRIBUTION_IDENTIFIER_KEY, GIT_METADATA_KEYS } from "../../metadata/constants.js";
 import { ownDataField, requireBoolean, requireNonBlankString, requireOwnDataField, requirePlainRecord, requireStringArray, } from "../../utils/validation/objects.js";
 import { LIFECYCLE_ATTRIBUTION_READY_FIELD, LIFECYCLE_PATCH_EVENT_KIND, LIFECYCLE_POST_EVENT_KIND, LIFECYCLE_TURN_CLOSURE_STATES, } from "./constants.js";
 import { scopeKey, scopeOf } from "../../storage/capture/scope.js";
@@ -27,10 +28,12 @@ export function indexCaptureSources(sources) {
     return new Map(sources.map((source) => [scopeKey(scopeOf(source)), source]));
 }
 function attributionMetadataReady(projected) {
-    return (typeof projected["repository_name"] === "string" &&
-        projected["repository_name"].length > 0 &&
-        typeof projected["ls_attribution_identifier"] === "string" &&
-        projected["ls_attribution_identifier"].length > 0);
+    const repository = projected[GIT_METADATA_KEYS.repository];
+    const identifier = projected[ATTRIBUTION_IDENTIFIER_KEY];
+    return (typeof repository === "string" &&
+        repository.length > 0 &&
+        typeof identifier === "string" &&
+        identifier.length > 0);
 }
 export async function withholdUnresolvedEndTime(input) {
     const { record, submission, sourceSnapshot, sourceByScope, integration, destinations, readOutcome, } = input;

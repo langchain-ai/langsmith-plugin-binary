@@ -37,7 +37,7 @@ vi.mock("../delivery/index.js", async (importOriginal) => {
   };
 });
 
-const branch = (git_branch: string) => ({ base: { ...REPOSITORY, git_branch } });
+const branch = (ls_git_branch: string) => ({ base: { ...REPOSITORY, ls_git_branch } });
 
 it("keeps a stale settlement pass from landing after a newer source revision", async () => {
   const endpoint = await localEndpoint();
@@ -69,7 +69,7 @@ it("keeps a stale settlement pass from landing after a newer source revision", a
     .filter(({ method, path }) => method === "PATCH" && path.endsWith(CHILD_ID))
     .map(
       ({ payload }) =>
-        (payload["extra"] as { metadata: { git_branch?: string } }).metadata.git_branch,
+        (payload["extra"] as { metadata: { ls_git_branch?: string } }).metadata.ls_git_branch,
     );
   expect(branches.at(-1)).toBe("release");
   expect(branches.slice(branches.indexOf("release"))).not.toContain("main");

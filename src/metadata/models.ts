@@ -1,3 +1,5 @@
+import type { GIT_METADATA_KEYS, REPOSITORY_METADATA_KEYS } from "./constants.js";
+
 export type CodingAgentIntegration = "claude-code" | "cursor" | "openai-codex";
 
 export type CodingAgentSchemaIntegration = CodingAgentIntegration | "deepagents-code" | "pi";
@@ -113,3 +115,9 @@ export interface MetadataValidationIssue {
   key: string;
   reason: "missing" | "type" | "value" | "scope" | "integration";
 }
+
+export type GitMetadataRole = keyof typeof GIT_METADATA_KEYS;
+
+export type RepositoryAttribution = Partial<
+  Record<(typeof REPOSITORY_METADATA_KEYS)[number], string>
+>;

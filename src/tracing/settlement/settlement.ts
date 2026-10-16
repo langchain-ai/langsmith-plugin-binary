@@ -4,11 +4,13 @@ import {
   REPOSITORY_NAME_KEY,
 } from "./constants.js";
 import type { Attribution, RecordedRun, TurnRecord } from "./models.js";
+import { withBothGitMetadataNames } from "../../metadata/git-names.js";
 
 export function attributionOf(metadata: Record<string, unknown> | undefined): Attribution {
   const carried: Attribution = {};
+  const named = withBothGitMetadataNames(metadata ?? {});
   for (const key of REPOSITORY_METADATA_KEYS) {
-    const value = metadata?.[key];
+    const value = named[key];
     if (typeof value === "string" && value.length > 0) carried[key] = value;
   }
   return carried;

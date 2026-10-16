@@ -26,6 +26,47 @@ describe("coding-agent-v1 metadata contract", () => {
     },
   );
 
+  it("sends git fields under both their old and new names whichever one a plugin set", () => {
+    const options = {
+      threadId: "session",
+      agentType: "root",
+      runType: "root",
+    } as const;
+    const fromOld = buildCodingAgentMetadata({
+      ...options,
+      integration: "cursor",
+      base: { repository_name: "acme/old", git_commit_sha: "abc" },
+    });
+    const fromNew = buildCodingAgentMetadata({
+      ...options,
+      integration: "claude-code",
+      base: { ls_git_repo: "acme/new", ls_git_branch: "trunk" },
+    });
+
+    expect(fromOld).toMatchObject({
+      repository_name: "acme/old",
+      ls_git_repo: "acme/old",
+      git_commit_sha: "abc",
+      ls_git_commit_hash: "abc",
+    });
+    expect(fromNew).toMatchObject({
+      ls_git_repo: "acme/new",
+      repository_name: "acme/new",
+      ls_git_branch: "trunk",
+      git_branch: "trunk",
+    });
+    expect(fromNew).not.toHaveProperty("git_commit_sha");
+    expect(
+      buildCodingAgentMetadata({
+        ...options,
+        integration: "claude-code",
+        base: { ls_git_repo: "acme/new", repository_name: "custom/name" },
+      }),
+    ).toMatchObject({ ls_git_repo: "acme/new", repository_name: "custom/name" });
+    expect(metadataForMode(fromOld, "cursor", "metadata")).not.toHaveProperty("ls_git_repo");
+    expect(metadataForMode(fromOld, "cursor", "metadata")).not.toHaveProperty("repository_name");
+  });
+
   it("preserves Cursor's native tool name in muted metadata when it matches the run name", () => {
     const metadata = buildCodingAgentMetadata({
       integration: "cursor",

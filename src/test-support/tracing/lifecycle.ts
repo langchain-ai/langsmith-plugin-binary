@@ -28,11 +28,11 @@ import type {
 export { CHILD_ID, ROOT_ID, SIBLING_ID };
 const ROOT_ORDER = `20261010T120000000000Z${ROOT_ID}`;
 export const REPOSITORY = {
-  repository_name: "acme/project",
-  repository_provider: "github",
-  repository_url: "https://github.com/acme/project",
-  git_branch: "main",
-  git_commit_sha: "abc123",
+  ls_git_repo: "acme/project",
+  ls_repo_provider: "github",
+  ls_git_repo_url: "https://github.com/acme/project",
+  ls_git_branch: "main",
+  ls_git_commit_hash: "abc123",
 };
 
 const RUNS = {

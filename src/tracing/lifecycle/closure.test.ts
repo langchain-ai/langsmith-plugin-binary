@@ -29,7 +29,7 @@ import type { LifecycleBridgeOptions } from "./models.js";
 
 const END = "2026-10-10T12:00:01.000Z";
 const CHILD_END = "2026-10-10T12:00:00.900Z";
-const OWNER = { repository_name: "acme/project", ls_attribution_identifier: "Owner" };
+const OWNER = { ls_git_repo: "acme/project", ls_attribution_identifier: "Owner" };
 const subagent = { metadata: { runType: "subagent" as const }, privacyMode: "metadata" as const };
 let endpoint: LocalEndpoint;
 let root: string;
@@ -116,17 +116,13 @@ it("keeps a parent end time when its child from another turn was already deliver
 
 it("keeps a root open until its child has been delivered", async () => {
   const lifecycle = await rootAndChild(bridge(), {
-    base: { repository_name: "acme/project" },
+    base: { ls_git_repo: "acme/project" },
     run: { end_time: END },
   });
   endpoint.failing.add(0);
   await expect(lifecycle.drain()).resolves.toMatchObject({ failed: 2 });
   expect(endTimes(0).slice(0, 2)).toEqual([undefined, undefined]);
-  const revision = runPatch(
-    "root",
-    { end_time: END },
-    { base: { repository_name: "acme/project" } },
-  );
+  const revision = runPatch("root", { end_time: END }, { base: { ls_git_repo: "acme/project" } });
   await save(lifecycle, "turn", "root-end", revision, turnEvidence(), [scope("turn", "root")]);
   endpoint.failing.clear();
   await lifecycle.drain();
@@ -146,7 +142,7 @@ it("still sends a root end time after a tool post was rejected for good", async 
   endpoint.rejectedIds.add(CHILD_ID);
   const lifecycle = await rootAndChild(
     bridge(),
-    { base: { repository_name: "acme/project" }, run: { end_time: END } },
+    { base: { ls_git_repo: "acme/project" }, run: { end_time: END } },
     { metadata: { runType: "tool" }, run: { end_time: CHILD_END } },
   );
   for (let pass = 0; pass < 3; pass += 1) await lifecycle.drain();
@@ -302,7 +298,7 @@ it.each(["reject", "down"] as const)(
     bad.state.mode = mode;
     const lifecycle = await rootAndChild(
       await replicaBridge(good, bad),
-      { base: { repository_name: "acme/project" }, run: { end_time: END } },
+      { base: { ls_git_repo: "acme/project" }, run: { end_time: END } },
       { metadata: { runType: "tool" }, run: { end_time: CHILD_END } },
     );
     for (let pass = 0; pass < 3; pass += 1) await lifecycle.drain();
@@ -399,7 +395,7 @@ it("keeps stored error status and private root details on settlement patches", a
   const marker = "private-root-repo-marker";
   const rootOptions = {
     privacyMode: "metadata" as const,
-    base: { repository_name: "private/project", repository_url: `https://x.invalid/${marker}` },
+    base: { ls_git_repo: "private/project", ls_git_repo_url: `https://x.invalid/${marker}` },
     run: { end_time: END },
   };
   const child = {
@@ -470,7 +466,7 @@ it("keeps a child's explicit Git commit across a sparse patch and a conflicting 
     lifecycle,
     "turn",
     "child",
-    runPost("child", { base: { git_commit_sha: "A" } }),
+    runPost("child", { base: { ls_git_commit_hash: "A" } }),
     open,
     [scope("turn", "root")],
   );
@@ -478,18 +474,18 @@ it("keeps a child's explicit Git commit across a sparse patch and a conflicting 
     scope("turn", "child"),
   ]);
   const sibling = runPost("sibling", {
-    base: { repository_name: "acme/project", git_commit_sha: "B" },
+    base: { ls_git_repo: "acme/project", ls_git_commit_hash: "B" },
   });
   await save(lifecycle, "turn", "sibling", sibling, open, [scope("turn", "root")]);
   await expect(lifecycle.drain()).resolves.toMatchObject({ delivered: 6, pending: 0 });
   const patches = endpoint.requests.filter(({ path }) => path.endsWith(CHILD_ID));
   expect(patches.at(-1)?.payload["extra"]).toMatchObject({
-    metadata: { repository_name: "acme/project", git_commit_sha: "A" },
+    metadata: { ls_git_repo: "acme/project", ls_git_commit_hash: "A" },
   });
 });
 
 const branch = (name: string) => ({
-  base: { repository_name: "acme/project", git_branch: name },
+  base: { ls_git_repo: "acme/project", ls_git_branch: name },
 });
 
 it("delivers same-time settlement revisions in dependency order", async () => {
@@ -541,7 +537,7 @@ it("delivers same-time settlement revisions in dependency order", async () => {
       .filter(({ path }) => path.endsWith(CHILD_ID))
       .map(
         ({ payload }) =>
-          (payload["extra"] as { metadata: { git_branch: string } }).metadata.git_branch,
+          (payload["extra"] as { metadata: { ls_git_branch: string } }).metadata.ls_git_branch,
       );
     expect(branches).toEqual(["main", "branch-b", "branch-c"]);
   } finally {
@@ -562,7 +558,7 @@ it("removes every file of a settled turn, large content included", async () => {
     "child",
     runPost("child", {
       metadata: { runType: "subagent" },
-      base: { repository_name: "acme/project" },
+      base: { ls_git_repo: "acme/project" },
       run: { end_time: CHILD_END },
     }),
     turnEvidence("authoritative", [], CHILD_ID),
@@ -608,7 +604,7 @@ async function childWhoseParentWasRemoved() {
     "child",
     runPost("child", {
       metadata: { runType: "subagent" },
-      base: { repository_name: "acme/project" },
+      base: { ls_git_repo: "acme/project" },
       run: { end_time: CHILD_END },
     }),
     turnEvidence("authoritative", [], CHILD_ID),
@@ -644,7 +640,7 @@ it("keeps an old child turn while its parent is still on disk", async () => {
     "child",
     runPost("child", {
       metadata: { runType: "subagent" },
-      base: { repository_name: "acme/project" },
+      base: { ls_git_repo: "acme/project" },
       run: { end_time: CHILD_END },
     }),
     turnEvidence("authoritative", [], CHILD_ID),

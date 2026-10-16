@@ -10,6 +10,7 @@ import {
   getRepoName,
   getRepoRoot,
   getRepoUrl,
+  getRepositoryMetadata,
   parseRepoName,
 } from "./repository.js";
 import { rootFromGitMarker } from "./paths.js";
@@ -94,6 +95,18 @@ describe("repository probes", () => {
     expect(getRepoUrl("github", "acme/probe")).toBe("https://github.com/acme/probe");
     expect(getRepoUrl("unknown", "acme/probe")).toBeUndefined();
     expect(getGitInfo(repo)).toEqual({ branch: "trunk", commit });
+    expect(getRepositoryMetadata(repo)).toEqual({
+      ls_git_repo: "acme/probe",
+      ls_repo_provider: "github",
+      ls_git_repo_url: "https://github.com/acme/probe",
+      ls_git_branch: "trunk",
+      ls_git_commit_hash: commit,
+      repository_name: "acme/probe",
+      repository_provider: "github",
+      repository_url: "https://github.com/acme/probe",
+      git_branch: "trunk",
+      git_commit_sha: commit,
+    });
     expect(getGitUserName(repo, { githubLogin: fallback })).toBe("Git Probe User");
     expect(fallback).not.toHaveBeenCalled();
     git(repo, "config", "--unset", "user.name");

@@ -84,7 +84,7 @@ async function deliverAll(
 
 const child = () =>
   runPost("child", {
-    base: { repository_name: "acme/project" },
+    base: { ls_git_repo: "acme/project" },
     run: { end_time: "2026-10-10T12:00:01.000Z" },
   });
 

@@ -11,7 +11,7 @@ describe("what a turn settles on", () => {
   it("keeps the repository the turn's own root already carries", () => {
     const turn = record({ ...bare, ...inAlpha }, [recorded("Glob", { ...bare, ...inBeta })]);
 
-    expect(turnAttribution(turn)).toMatchObject({ repository_name: "acme/a" });
+    expect(turnAttribution(turn)).toMatchObject({ ls_git_repo: "acme/a" });
   });
 
   // Catches evidence picked in the order uploads finished rather than the order the
@@ -23,14 +23,14 @@ describe("what a turn settles on", () => {
     ]);
     turn.children.reverse();
 
-    expect(turnAttribution(turn)).toMatchObject({ repository_name: "acme/a" });
+    expect(turnAttribution(turn)).toMatchObject({ ls_git_repo: "acme/a" });
   });
 
   // Catches an author taken from a tool working in a different repository, which
   // credits one codebase's work to someone who never touched it.
   it("leaves the author alone when the only one on offer worked somewhere else", () => {
     const turn = record(bare, [
-      recorded("Glob", { ...bare, repository_name: "acme/a" }, 1),
+      recorded("Glob", { ...bare, ls_git_repo: "acme/a" }, 1),
       recorded("Edit", { ...bare, ...inBeta }, 2),
     ]);
 
@@ -56,7 +56,7 @@ describe("what one run ends up with", () => {
   // Catches a fill that drops one repository's branch or commit onto another's name,
   // which is worse than leaving the gap.
   it("never mixes one repository's name with another's branch", () => {
-    const partial = { ...bare, repository_name: "acme/b", git_branch: "trunk-b" };
+    const partial = { ...bare, ls_git_repo: "acme/b", ls_git_branch: "trunk-b" };
 
     expect(metadataAfterFill(recorded("Edit", partial), inAlpha)).toBeUndefined();
   });
@@ -78,11 +78,24 @@ describe("what one run ends up with", () => {
   // Catches a fill that only adds the repository and leaves the author missing, when
   // the author is half of what the turn was reconciled for.
   it("fills the author onto a run that only knew the repository", () => {
-    const run = recorded("Edit", { ...bare, repository_name: "acme/a" });
+    const run = recorded("Edit", { ...bare, ls_git_repo: "acme/a" });
 
     expect(metadataAfterFill(run, inAlpha)).toMatchObject({
       ls_attribution_identifier: "Alpha Owner",
-      git_branch: "trunk-a",
+      ls_git_branch: "trunk-a",
+    });
+  });
+
+  // Catches a plugin that still writes only the old names losing its turn's repository.
+  it("settles on a repository a tool recorded under the old names", () => {
+    const turn = record(bare, [
+      recorded("Edit", { ...bare, repository_name: "acme/a", git_branch: "trunk-a" }),
+    ]);
+
+    expect(turnAttribution(turn)).toMatchObject({
+      ls_git_repo: "acme/a",
+      repository_name: "acme/a",
+      ls_git_branch: "trunk-a",
     });
   });
 });

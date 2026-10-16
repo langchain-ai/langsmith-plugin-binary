@@ -1,5 +1,21 @@
 export declare const CODING_AGENT_SCHEMA_VERSION = "coding-agent-v1";
 export declare const CODING_AGENT_PURPOSE = "coding";
+export declare const GIT_METADATA_KEYS: {
+    readonly repository: "ls_git_repo";
+    readonly repositoryUrl: "ls_git_repo_url";
+    readonly provider: "ls_repo_provider";
+    readonly branch: "ls_git_branch";
+    readonly commit: "ls_git_commit_hash";
+};
+export declare const LEGACY_GIT_METADATA_KEYS: {
+    readonly repository: "repository_name";
+    readonly repositoryUrl: "repository_url";
+    readonly provider: "repository_provider";
+    readonly branch: "git_branch";
+    readonly commit: "git_commit_sha";
+};
+export declare const ATTRIBUTION_IDENTIFIER_KEY = "ls_attribution_identifier";
+export declare const REPOSITORY_METADATA_KEYS: readonly ["ls_git_repo", "ls_repo_provider", "ls_git_repo_url", "ls_git_branch", "ls_git_commit_hash", "repository_name", "repository_provider", "repository_url", "git_branch", "git_commit_sha", "ls_attribution_identifier"];
 export declare const CODING_AGENT_RUN_TYPES: readonly ["root", "llm", "tool", "subagent", "interrupted"];
 export declare const CODING_AGENT_RUN_SCOPES: {
     readonly all: readonly ["root", "llm", "tool", "subagent", "interrupted"];

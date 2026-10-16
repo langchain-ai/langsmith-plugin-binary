@@ -9,6 +9,7 @@ import type {
   CodingAgentMetadataOptions,
   CodingAgentMetadataWithTrustedProjection,
 } from "./models.js";
+import { withBothGitMetadataNames } from "./git-names.js";
 import { normalizeProviderMetadata } from "./validation.js";
 
 export function buildCodingAgentMetadata(
@@ -59,10 +60,11 @@ export function buildCodingAgentMetadata(
   }
   const pieces = [identity, explicit, provider, options.runSpecific, options.base];
   const full = policy.fullModePrecedence === "custom-wins" ? pieces : pieces.toReversed();
-  const result: Record<string, unknown> = {};
+  const merged: Record<string, unknown> = {};
   for (const piece of full) {
-    if (piece) Object.assign(result, piece);
+    if (piece) Object.assign(merged, piece);
   }
+  const result = withBothGitMetadataNames(merged);
   Object.defineProperty(result, TRUSTED_METADATA, { value: trusted });
   return result;
 }

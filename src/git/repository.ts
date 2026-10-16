@@ -24,6 +24,9 @@ import type {
   GitRepositoryName,
   GitUserNameOptions,
 } from "./models.js";
+import { GIT_METADATA_KEYS } from "../metadata/constants.js";
+import { withBothGitMetadataNames } from "../metadata/git-names.js";
+import type { RepositoryAttribution } from "../metadata/models.js";
 
 export function parseRepoName(remoteUrl: string): GitRepositoryName | undefined {
   const value = remoteUrl.trim();
@@ -119,6 +122,21 @@ export function getGitInfo(cwd: string): GitInfo {
     if (commit) result.commit = commit;
   } catch {}
   return result;
+}
+
+export function getRepositoryMetadata(cwd: string): RepositoryAttribution {
+  const metadata: RepositoryAttribution = {};
+  const repoName = getRepoName(cwd);
+  if (repoName) {
+    metadata[GIT_METADATA_KEYS.repository] = repoName.name;
+    metadata[GIT_METADATA_KEYS.provider] = repoName.provider;
+    const url = getRepoUrl(repoName.provider, repoName.name);
+    if (url) metadata[GIT_METADATA_KEYS.repositoryUrl] = url;
+  }
+  const gitInfo = getGitInfo(cwd);
+  if (gitInfo.branch) metadata[GIT_METADATA_KEYS.branch] = gitInfo.branch;
+  if (gitInfo.commit) metadata[GIT_METADATA_KEYS.commit] = gitInfo.commit;
+  return withBothGitMetadataNames(metadata);
 }
 
 export function githubLoginLookup(): string {

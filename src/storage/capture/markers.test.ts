@@ -111,7 +111,7 @@ it("keeps what the settled turn learned, and merges late runs into the same mark
   const { root, store } = freshStore();
   await store.capture(input("root"));
   await deliver(store, "root");
-  const settled = { rootRunId: "run-root", attribution: { repository_name: "acme/project" } };
+  const settled = { rootRunId: "run-root", attribution: { ls_git_repo: "acme/project" } };
   await store.removeTurn([(await store.read(input("root")))!], settled);
   await expect(store.readSettledTurn("claude-code", "session", "turn")).resolves.toEqual(settled);
   await store.capture(input("late"));

@@ -5,20 +5,20 @@
 import type { RecordedRun, TurnRecord } from "../tracing/settlement/models.js";
 
 export const inAlpha = {
-  repository_name: "acme/a",
-  repository_provider: "github",
-  repository_url: "https://github.com/acme/a",
-  git_branch: "trunk-a",
-  git_commit_sha: "aaaa",
+  ls_git_repo: "acme/a",
+  ls_repo_provider: "github",
+  ls_git_repo_url: "https://github.com/acme/a",
+  ls_git_branch: "trunk-a",
+  ls_git_commit_hash: "aaaa",
   ls_attribution_identifier: "Alpha Owner",
 };
 
 export const inBeta = {
-  repository_name: "acme/b",
-  repository_provider: "gitlab",
-  repository_url: "https://gitlab.com/acme/b",
-  git_branch: "trunk-b",
-  git_commit_sha: "bbbb",
+  ls_git_repo: "acme/b",
+  ls_repo_provider: "gitlab",
+  ls_git_repo_url: "https://gitlab.com/acme/b",
+  ls_git_branch: "trunk-b",
+  ls_git_commit_hash: "bbbb",
   ls_attribution_identifier: "Beta Owner",
 };
 

@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { GIT_COMMAND_TIMEOUT_MS, GIT_LOCATION_ENV_KEYS, GIT_PROVIDERS, NOT_A_REPOSITORY, PROVIDER_HOSTS, REMOTE_GIT_SUFFIX, REMOTE_LINE_WHITESPACE, REMOTE_PATH_EDGE_SLASHES, REMOTE_PATH_TRAILING_SLASHES, SCP_REMOTE_PATTERN, GH_LOGIN_ARGUMENTS, GH_LOGIN_COMMAND, GH_LOGIN_TIMEOUT_MS, GH_LOGIN_PATTERN, GH_LOGIN_NULL_OUTPUT, } from "./constants.js";
+import { GIT_METADATA_KEYS } from "../metadata/constants.js";
+import { withBothGitMetadataNames } from "../metadata/git-names.js";
 export function parseRepoName(remoteUrl) {
     const value = remoteUrl.trim();
     try {
@@ -101,6 +103,23 @@ export function getGitInfo(cwd) {
     }
     catch { }
     return result;
+}
+export function getRepositoryMetadata(cwd) {
+    const metadata = {};
+    const repoName = getRepoName(cwd);
+    if (repoName) {
+        metadata[GIT_METADATA_KEYS.repository] = repoName.name;
+        metadata[GIT_METADATA_KEYS.provider] = repoName.provider;
+        const url = getRepoUrl(repoName.provider, repoName.name);
+        if (url)
+            metadata[GIT_METADATA_KEYS.repositoryUrl] = url;
+    }
+    const gitInfo = getGitInfo(cwd);
+    if (gitInfo.branch)
+        metadata[GIT_METADATA_KEYS.branch] = gitInfo.branch;
+    if (gitInfo.commit)
+        metadata[GIT_METADATA_KEYS.commit] = gitInfo.commit;
+    return withBothGitMetadataNames(metadata);
 }
 export function githubLoginLookup() {
     return execFileSync(GH_LOGIN_COMMAND, GH_LOGIN_ARGUMENTS, {
