@@ -131,6 +131,7 @@ export interface TurnSettlementState {
   rootRunId: string;
   childRunIds: ReadonlySet<string>;
   closureState: TurnEvidenceClosureState;
+  quiet: boolean;
   dependencies: CaptureScope[];
   attribution: Attribution | undefined;
   recorded: ReadonlyMap<string, RecordedRun>;

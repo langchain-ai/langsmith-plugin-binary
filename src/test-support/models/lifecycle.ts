@@ -20,7 +20,9 @@ export interface LocalEndpoint {
   failing: Set<number>;
   failingPaths: Set<string>;
   rejectedIds: Set<string>;
-  state: { mode: "ok" | "down" | "hang" | "reject" };
+  updatedIds: Set<string>;
+  readonly schemaRejections: number;
+  state: { mode: "ok" | "down" | "hang" | "reject" | "strict" };
   close(): Promise<void>;
 }
 

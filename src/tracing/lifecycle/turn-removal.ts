@@ -34,12 +34,23 @@ export async function removeSettledTurns(options: RemoveSettledTurnsOptions): Pr
       ({ record }) => record.runId,
     ),
   );
-  for (const [turnId, records] of childTurns) {
-    const parent = rootParentRunId(records)!;
-    const newest = Math.max(...records.map(({ capturedAtMs }) => capturedAtMs));
-    const orphaned =
-      !savedRunIds.has(parent) && Date.now() - newest >= LIFECYCLE_CHILD_TURN_GRACE_MS;
-    if (removedRunIds.has(parent) || orphaned) await removeRecords(options, records, turnId);
+  let pending = childTurns;
+  while (pending.length > 0) {
+    const waiting: [string, StoredCapture[]][] = [];
+    for (const [turnId, records] of pending) {
+      const parent = rootParentRunId(records)!;
+      const newest = Math.max(...records.map(({ capturedAtMs }) => capturedAtMs));
+      const orphaned =
+        !savedRunIds.has(parent) && Date.now() - newest >= LIFECYCLE_CHILD_TURN_GRACE_MS;
+      if (!removedRunIds.has(parent) && !orphaned) {
+        waiting.push([turnId, records]);
+        continue;
+      }
+      await removeRecords(options, records, turnId);
+      for (const { runId } of records) removedRunIds.add(runId);
+    }
+    if (waiting.length === pending.length) return;
+    pending = waiting;
   }
 }
 

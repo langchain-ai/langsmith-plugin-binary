@@ -1,5 +1,9 @@
 import { fillTemplate } from "../../utils/format.js";
-import { CAPTURE_EXPIRED_WARNING, CAPTURE_TURN_CEILING_MS } from "./constants.js";
+import {
+  CAPTURE_EXPIRED_WARNING,
+  CAPTURE_HELD_EXPIRED_WARNING,
+  CAPTURE_TURN_CEILING_MS,
+} from "./constants.js";
 import { isWaitingForOtherSetting } from "./account.js";
 import type { CaptureLiveTurnSpan, EnumeratedCapture, ExpiredCaptureOptions } from "./models.js";
 
@@ -36,6 +40,7 @@ export async function removeExpiredCaptures(options: ExpiredCaptureOptions): Pro
   let dropped = 0;
   let pastCeiling = 0;
   let otherSetting = 0;
+  let held = 0;
   for (const { captures } of await options.store.enumerateSessions(options.integration)) {
     const spans = liveTurnSpans(captures);
     const expiring = captures.flatMap((capture) => {
@@ -44,6 +49,7 @@ export async function removeExpiredCaptures(options: ExpiredCaptureOptions): Pro
     });
     const sessionKeepsCaptures = expiring.length < captures.length;
     for (const { record, reason } of expiring) {
+      if (options.heldUpdate?.(record, captures)) held += 1;
       await options.store.remove(record, { forgetTurn: !sessionKeepsCaptures });
       if (options.destinations.every((id) => record.delivery?.outcomes[id] !== undefined)) continue;
       dropped += 1;
@@ -60,5 +66,6 @@ export async function removeExpiredCaptures(options: ExpiredCaptureOptions): Pro
     console.warn(
       fillTemplate(CAPTURE_EXPIRED_WARNING, { dropped, ceiling: pastCeiling, otherSetting }),
     );
+  if (held > 0) console.warn(fillTemplate(CAPTURE_HELD_EXPIRED_WARNING, { held }));
   return dropped;
 }

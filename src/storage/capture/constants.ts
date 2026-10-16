@@ -14,6 +14,8 @@ export const CAPTURE_EVENT_FILE = /^[0-9a-f]{64}\.json$/u;
 export const JSON_ARRAY_INDEX_KEY = /^(0|[1-9]\d*)$/u;
 export const CAPTURE_EXPIRED_WARNING =
   "Dropped trace work that was never uploaded: {dropped} saved items were past their age limit ({ceiling} from turns that kept capturing for over 7 days, {otherSetting} saved under a different API key, endpoint, replica or redaction setting)";
+export const CAPTURE_HELD_EXPIRED_WARNING =
+  "Dropped {held} saved run updates that were still waiting for their turn to finish before upload";
 export const CAPTURE_SKIPPED_WARNING =
   "Left a saved trace file alone because it could not be read:";
 export const CAPTURE_UNREADABLE_WARNING = "Removed a saved trace file that could not be read:";

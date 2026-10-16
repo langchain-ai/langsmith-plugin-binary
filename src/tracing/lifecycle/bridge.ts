@@ -23,6 +23,7 @@ import type {
   UploadBatchItem,
 } from "../upload/models.js";
 import { refreshSettlementProgress, settleCapturedTurns } from "../settlement/pass.js";
+import { addAttribution } from "../settlement/projection.js";
 import {
   canonicalJsonObject,
   canonicalJsonValue,
@@ -69,6 +70,7 @@ import { resolvePolicy } from "../delivery/options.js";
 import {
   deriveAttributionReadiness,
   indexCaptureSources,
+  isHeldUpdate,
   withholdUnresolvedEndTime,
 } from "./closure.js";
 
@@ -122,10 +124,15 @@ function parseCaptureRequest(input: LifecycleCaptureInput): LifecycleCaptureRequ
 
 async function parentPostDependency(
   context: LifecycleBridgeContext,
+  supplied: LifecycleCaptureInput["dependencies"],
   value: ProjectedSubmission,
 ): Promise<CaptureScope[]> {
   const parentRunId = value.payload.run.parent_run_id;
   if (value.payload.operation !== "post" || parentRunId === undefined) return [];
+  for (const scope of supplied ?? []) {
+    const record = await context.captureStore.read(scope).catch(() => undefined);
+    if (record?.runId === parentRunId && record.eventKind === LIFECYCLE_POST_EVENT_KIND) return [];
+  }
   const captures = await context.captureStore.enumerate(context.integration, context.sessionId);
   const parent = captures.find(
     ({ record }) => record.runId === parentRunId && record.eventKind === LIFECYCLE_POST_EVENT_KIND,
@@ -149,7 +156,7 @@ async function captureDependencies(
   if (previous?.dependencies?.some((scope) => !suppliedKeys.has(scopeKey(scope))))
     return previous.dependencies;
   if (previous !== undefined) return supplied;
-  const parent = (await parentPostDependency(context, value)).filter(
+  const parent = (await parentPostDependency(context, supplied, value)).filter(
     (scope) => !suppliedKeys.has(scopeKey(scope)),
   );
   return parent.length === 0 ? supplied : [...(supplied ?? []), ...parent];
@@ -293,6 +300,7 @@ function sweepExpiredCaptures(context: LifecycleBridgeContext, now: number): Pro
       accountFingerprint: context.writer.accountFingerprint,
       now,
       maxAgeMs: context.policy.maxAgeMs,
+      heldUpdate: (record, captures) => isHeldUpdate(record, captures, context.integration),
     }),
   );
 }
@@ -329,10 +337,28 @@ async function sendCapturedRuns(context: LifecycleBridgeContext, send: CapturedR
       destinations: writer.destinations,
       readOutcome: readCaptureOutcome(context),
     });
+    const ready = outgoing ?? (await afterSettledTurn(context, record, submission, sourceSnapshot));
+    if (ready === undefined) continue;
     const route = capturedRoute(record, sourceSnapshot, destination.id);
-    items.push(route === undefined ? { submission: outgoing } : { submission: outgoing, route });
+    items.push(route === undefined ? { submission: ready } : { submission: ready, route });
   }
   await writer.sendBatch(items, destination.id);
+}
+
+async function afterSettledTurn(
+  context: LifecycleBridgeContext,
+  record: StoredCapture,
+  submission: PreparedRunSubmission,
+  sourceSnapshot: readonly StoredCapture[],
+): Promise<PreparedRunSubmission | undefined> {
+  const { captureStore, integration, sessionId } = context;
+  const settled = await captureStore.readSettledTurn(integration, sessionId, record.turnId);
+  if (settled !== undefined)
+    return { ...submission, metadata: addAttribution(submission.metadata, settled.attribution) };
+  const runStillSaved = sourceSnapshot.some(
+    (source) => source.runId === record.runId && source.eventKind === LIFECYCLE_POST_EVENT_KIND,
+  );
+  return runStillSaved ? undefined : submission;
 }
 
 async function drainOnce(context: LifecycleBridgeContext, attempted: Set<string>) {

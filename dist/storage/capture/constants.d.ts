@@ -12,6 +12,7 @@ export declare const CAPTURE_HASH: RegExp;
 export declare const CAPTURE_EVENT_FILE: RegExp;
 export declare const JSON_ARRAY_INDEX_KEY: RegExp;
 export declare const CAPTURE_EXPIRED_WARNING = "Dropped trace work that was never uploaded: {dropped} saved items were past their age limit ({ceiling} from turns that kept capturing for over 7 days, {otherSetting} saved under a different API key, endpoint, replica or redaction setting)";
+export declare const CAPTURE_HELD_EXPIRED_WARNING = "Dropped {held} saved run updates that were still waiting for their turn to finish before upload";
 export declare const CAPTURE_SKIPPED_WARNING = "Left a saved trace file alone because it could not be read:";
 export declare const CAPTURE_UNREADABLE_WARNING = "Removed a saved trace file that could not be read:";
 export declare const CAPTURE_NAMESPACE_MISMATCH_MESSAGE = "Capture namespace does not match";

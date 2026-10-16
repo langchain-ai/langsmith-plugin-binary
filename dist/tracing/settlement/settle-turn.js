@@ -29,7 +29,7 @@ function collectTurnEvidence(events) {
     }
     return { rootRunIds, childRunIds, closureState };
 }
-function evidenceResult(turnId, { rootRunIds, closureState }, isQuiet) {
+function evidenceResult(turnId, events, { rootRunIds, closureState }, isQuiet) {
     if (rootRunIds.size === 0)
         return unsettled(report(turnId, "deferred", "missing-root"));
     if (rootRunIds.size > 1)
@@ -38,8 +38,12 @@ function evidenceResult(turnId, { rootRunIds, closureState }, isQuiet) {
         return undefined;
     if (!isQuiet)
         return unsettled(report(turnId, "deferred", closureState));
-    warnAboutNeverEndedTurn(turnId);
+    if (!isChildTurn(events, [...rootRunIds][0]))
+        warnAboutNeverEndedTurn(turnId);
     return undefined;
+}
+function isChildTurn(events, rootRunId) {
+    return events.some(({ record, payload }) => record.runId === rootRunId && payload.run.parent_run_id !== undefined);
 }
 const warnedNeverEndedTurns = new Set();
 function warnAboutNeverEndedTurn(turnId) {
@@ -101,7 +105,12 @@ function planRunPatch(state, runId) {
     const updatedMetadata = buildCodingAgentMetadata(metadata);
     if (Object.entries(added).some(([key, value]) => updatedMetadata[key] !== value))
         throw new Error(SETTLEMENT_ATTRIBUTION_LOST_MESSAGE);
-    return { metadata, added, endTime: restoreEndTime ? endTime : undefined };
+    if (endTime === undefined && !state.quiet)
+        return undefined;
+    return { metadata, added, endTime: endTime ?? lastCapturedTime(events) };
+}
+function lastCapturedTime(events) {
+    return new Date(Math.max(...events.map(({ record }) => record.capturedAtMs))).toISOString();
 }
 const warnedDroppedRuns = new Set();
 function warnAboutDroppedRuns(turnId, runIds) {
@@ -117,7 +126,7 @@ function settlementCaptureInput(state, generated, options, runId, plan) {
     const { turnId, rootRunId, childRunIds, closureState, dependencies, captureEvents } = state;
     const events = captureEvents.get(runId);
     const latest = events.at(-1);
-    const submission = patchPayload(latest, plan.metadata, options.integration, plan.endTime, hasCausalRunError(events));
+    const submission = patchPayload(latest, plan.metadata, options.integration, plan.endTime, hasCausalRunError(events), events);
     const eventId = settlementEventId(turnId, runId, dependencies, rootRunId, childRunIds, plan.added);
     const previous = orderSourceCaptures(generated.filter((item) => item.runId === runId && item.eventId !== eventId)).at(-1);
     const previousDependency = previous === undefined ? [] : [scopeOf(previous)];
@@ -196,6 +205,7 @@ async function settleLateRuns(turnId, events, generated, settledTurn, options) {
         rootRunId: settledTurn.rootRunId,
         childRunIds: new Set(runIds),
         closureState: "authoritative",
+        quiet: isQuietTurn(events, options.now ?? Date.now()),
         dependencies: uniqueScopes(events.map(({ record }) => scopeOf(record))),
         attribution: Object.keys(settledTurn.attribution).length === 0 ? undefined : settledTurn.attribution,
         recorded: new Map(runIds.map((runId) => [runId, recordRun(currentByRunId.get(runId))])),
@@ -209,7 +219,7 @@ export async function settleOneTurn(turnId, events, generated, allByRunId, optio
     if (settledTurn !== undefined)
         return settleLateRuns(turnId, events, generated, settledTurn, options);
     const quiet = isQuietTurn(events, options.now ?? Date.now());
-    const early = evidenceResult(turnId, evidence, quiet);
+    const early = evidenceResult(turnId, events, evidence, quiet);
     if (early !== undefined)
         return early;
     const { childRunIds, closureState } = evidence;
@@ -239,6 +249,7 @@ export async function settleOneTurn(turnId, events, generated, allByRunId, optio
         rootRunId,
         childRunIds,
         closureState,
+        quiet,
         dependencies: sourceScopes,
         attribution: turnAttribution(buildTurnRecord(turnId, rootRunId, requiredRunIds, recorded)),
         recorded,

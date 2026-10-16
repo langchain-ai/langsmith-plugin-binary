@@ -1,1 +1,1 @@
-{"version":3,"file":"bridge.d.ts","sourceRoot":"","sources":["../../../src/tracing/lifecycle/bridge.ts"],"names":[],"mappings":"AAoCA,OAAO,KAAK,EAEV,eAAe,EAEf,sBAAsB,EAUvB,MAAM,aAAa,CAAC;AAwBrB,wBAAgB,qBAAqB,CAAC,OAAO,EAAE,sBAAsB,GAAG,eAAe,CAOtF"}
+{"version":3,"file":"bridge.d.ts","sourceRoot":"","sources":["../../../src/tracing/lifecycle/bridge.ts"],"names":[],"mappings":"AAqCA,OAAO,KAAK,EAEV,eAAe,EAEf,sBAAsB,EAUvB,MAAM,aAAa,CAAC;AAyBrB,wBAAgB,qBAAqB,CAAC,OAAO,EAAE,sBAAsB,GAAG,eAAe,CAOtF"}

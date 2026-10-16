@@ -6,6 +6,8 @@ import { ATTRIBUTION_IDENTIFIER_KEY, GIT_METADATA_KEYS } from "../../metadata/co
 import type { CodingAgentIntegration } from "../../metadata/models.js";
 import type {
   CaptureScope,
+  EnumeratedCapture,
+  JsonValue,
   OutcomeReadResult,
   StoredCapture,
 } from "../../storage/capture/models.js";
@@ -23,6 +25,7 @@ import {
   LIFECYCLE_ATTRIBUTION_READY_FIELD,
   LIFECYCLE_PATCH_EVENT_KIND,
   LIFECYCLE_POST_EVENT_KIND,
+  LIFECYCLE_SETTLEMENT_EVENT_KIND,
   LIFECYCLE_TURN_CLOSURE_STATES,
 } from "./constants.js";
 import type { LifecycleEndTimeWithholdingInput } from "./models.js";
@@ -84,7 +87,7 @@ function attributionMetadataReady(projected: Record<string, unknown>): boolean {
 
 export async function withholdUnresolvedEndTime(
   input: LifecycleEndTimeWithholdingInput,
-): Promise<PreparedRunSubmission> {
+): Promise<PreparedRunSubmission | undefined> {
   const {
     record,
     submission,
@@ -204,38 +207,47 @@ async function hasMissingChildReceipts(
   return false;
 }
 
-function removeOutgoingEndTime(submission: PreparedRunSubmission): PreparedRunSubmission {
+function removeOutgoingEndTime(
+  submission: PreparedRunSubmission,
+): PreparedRunSubmission | undefined {
+  if (submission.operation === "patch") return undefined;
   const privacyContext =
     submission.privacyMode !== "metadata"
       ? undefined
-      : submission.operation === "post"
-        ? {
-            status:
-              submission.run.error !== undefined || submission.privacyContext?.status === "error"
-                ? ("error" as const)
-                : ("running" as const),
-          }
-        : {
-            status:
-              submission.privacyContext.status === "error"
-                ? ("error" as const)
-                : ("running" as const),
-          };
-  if (submission.operation === "post") {
-    const run = { ...submission.run };
-    delete run.end_time;
-    return {
-      ...submission,
-      run,
-      ...(privacyContext === undefined ? {} : { privacyContext }),
-    };
-  }
-  const fields = submission.patch.fields.filter((field) => field !== "end_time");
-  const values = { ...submission.patch.values };
-  delete values.end_time;
+      : {
+          status:
+            submission.run.error !== undefined || submission.privacyContext?.status === "error"
+              ? ("error" as const)
+              : ("running" as const),
+        };
+  const run = { ...submission.run };
+  delete run.end_time;
   return {
     ...submission,
-    patch: { fields, values },
+    run,
     ...(privacyContext === undefined ? {} : { privacyContext }),
   };
+}
+
+export function isHeldUpdate(
+  record: StoredCapture,
+  captures: readonly EnumeratedCapture[],
+  integration: CodingAgentIntegration,
+): boolean {
+  if (record.eventKind !== LIFECYCLE_PATCH_EVENT_KIND) return false;
+  if (field(record.metadataProvenance, "runType") !== "tool") return false;
+  const fields = field(field(record.normalizedPayload, "patch"), "fields");
+  if (!Array.isArray(fields) || !fields.includes("end_time")) return false;
+  if (storedAttributionReadiness(record, integration)) return false;
+  return !captures.some(
+    (capture) =>
+      capture.record.eventKind === LIFECYCLE_SETTLEMENT_EVENT_KIND &&
+      capture.record.runId === record.runId,
+  );
+}
+
+function field(value: JsonValue | undefined, key: string): JsonValue | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value[key]
+    : undefined;
 }
