@@ -11,6 +11,7 @@ import {
   REMOTE_PATH_EDGE_SLASHES,
   REMOTE_PATH_TRAILING_SLASHES,
   SCP_REMOTE_PATTERN,
+  SELF_HOSTED_PROVIDER_HINTS,
   GH_LOGIN_ARGUMENTS,
   GH_LOGIN_COMMAND,
   GH_LOGIN_TIMEOUT_MS,
@@ -32,9 +33,9 @@ export function parseRepoName(remoteUrl: string): GitRepositoryName | undefined 
   const value = remoteUrl.trim();
   try {
     const url = new URL(value);
-    const provider = GIT_PROVIDERS[url.hostname.toLowerCase()];
     const name = url.pathname.replace(REMOTE_PATH_EDGE_SLASHES, "").replace(REMOTE_GIT_SUFFIX, "");
-    if (provider && name) return { provider, name };
+    const repository = repositoryOnHost(url.hostname, name);
+    if (repository) return repository;
   } catch {}
 
   const scpMatch = value.match(SCP_REMOTE_PATTERN);
@@ -42,12 +43,21 @@ export function parseRepoName(remoteUrl: string): GitRepositoryName | undefined 
     const host = scpMatch[1];
     const path = scpMatch[2];
     if (host && path) {
-      const provider = GIT_PROVIDERS[host.toLowerCase()];
       const name = path.replace(REMOTE_PATH_TRAILING_SLASHES, "").replace(REMOTE_GIT_SUFFIX, "");
-      if (provider && name) return { provider, name };
+      return repositoryOnHost(host, name);
     }
   }
   return undefined;
+}
+
+function repositoryOnHost(hostname: string, name: string): GitRepositoryName | undefined {
+  const host = hostname.toLowerCase();
+  if (!name) return undefined;
+  const provider = GIT_PROVIDERS[host];
+  if (provider) return { provider, name };
+  if (!host.includes(".")) return undefined;
+  const hinted = SELF_HOSTED_PROVIDER_HINTS.find((hint) => host.includes(hint));
+  return { provider: hinted ?? host, name, host };
 }
 
 function gitOutput(args: string[], cwd: string): string {
@@ -130,7 +140,9 @@ export function getRepositoryMetadata(cwd: string): RepositoryAttribution {
   if (repoName) {
     metadata[GIT_METADATA_KEYS.repository] = repoName.name;
     metadata[GIT_METADATA_KEYS.provider] = repoName.provider;
-    const url = getRepoUrl(repoName.provider, repoName.name);
+    const url = repoName.host
+      ? `https://${repoName.host}/${repoName.name}`
+      : getRepoUrl(repoName.provider, repoName.name);
     if (url) metadata[GIT_METADATA_KEYS.repositoryUrl] = url;
   }
   const gitInfo = getGitInfo(cwd);

@@ -1,16 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { GIT_COMMAND_TIMEOUT_MS, GIT_LOCATION_ENV_KEYS, GIT_PROVIDERS, NOT_A_REPOSITORY, PROVIDER_HOSTS, REMOTE_GIT_SUFFIX, REMOTE_LINE_WHITESPACE, REMOTE_PATH_EDGE_SLASHES, REMOTE_PATH_TRAILING_SLASHES, SCP_REMOTE_PATTERN, GH_LOGIN_ARGUMENTS, GH_LOGIN_COMMAND, GH_LOGIN_TIMEOUT_MS, GH_LOGIN_PATTERN, GH_LOGIN_NULL_OUTPUT, } from "./constants.js";
+import { GIT_COMMAND_TIMEOUT_MS, GIT_LOCATION_ENV_KEYS, GIT_PROVIDERS, NOT_A_REPOSITORY, PROVIDER_HOSTS, REMOTE_GIT_SUFFIX, REMOTE_LINE_WHITESPACE, REMOTE_PATH_EDGE_SLASHES, REMOTE_PATH_TRAILING_SLASHES, SCP_REMOTE_PATTERN, SELF_HOSTED_PROVIDER_HINTS, GH_LOGIN_ARGUMENTS, GH_LOGIN_COMMAND, GH_LOGIN_TIMEOUT_MS, GH_LOGIN_PATTERN, GH_LOGIN_NULL_OUTPUT, } from "./constants.js";
 import { GIT_METADATA_KEYS } from "../metadata/constants.js";
 import { withBothGitMetadataNames } from "../metadata/git-names.js";
 export function parseRepoName(remoteUrl) {
     const value = remoteUrl.trim();
     try {
         const url = new URL(value);
-        const provider = GIT_PROVIDERS[url.hostname.toLowerCase()];
         const name = url.pathname.replace(REMOTE_PATH_EDGE_SLASHES, "").replace(REMOTE_GIT_SUFFIX, "");
-        if (provider && name)
-            return { provider, name };
+        const repository = repositoryOnHost(url.hostname, name);
+        if (repository)
+            return repository;
     }
     catch { }
     const scpMatch = value.match(SCP_REMOTE_PATTERN);
@@ -18,13 +18,23 @@ export function parseRepoName(remoteUrl) {
         const host = scpMatch[1];
         const path = scpMatch[2];
         if (host && path) {
-            const provider = GIT_PROVIDERS[host.toLowerCase()];
             const name = path.replace(REMOTE_PATH_TRAILING_SLASHES, "").replace(REMOTE_GIT_SUFFIX, "");
-            if (provider && name)
-                return { provider, name };
+            return repositoryOnHost(host, name);
         }
     }
     return undefined;
+}
+function repositoryOnHost(hostname, name) {
+    const host = hostname.toLowerCase();
+    if (!name)
+        return undefined;
+    const provider = GIT_PROVIDERS[host];
+    if (provider)
+        return { provider, name };
+    if (!host.includes("."))
+        return undefined;
+    const hinted = SELF_HOSTED_PROVIDER_HINTS.find((hint) => host.includes(hint));
+    return { provider: hinted ?? host, name, host };
 }
 function gitOutput(args, cwd) {
     const env = { ...process.env, LC_ALL: "C", LANG: "C" };
@@ -110,7 +120,9 @@ export function getRepositoryMetadata(cwd) {
     if (repoName) {
         metadata[GIT_METADATA_KEYS.repository] = repoName.name;
         metadata[GIT_METADATA_KEYS.provider] = repoName.provider;
-        const url = getRepoUrl(repoName.provider, repoName.name);
+        const url = repoName.host
+            ? `https://${repoName.host}/${repoName.name}`
+            : getRepoUrl(repoName.provider, repoName.name);
         if (url)
             metadata[GIT_METADATA_KEYS.repositoryUrl] = url;
     }

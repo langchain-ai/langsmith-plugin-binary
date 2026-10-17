@@ -6,12 +6,14 @@ export declare const REMOTE_GIT_SUFFIX: RegExp;
 export declare const REMOTE_LINE_WHITESPACE: RegExp;
 export declare const SCP_REMOTE_PATTERN: RegExp;
 export declare const GIT_DIRECTORY_NAME = ".git";
+export declare const GIT_FILE_POINTER: RegExp;
 export declare const GIT_MARKERS: {
     readonly REPOSITORY_ROOT: "repository root";
     readonly ONLY_GIT_CAN_SAY: "only git can say";
     readonly NOTHING_HERE: "nothing here";
 };
 export declare const GIT_PROVIDERS: Record<string, string>;
+export declare const SELF_HOSTED_PROVIDER_HINTS: string[];
 export declare const PROVIDER_HOSTS: Record<string, string>;
 export declare const GIT_COMMAND_TIMEOUT_MS = 5000;
 export declare const GH_LOGIN_COMMAND = "gh";

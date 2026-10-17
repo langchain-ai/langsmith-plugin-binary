@@ -1,3 +1,3 @@
 export { createReconstructionWorker } from "./worker.js";
-export type { ReconstructionJob, ReconstructionJobInput, ReconstructionOutput, ReconstructionResult, } from "./models.js";
+export type { ReconstructionJob, ReconstructionJobInput, ReconstructionOutput, ReconstructionResult, ReconstructionToolOrigin, } from "./models.js";
 //# sourceMappingURL=index.d.ts.map
