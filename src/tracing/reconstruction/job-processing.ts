@@ -7,7 +7,6 @@ import { requireOwnDataField, requirePlainRecord } from "../../utils/validation/
 import {
   RECONSTRUCTION_DEFERRAL_REASON_INVALID_MESSAGE,
   RECONSTRUCTION_DEFERRED_REASON,
-  RECONSTRUCTION_NO_CAPTURES_MESSAGE,
   RECONSTRUCTION_RESULT_STATUS_INVALID_MESSAGE,
   RECONSTRUCTION_TERMINAL_OUTCOME_MESSAGE,
 } from "./constants.js";
@@ -49,8 +48,8 @@ export async function processJob(
   if (interpretation === "failed") return fail();
   const outputs = validateJobOutputs(interpretation.outputs, job, candidate.entry.capturedAtMs);
   if (outputs === undefined) return fail();
-  if (!(await saveOutputMapping(context.store, job, outputs))) return fail();
-  const captured = await captureOutputs(context, job, outputs);
+  if (outputs.length > 0 && !(await saveOutputMapping(context.store, job, outputs))) return fail();
+  const captured = outputs.length > 0 ? await captureOutputs(context, job, outputs) : "captured";
   if (captured === "deferred") return "deferred";
   if (captured === "failed") return fail();
   await recordTerminal(context.store, scope, job.accountFingerprint, "delivered");
@@ -86,9 +85,7 @@ function validateJobOutputs(
   jobCapturedAtMs: number,
 ): ReconstructionValidatedOutput[] | undefined {
   try {
-    const outputs = validateOutputs(candidates, job, jobCapturedAtMs);
-    if (outputs.length === 0) throw new TypeError(RECONSTRUCTION_NO_CAPTURES_MESSAGE);
-    return outputs;
+    return validateOutputs(candidates, job, jobCapturedAtMs);
   } catch {
     return undefined;
   }
