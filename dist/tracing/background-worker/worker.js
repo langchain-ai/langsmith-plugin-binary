@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { FileLockTimeoutError, processIsAlive, tryAcquireFileLock, waitForFileLockClaim, withFileLock, } from "../../storage/index.js";
+import { FileLockTimeoutError, processIsAlive, tryAcquireFileLock, withFileLock, } from "../../storage/index.js";
 import { removeEmptyLockFolders } from "../../storage/lock-folders.js";
 import { removeFileIfPresent } from "../../utils/files/cleanup.js";
 import { parseJsonObject } from "../../utils/validation/objects.js";
 import { ensurePrivateDirectory, publishExclusive, readPrivateFile, } from "../../storage/capture/utils/atomic-file.js";
 import { identifierHash, sessionSegments } from "../../storage/capture/paths.js";
 import { listPrivateDirectory } from "../../utils/files/private-directory.js";
-import { BACKGROUND_WORKER_ACTIVE_MARKER_ALREADY_EXISTS_MESSAGE, BACKGROUND_WORKER_ACTIVE_MARKER_NAME, BACKGROUND_WORKER_PENDING_FILE, BACKGROUND_WORKER_ATTEMPT_VERSION, BACKGROUND_WORKER_DEFAULT_MAX_ATTEMPTS, BACKGROUND_WORKER_DEFAULT_RETRY_DELAY_MS, BACKGROUND_WORKER_DID_NOT_CLAIM_ITS_LOCK_BEFORE_TIMEOUT_MESSAGE, BACKGROUND_WORKER_INVALID_LAUNCH_MARKER_MESSAGE, BACKGROUND_WORKER_LAUNCHER_MUST_RETURN_CHILD_PROCESS_ID_MESSAGE, BACKGROUND_WORKER_LAUNCH_IS_ALREADY_PENDING_MESSAGE, BACKGROUND_WORKER_LAUNCH_LEASE_MS, BACKGROUND_WORKER_LAUNCH_VERSION, BACKGROUND_WORKER_MARKER_VERSION, BACKGROUND_WORKER_MAX_ATTEMPTS_MUST_BE_POSITIVE_INTEGER_MESSAGE, BACKGROUND_WORKER_OWNER_WAIT_MS, BACKGROUND_WORKER_RETRY_ATTEMPT_ALREADY_EXISTS_MESSAGE, BACKGROUND_WORKER_RETRY_DELAY_MUST_BE_NON_NEGATIVE_MESSAGE, BACKGROUND_WORKER_STARTUP_WAIT_MS, BACKGROUND_WORKER_STARTUP_WAIT_MUST_BE_POSITIVE_INTEGER_MESSAGE, BACKGROUND_WORKER_STATE_ERROR, } from "./constants.js";
+import { BACKGROUND_WORKER_ACTIVE_MARKER_ALREADY_EXISTS_MESSAGE, BACKGROUND_WORKER_ACTIVE_MARKER_NAME, BACKGROUND_WORKER_PENDING_FILE, BACKGROUND_WORKER_ATTEMPT_VERSION, BACKGROUND_WORKER_DEFAULT_MAX_ATTEMPTS, BACKGROUND_WORKER_DEFAULT_RETRY_DELAY_MS, BACKGROUND_WORKER_INVALID_LAUNCH_MARKER_MESSAGE, BACKGROUND_WORKER_LAUNCHER_MUST_RETURN_CHILD_PROCESS_ID_MESSAGE, BACKGROUND_WORKER_LAUNCH_IS_ALREADY_PENDING_MESSAGE, BACKGROUND_WORKER_LAUNCH_LEASE_MS, BACKGROUND_WORKER_LAUNCH_VERSION, BACKGROUND_WORKER_MARKER_VERSION, BACKGROUND_WORKER_MAX_ATTEMPTS_MUST_BE_POSITIVE_INTEGER_MESSAGE, BACKGROUND_WORKER_OWNER_WAIT_MS, BACKGROUND_WORKER_RETRY_ATTEMPT_ALREADY_EXISTS_MESSAGE, BACKGROUND_WORKER_RETRY_DELAY_MUST_BE_NON_NEGATIVE_MESSAGE, BACKGROUND_WORKER_STARTUP_WAIT_MUST_BE_POSITIVE_INTEGER_MESSAGE, BACKGROUND_WORKER_STATE_ERROR, } from "./constants.js";
 import { workerActivePath, scopedWorkerFileName, workerAttemptPath, workerDirectory, workerLaunchPath, workerLockPath, workerPendingPath, } from "./paths.js";
 import { matchesScope } from "./utils/scope.js";
 import { readWorkerState } from "./state.js";
@@ -60,7 +60,7 @@ async function wakeWorker(context) {
     }
 }
 async function launchWorker(context) {
-    const { config, storageRoot, scope, lockPath } = context;
+    const { config, storageRoot, scope } = context;
     const existingLaunch = await readLaunch(storageRoot, scope);
     if (existingLaunch &&
         existingLaunch.expiresAtMs > Date.now() &&
@@ -82,11 +82,6 @@ async function launchWorker(context) {
     if (!(await publishExclusive(workerLaunchPath(storageRoot, scope), JSON.stringify(launch)))) {
         throw new Error(BACKGROUND_WORKER_LAUNCH_IS_ALREADY_PENDING_MESSAGE);
     }
-    const claimed = await waitForFileLockClaim(lockPath, pid, {
-        timeoutMs: config.startupWaitMs ?? BACKGROUND_WORKER_STARTUP_WAIT_MS,
-    });
-    if (!claimed)
-        throw new Error(BACKGROUND_WORKER_DID_NOT_CLAIM_ITS_LOCK_BEFORE_TIMEOUT_MESSAGE);
     return "launched";
 }
 async function runPasses(context) {

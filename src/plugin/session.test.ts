@@ -147,8 +147,8 @@ it("hands saved reconstruction work to the plugin's own rebuild step", async () 
   expect(endpoint.requests.map(({ method }) => method)).toEqual(["POST"]);
 });
 
-it("stops waiting for a worker that never starts after the startup wait it was given", async () => {
-  const plugin = open({ scheduleWake: async () => 1, startupWaitMs: 100 });
+it("publishes without waiting for a worker that never starts", async () => {
+  const plugin = open({ scheduleWake: async () => 1 });
   const started = Date.now();
   await expect(
     plugin.session.capture({
@@ -157,6 +157,6 @@ it("stops waiting for a worker that never starts after the startup wait it was g
       submission: runPost("root"),
       turnEvidence: turnEvidence("authoritative", [], ROOT_ID),
     }),
-  ).rejects.toThrow("did not claim its lock");
-  expect(Date.now() - started).toBeLessThan(2_000);
+  ).resolves.toMatchObject({ status: "published" });
+  expect(Date.now() - started).toBeLessThan(1_000);
 });
