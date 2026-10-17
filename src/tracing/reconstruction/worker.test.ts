@@ -187,7 +187,6 @@ it("keeps jobs whose callback or capture keeps failing and retries them", async 
         prompt: "x",
       },
     }),
-    "job-empty": ready(),
   };
   const reconstruct = vi
     .fn()
@@ -196,8 +195,8 @@ it("keeps jobs whose callback or capture keeps failing and retries them", async 
   const capture = vi.fn<LifecycleBridge["capture"]>(published);
   const failing = worker(root, reconstruct, capture);
   for (const eventId of Object.keys(results)) await failing.enqueue(job(eventId, "metadata"));
-  await expect(failing.drain()).resolves.toMatchObject({ failed: 7, dropped: 0, pending: 7 });
-  await expect(failing.drain()).resolves.toMatchObject({ failed: 7, dropped: 0, pending: 7 });
+  await expect(failing.drain()).resolves.toMatchObject({ failed: 6, dropped: 0, pending: 6 });
+  await expect(failing.drain()).resolves.toMatchObject({ failed: 6, dropped: 0, pending: 6 });
   expect(capture).not.toHaveBeenCalled();
   await expect(receipt(root, "job-null")).resolves.toMatchObject({ status: "pending" });
   const nullCapture = worker(
@@ -398,6 +397,20 @@ it("expires stale snapshot sources individually while uploading fresh ones", asy
     outputs[1]!.submission.run.id,
   ]);
   expect(reconstruct).toHaveBeenCalledTimes(1);
+});
+
+it("completes a job whose rebuild has nothing to send", async () => {
+  const root = temporaryRoot();
+  const capture = vi.fn<LifecycleBridge["capture"]>(published);
+  const quiet = worker(
+    root,
+    vi.fn(async () => ready()),
+    capture,
+  );
+  await quiet.enqueue(job("job-empty"));
+  await expect(quiet.drain()).resolves.toMatchObject({ failed: 0, pending: 0 });
+  expect(capture).not.toHaveBeenCalled();
+  await expect(jobs(root).read(jobScope("job-empty"))).resolves.toBeUndefined();
 });
 
 it("removes delivered snapshot jobs, including one delivered before the drain", async () => {
