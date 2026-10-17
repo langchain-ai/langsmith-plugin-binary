@@ -12,6 +12,7 @@ export const REMOTE_GIT_SUFFIX = /\.git$/;
 export const REMOTE_LINE_WHITESPACE = /\s+/;
 export const SCP_REMOTE_PATTERN = /^(?:[^@]+@)?([^:]+):\/?(.+)$/;
 export const GIT_DIRECTORY_NAME = ".git";
+export const GIT_FILE_POINTER = /^gitdir:\s*(.+?)\s*$/m;
 export const GIT_MARKERS = {
     REPOSITORY_ROOT: "repository root",
     ONLY_GIT_CAN_SAY: "only git can say",
@@ -23,6 +24,7 @@ export const GIT_PROVIDERS = {
     "bitbucket.org": "bitbucket",
     "dev.azure.com": "devAzure",
 };
+export const SELF_HOSTED_PROVIDER_HINTS = ["github", "gitlab", "bitbucket"];
 export const PROVIDER_HOSTS = {
     github: "github.com",
     gitlab: "gitlab.com",

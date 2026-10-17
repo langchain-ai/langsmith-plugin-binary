@@ -72,6 +72,20 @@ describe("remote parsing", () => {
     for (const url of urls) expect(parseRepoName(url)?.name).toBe("langchain-ai/example");
   });
 
+  it("names a self-hosted remote by its path and the provider its host suggests", () => {
+    expect(parseRepoName("https://github.mycorp.com/acme/ghe.git")).toEqual({
+      provider: "github",
+      name: "acme/ghe",
+      host: "github.mycorp.com",
+    });
+    expect(parseRepoName("git@git.corp.example:team/service.git")).toEqual({
+      provider: "git.corp.example",
+      name: "team/service",
+      host: "git.corp.example",
+    });
+    expect(parseRepoName("C:/repos/service")).toBeUndefined();
+  });
+
   it("parses SCP-style SSH remotes", () => {
     expect(parseRepoName("git@github.com:langchain-ai/example.git")).toEqual({
       provider: "github",
@@ -135,11 +149,15 @@ describe("repository probes", () => {
     expect(getRepoRoot(join(root, "missing folder"))).toBeUndefined();
   });
 
-  it("uses Git for a worktree whose root marker is a file", () => {
+  it("places a worktree by its root marker file without asking Git", () => {
     const worktree = join(root, "worktree with spaces ; [probe]");
     git(repo, "worktree", "add", "--quiet", "--detach", worktree);
 
-    expect(rootFromGitMarker(worktree)).toBeUndefined();
+    expect(rootFromGitMarker(join(worktree, "not created", "file.txt"))).toBe(worktree);
+    const broken = join(root, "broken worktree");
+    mkdirSync(broken);
+    writeFileSync(join(broken, ".git"), `gitdir: ${join(root, "gone")}\n`);
+    expect(rootFromGitMarker(broken)).toBeUndefined();
     expect(getRepoRoot(worktree)).toBe(realpathSync.native(worktree));
     expect(getGitInfo(worktree)).toEqual({ commit: git(repo, "rev-parse", "HEAD") });
   });
