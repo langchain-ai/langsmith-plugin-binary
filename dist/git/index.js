@@ -1,3 +1,4 @@
+export { createRepositoryAttributor } from "./attribution.js";
 export { createGitHubLoginFallback } from "./github-login.js";
 export { rootFromGitMarker } from "./paths.js";
 export { getGitInfo, getGitUserName, getRepoName, getRepoRoot, getRepoUrl, getRepositoryMetadata, parseRepoName, } from "./repository.js";
