@@ -70,7 +70,6 @@ export declare const RECONSTRUCTION_STORED_EVENTS_UNIQUE_MESSAGE = "Stored recon
 export declare const RECONSTRUCTION_STORED_DEPENDENCIES_MESSAGE = "Stored reconstruction dependencies are invalid";
 export declare const RECONSTRUCTION_DEFERRAL_REASON_INVALID_MESSAGE = "Invalid reconstruction deferral reason";
 export declare const RECONSTRUCTION_RESULT_STATUS_INVALID_MESSAGE = "Invalid reconstruction result status";
-export declare const RECONSTRUCTION_NO_CAPTURES_MESSAGE = "Reconstruction produced no captures";
 export declare const RECONSTRUCTION_TERMINAL_OUTCOME_MESSAGE = "Could not record terminal reconstruction outcome:";
 export declare const RECONSTRUCTION_CALLBACKS_REQUIRED_MESSAGE = "Reconstruction callbacks are required";
 export declare const RECONSTRUCTION_DRAIN_TIME_MESSAGE = "Drain time must be finite";
