@@ -3,7 +3,6 @@ import { waitFor } from "../../test-support/wait.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { childEnvironment, moduleUrl, temporaryRoot } from "../../test-support/tracing/delivery.js";
@@ -88,24 +87,15 @@ function stateNames(root: string, pattern: RegExp): string[] {
     : [];
 }
 
-it("waits for the launched child to claim the lock before reporting a handoff", async () => {
+it("reports a handoff once the launch note is written without waiting for the child", async () => {
   const root = temporaryRoot();
   const child = gatedLauncher(root);
-  let settled = false;
-  const wake = worker(root, { launchWorker: child.launch, startupWaitMs: 8_000 }).wake();
-  void wake.then(
-    () => (settled = true),
-    () => (settled = true),
-  );
-  await waitFor(() => existsSync(child.ready));
-  await delay(40);
-  expect(settled).toBe(false);
+  await expect(worker(root, { launchWorker: child.launch }).wake()).resolves.toBe("launched");
+  expect(existsSync(workerLaunchPath(root, scope))).toBe(true);
   expect(existsSync(workerPendingPath(root, scope))).toBe(true);
-  writeFileSync(child.gate, "");
-  await expect(wake).resolves.toBe("launched");
-}, 20_000);
+});
 
-it("reports an unclaimed launch and queues later wakes under its lease", async () => {
+it("queues later wakes under the launch note while the child has not claimed its lock", async () => {
   const root = temporaryRoot();
   const child = gatedLauncher(root);
   let launches = 0;
@@ -114,18 +104,30 @@ it("reports an unclaimed launch and queues later wakes under its lease", async (
       launches += 1;
       return child.launch();
     },
-    startupWaitMs: 70,
   });
-  const first = lateWorker.wake().catch((error: unknown) => error);
+  await expect(lateWorker.wake()).resolves.toBe("launched");
   await waitFor(() => existsSync(child.ready));
   await expect(Promise.all([lateWorker.wake(), lateWorker.wake()])).resolves.toEqual([
     "queued",
     "queued",
   ]);
-  expect(String(await first)).toContain("did not claim its lock");
-  await expect(lateWorker.wake()).resolves.toBe("queued");
   expect(launches).toBe(1);
   expect(existsSync(workerLaunchPath(root, scope))).toBe(true);
+});
+
+it("relaunches on the next wake when the launched child died before claiming its lock", async () => {
+  const root = temporaryRoot();
+  let launches = 0;
+  const crashing = worker(root, {
+    launchWorker: () => {
+      launches += 1;
+      const child = spawn(process.execPath, ["-e", "process.exit(1)"], { stdio: "ignore" });
+      return new Promise<number>((resolve) => child.once("exit", () => resolve(child.pid!)));
+    },
+  });
+  await expect(crashing.wake()).resolves.toBe("launched");
+  await expect(crashing.wake()).resolves.toBe("launched");
+  expect(launches).toBe(2);
 });
 
 it("keeps the wake pending when the launcher fails or returns its own process", async () => {

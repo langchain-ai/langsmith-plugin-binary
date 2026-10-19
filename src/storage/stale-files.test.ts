@@ -116,3 +116,19 @@ it("keeps files shaped like former delivery receipts and attempts", async () => 
   expect(existsSync(keep)).toBe(true);
   warn.mockRestore();
 });
+
+it("keeps an old claim whose process is still running, since a clock jump can age a held lock", async () => {
+  const root = mkdtempSync(join(tmpdir(), "plugins-base-stale-"));
+  const claims = join(root, "sessions", "locks", "worker.claims");
+  mkdirSync(claims, { recursive: true });
+  const live = join(claims, `${uuid("e")}.json`);
+  const dead = join(claims, `${uuid("f")}.json`);
+  writeFileSync(live, JSON.stringify({ pid: process.pid }));
+  writeFileSync(dead, JSON.stringify({ pid: 2 ** 31 - 1 }));
+  for (const path of [live, dead, claims]) age(path, 3);
+
+  await sweep(root);
+
+  expect(existsSync(live)).toBe(true);
+  expect(existsSync(dead)).toBe(false);
+});
