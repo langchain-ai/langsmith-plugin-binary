@@ -1,0 +1,21 @@
+export const STATE_TEMP_SUFFIX = ".state.tmp";
+export const STATE_CORRUPT_SUFFIX = ".corrupt";
+export const STATE_FILE_ENCODING = "utf-8";
+export const STATE_LOCK_RELEASE_WARNING = "Could not release the shared state lock";
+export const STATE_LOCK_BUSY_WARNING =
+  "Another process holds the state lock, so state updates in this hook are saved for the next lock holder";
+export const STATE_CORRUPT_WARNING = `State was unreadable; started over and kept the old file as ${STATE_CORRUPT_SUFFIX}`;
+
+export const STATE_LOCK_WAIT_MS = 1000;
+export const STATE_LOCK_PROBE_MS = 200;
+export const STATE_LOCK_BUSY_MEMORY_MS = 30_000;
+export const PENDING_STATE_DIR_SUFFIX = ".pending";
+export const PENDING_STATE_FILE_SUFFIX = ".json";
+export const PENDING_STATE_TEMP_SUFFIX = ".pending.tmp";
+export const PENDING_STATE_ABANDONED_MS = 60_000;
+export const PENDING_STATE_TIME_WIDTH = 13;
+export const PENDING_STATE_SEQUENCE_WIDTH = 6;
+export const PENDING_STATE_WRITE_ATTEMPTS = 3;
+
+export const STATE_PRIVATE_DIR_MODE = 0o700;
+export const STATE_PRIVATE_FILE_MODE = 0o600;
