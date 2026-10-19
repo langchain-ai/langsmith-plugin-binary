@@ -103,7 +103,6 @@ export const RECONSTRUCTION_STORED_EVENTS_UNIQUE_MESSAGE = "Stored reconstructio
 export const RECONSTRUCTION_STORED_DEPENDENCIES_MESSAGE = "Stored reconstruction dependencies are invalid";
 export const RECONSTRUCTION_DEFERRAL_REASON_INVALID_MESSAGE = "Invalid reconstruction deferral reason";
 export const RECONSTRUCTION_RESULT_STATUS_INVALID_MESSAGE = "Invalid reconstruction result status";
-export const RECONSTRUCTION_NO_CAPTURES_MESSAGE = "Reconstruction produced no captures";
 export const RECONSTRUCTION_TERMINAL_OUTCOME_MESSAGE = "Could not record terminal reconstruction outcome:";
 export const RECONSTRUCTION_CALLBACKS_REQUIRED_MESSAGE = "Reconstruction callbacks are required";
 export const RECONSTRUCTION_DRAIN_TIME_MESSAGE = "Drain time must be finite";
