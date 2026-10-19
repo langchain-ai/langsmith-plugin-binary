@@ -113,7 +113,8 @@ function preserveFullModePatchInputs(run) {
     return run;
 }
 export function createCodingAgentRunTree(config, integration, mode = "full", privacyContext) {
-    const run = new RunTree(mode === "metadata" ? configForMetadataMode(config, integration, privacyContext) : config);
+    const routed = config.replicas === undefined ? { ...config, replicas: [] } : config;
+    const run = new RunTree(mode === "metadata" ? configForMetadataMode(routed, integration, privacyContext) : routed);
     return mode === "metadata" ? protectRunTree(run, integration) : preserveFullModePatchInputs(run);
 }
 export function survivingCodingAgentPatchFields(projectedRun, fields) {

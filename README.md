@@ -17,6 +17,8 @@ flowchart LR
 
 The agent never waits on the upload and anything that fails is retried later. The engine is a library each plugin ships inside itself rather than a separate service.
 
+See [settings](docs/settings.md) for where each plugin reads its settings and how an admin can lock them.
+
 ## Building the plugin binaries
 
 Each plugin calls this repo's reusable `build-binary.yml` workflow pinned to a release tag's commit. On a tag it builds Apple chip and Intel binaries, tests and signs them, has Apple notarize them and attaches them to the plugin's release. See [ONBOARDING.md](docs/ONBOARDING.md) to set up a new plugin.

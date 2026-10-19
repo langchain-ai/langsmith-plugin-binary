@@ -6,11 +6,11 @@ export type {
   CommonConfigResult,
   CommonReplica,
   CommonRedactRule,
+  LockableField,
+  ManagedConfigFileOptions,
+  MergedCommonConfig,
 } from "./models.js";
-export {
-  mergeCommonConfig,
-  parseCommonConfig,
-  readCommonConfigFile,
-  readCommonConfigFiles,
-  toSdkReplicas,
-} from "./common-config.js";
+export { mergeCommonConfig, toSdkReplicas } from "./common-config.js";
+export { readCommonConfigFile, readCommonConfigFiles } from "./config-files.js";
+export { readManagedConfigFile } from "./managed-config.js";
+export { parseCommonConfig } from "./parse.js";
