@@ -5,6 +5,8 @@ export const COMMON_BOOLEAN_SETTINGS = {
   defaultMuted: { default: false, restrictive: true },
 } as const;
 
+export const COMMON_DEFAULT_API_URL = "https://api.smith.langchain.com";
+
 export const COMMON_CONFIG_FILE_NAME = "langsmith.json";
 export const COMMON_CONFIG_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
 export const COMMON_CONFIG_ROOT_FILE_NAME = "langsmith-plugins.json";
@@ -29,11 +31,13 @@ export const MANAGED_CONFIG_OVERRIDE_SOURCES = [
 ] as const;
 
 export const MANAGED_CONFIG_UNSAFE_OWNERSHIP =
-  "Managed config for LangSmith is not owned by root, is writable by other users, or is a symlink. This session's trace will not be captured. Please contact an admin to troubleshoot.";
+  "LangSmith managed settings aren't owned by root, so tracing is off. Contact your admin.";
 
 export const MANAGED_CONFIG_INVALID =
-  "Managed config for LangSmith tracing is unreadable or invalid so this session's trace will not be captured. Contact an admin to troubleshoot.";
+  "LangSmith managed settings are invalid, so tracing is off. Contact your admin.";
 
+export const MANAGED_CONFIG_UNLOCKABLE_WARNING =
+  "The managed config sets {fields}, which this plugin can't lock, so it is ignored.";
 export const MANAGED_CONFIG_OVERRIDE_WARNING =
   "Ignored settings the managed config locks: {overrides}.";
 export const MANAGED_CONFIG_OVERRIDE_FIELD_SEPARATOR = "; ";

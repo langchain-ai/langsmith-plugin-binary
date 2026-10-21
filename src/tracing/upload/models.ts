@@ -121,7 +121,9 @@ export interface LangSmithUploadIdentityOptions {
   redactExtraRules?: readonly UploadRedactRule[];
 }
 
-export type LangSmithUploadWriterOptions = LangSmithUploadIdentityOptions;
+export interface LangSmithUploadWriterOptions extends LangSmithUploadIdentityOptions {
+  projectLocked?: boolean | undefined;
+}
 
 export interface ResolvedUploadDestinationIdentity {
   id: string;

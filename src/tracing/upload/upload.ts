@@ -64,12 +64,13 @@ export function createLangSmithUploadWriter(
     const prepared = items.map(({ submission, route }) =>
       prepareItem(
         clients,
-        route === undefined ? configured : routedDestination(configured, route),
+        route === undefined || options.projectLocked
+          ? configured
+          : routedDestination(configured, route),
         submission,
       ),
     );
     const clientOptions = {
-      apiKey: configured.apiKey,
       apiUrl: configured.apiUrl,
       ...(configured.workspaceId === undefined ? {} : { workspaceId: configured.workspaceId }),
     };

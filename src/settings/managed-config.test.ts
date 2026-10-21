@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  lockPluginFields,
   mergeCommonConfig,
   readManagedConfigFile,
   type CommonConfig,
@@ -85,12 +86,62 @@ describe.skipIf(!posix)("managed config lock", () => {
     expect(merged.locked).toEqual(["api_url", "replicas"]);
   });
 
+  it("keeps a locked API key on the default server so a repo can't send it elsewhere", () => {
+    const managed: CommonConfigResult = {
+      status: "valid",
+      common: { api_key: "k" },
+      diagnostics: [],
+    };
+    const root = {
+      api_url: "https://elsewhere.example",
+      replicas: [{ api_url: "https://elsewhere.example" }],
+    };
+    const merged = mergeCommonConfig({ managed, root });
+    expect(merged).toMatchObject({ api_url: "https://api.smith.langchain.com", replicas: [] });
+    expect(merged.diagnostics).toEqual([expect.stringContaining("api_url from root")]);
+  });
+
+  it("keeps locked replicas on the default server so a repo can't collect their keys", () => {
+    const common = { replicas: [{ api_key: "replica-key" }] };
+    const managed: CommonConfigResult = { status: "valid", common, diagnostics: [] };
+    const merged = mergeCommonConfig({ managed, root: { api_url: "https://elsewhere.example" } });
+    expect(merged.api_url).toBe("https://api.smith.langchain.com");
+    expect(merged.diagnostics).toEqual([expect.stringContaining("api_url from root")]);
+  });
+
+  it("drops config replicas when only the project is locked, and says so", () => {
+    const managed: CommonConfigResult = {
+      status: "valid",
+      common: { project: "locked" },
+      diagnostics: [],
+    };
+    const merged = mergeCommonConfig({
+      managed,
+      root: { replicas: [{ api_key: "k", project: "evil" }] },
+    });
+    expect(merged).toMatchObject({ project: "locked", replicas: [] });
+    expect(merged.diagnostics).toEqual([expect.stringContaining("replicas from root")]);
+  });
+
   it("keeps redaction on when only the redaction rules are locked, whoever read the file", () => {
     const common = { redact_extra_rules: locked.redact_extra_rules };
     const managed: CommonConfigResult = { status: "valid", common, diagnostics: [] };
     const merged = mergeCommonConfig({ managed, env: override });
     expect(merged).toMatchObject({ redact: true, redact_extra_rules: locked.redact_extra_rules });
     expect(new Set(merged.locked)).toEqual(new Set(["redact", "redact_extra_rules"]));
+  });
+
+  it("hands a plugin its own locked fields and warns about ones it can't lock", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const path = managedFile({ project: "p", attachments: false, cursor_db_path: "/db" });
+    const fields = lockPluginFields(readManagedConfigFile({ path, ownerUid: uid }), {
+      lockable: ["attachments", "system_prompt"],
+      unlockable: ["cursor_db_path"],
+    });
+    expect(fields).toStrictEqual({ attachments: false });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("cursor_db_path"));
+    const untrusted = readManagedConfigFile({ path, ownerUid: uid + 1 });
+    expect(lockPluginFields(untrusted, { lockable: ["attachments"] })).toStrictEqual({});
   });
 
   it("locks every field the file sets, merging only the metadata keys it leaves open", () => {
@@ -113,7 +164,9 @@ describe.skipIf(!posix)("managed config lock", () => {
       enabled: true,
       metadata: { team: "platform", laptop: "x" },
     });
-    expect(new Set(merged.locked)).toEqual(new Set(["api_key", "enabled", "metadata", "project"]));
+    expect(new Set(merged.locked)).toEqual(
+      new Set(["api_key", "api_url", "enabled", "metadata", "project", "replicas"]),
+    );
     const envFirst = mergeCommonConfig({ managed, env: { enabled: false } }, { envFirst: true });
     expect(envFirst.enabled).toBe(true);
     expect(merged.diagnostics).toEqual([
@@ -153,14 +206,14 @@ describe.skipIf(!posix)("managed config lock", () => {
     const managed = readManagedConfigFile({ path: tamper(managedFile(locked)), ownerUid });
     const merged = mergeCommonConfig({ managed, env: { ...override, enabled: true } });
     expect(merged).toMatchObject({ enabled: false, locked: [] });
-    expect(merged.managedConfigProblem).toMatch(/not owned by root/);
+    expect(merged.managedConfigProblem).toMatch(/aren't owned by root/);
   });
 
   it.each(["{", "null", '{"api_url":5}'])("turns tracing off for broken file %s", (text) => {
     const managed = readManagedConfigFile({ path: managedFile(text), ownerUid: uid });
     const merged = mergeCommonConfig({ managed, env: { ...override, enabled: true } });
     expect(merged).toMatchObject({ enabled: false, locked: [] });
-    expect(merged.managedConfigProblem).toMatch(/unreadable or invalid/);
+    expect(merged.managedConfigProblem).toMatch(/managed settings are invalid/);
   });
 
   it.skipIf(uid === 0)("turns tracing off for a file it cannot open", () => {
@@ -171,7 +224,7 @@ describe.skipIf(!posix)("managed config lock", () => {
       env: { enabled: true },
     });
     expect(merged).toMatchObject({ enabled: false, locked: [] });
-    expect(merged.diagnostics).toEqual([expect.stringMatching(/unreadable or invalid/)]);
+    expect(merged.diagnostics).toEqual([expect.stringMatching(/managed settings are invalid/)]);
   });
 
   it.skipIf(uid === 0)("requires root to own the file unless told otherwise", () => {
@@ -253,7 +306,7 @@ describe.skipIf(!posix)("managed config lock", () => {
     vi.spyOn(os, "userInfo").mockReturnValue({ ...os.userInfo(), homedir: homeWith(locked) });
     const merged = mergeCommonConfig({ env: { enabled: true } });
     expect(merged).toMatchObject({ enabled: false, locked: [] });
-    expect(merged.managedConfigProblem).toMatch(/not owned by root/);
+    expect(merged.managedConfigProblem).toMatch(/aren't owned by root/);
   });
 
   it("warns about each managed config notice once however often settings load", async () => {

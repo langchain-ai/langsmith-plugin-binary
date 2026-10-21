@@ -34,3 +34,7 @@ export interface PendingStatePatches {
   files: string[];
   patches: StatePatch[];
 }
+
+export interface StateClaim {
+  at: number;
+}

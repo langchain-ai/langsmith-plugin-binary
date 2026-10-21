@@ -1,6 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { findExecutable } from "../utils/desktop/launch.js";
 import {
+  GIT_COMMAND,
+  GIT_COMMAND_MISSING,
   GIT_COMMAND_TIMEOUT_MS,
   GIT_LOCATION_ENV_KEYS,
   GIT_PROVIDERS,
@@ -63,7 +66,7 @@ function repositoryOnHost(hostname: string, name: string): GitRepositoryName | u
 function gitOutput(args: string[], cwd: string): string {
   const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: "C", LANG: "C" };
   for (const key of GIT_LOCATION_ENV_KEYS) delete env[key];
-  return execFileSync("git", args, {
+  return execFileSync(installedCommand(GIT_COMMAND), args, {
     cwd,
     env,
     encoding: "utf-8",
@@ -152,7 +155,7 @@ export function getRepositoryMetadata(cwd: string): RepositoryAttribution {
 }
 
 export function githubLoginLookup(): string {
-  return execFileSync(GH_LOGIN_COMMAND, GH_LOGIN_ARGUMENTS, {
+  return execFileSync(installedCommand(GH_LOGIN_COMMAND), GH_LOGIN_ARGUMENTS, {
     encoding: "utf-8",
     timeout: GH_LOGIN_TIMEOUT_MS,
     stdio: ["ignore", "pipe", "ignore"],
@@ -161,4 +164,10 @@ export function githubLoginLookup(): string {
 
 export function isGitHubLogin(printed: string): boolean {
   return printed !== GH_LOGIN_NULL_OUTPUT && GH_LOGIN_PATTERN.test(printed);
+}
+
+function installedCommand(name: string): string {
+  const found = findExecutable(name, process.env, process.platform);
+  if (found === undefined) throw new Error(`${name} ${GIT_COMMAND_MISSING}`);
+  return found;
 }

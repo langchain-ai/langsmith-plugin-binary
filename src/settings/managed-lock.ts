@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import {
+  COMMON_DEFAULT_API_URL,
   MANAGED_CONFIG_OVERRIDE_FIELD_SEPARATOR,
   MANAGED_CONFIG_OVERRIDE_SOURCE_SEPARATOR,
   MANAGED_CONFIG_OVERRIDE_SOURCES,
@@ -10,7 +11,9 @@ import { object } from "./utils/records.js";
 
 export function lockedValues(common: CommonConfig): CommonConfig {
   const lock = { ...common };
-  if (lock.api_url !== undefined) lock.replicas ??= [];
+  if (lock.api_key !== undefined || lock.replicas !== undefined)
+    lock.api_url ??= COMMON_DEFAULT_API_URL;
+  if (lock.api_url !== undefined || lock.project !== undefined) lock.replicas ??= [];
   if (lock.redact_extra_rules !== undefined) lock.redact ??= true;
   return lock;
 }
