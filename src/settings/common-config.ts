@@ -5,6 +5,7 @@ import type {
   CommonConfig,
   CommonConfigSources,
   CommonReplica,
+  LockableField,
   MergeCommonConfigOptions,
   MergedCommonConfig,
   SdkReplica,
@@ -45,6 +46,9 @@ export function mergeCommonConfig(
     defaultMuted: false,
     redact: true,
     locked: lockedFields(lock),
+    defaulted: (Object.keys(defaults) as LockableField[]).filter(
+      (field) => resolveField([lock, env, ...files], field) === undefined,
+    ),
     diagnostics: [...managed.diagnostics, ...overrideDiagnostics(sources, lock)],
   };
   for (const field of ["enabled", "defaultMuted"] as const) {
@@ -61,6 +65,8 @@ export function mergeCommonConfig(
   merged.replicas = resolveField(precedence, "replicas");
   merged.redact = resolveField(precedence, "redact") ?? true;
   merged.redact_extra_rules = resolveField(precedence, "redact_extra_rules");
+  merged.login_browser = resolveField(precedence, "login_browser");
+  merged.notice_cooldown = resolveField(precedence, "notice_cooldown");
   if (precedence.some((source) => source.metadata !== undefined)) {
     // Spread defines own properties (including __proto__), unlike assignment into a target.
     merged.metadata = [...precedence]

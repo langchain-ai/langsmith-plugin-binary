@@ -12,6 +12,10 @@ The LangSmith plugins for Claude Code, Cursor and Codex take each setting from t
 
 Each setting comes from the highest place in this list that sets it. A settings file that's broken or unreadable is skipped for every setting except tracing on and muted by default, which it counts as off and muted at its place, so a broken file above the one that turns tracing on stops tracing. A managed file that's present but broken or untrusted stops tracing whatever else is set.
 
+## Notices
+
+- A plugin shows the same notice at most once every `notice_cooldown` minutes across its conversations, 2 by default, and `off` silences every notice
+
 ## Locking settings with the managed file
 
 - Each user account gets its own managed file in that user's home folder, at `~/.langsmith-plugins/managed.json`

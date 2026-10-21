@@ -56,3 +56,10 @@ export interface DetachedWorkerOptions {
   executable?: string;
   storageRoot?: string;
 }
+
+export interface NoticeOptions {
+  plugin: string;
+  kind: string;
+  cooldown?: number | "off" | undefined;
+  storageRoot: string;
+}

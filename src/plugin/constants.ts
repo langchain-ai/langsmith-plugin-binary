@@ -39,3 +39,8 @@ export const POLICY_PARSE_RESULT_MESSAGE = "A policy parser must return a policy
 export const HOOK_OPTIONS_INVALID_MESSAGE =
   "Hook options need a hooks table and onHookError and onUnknown callbacks";
 export const HOOK_ERROR_HANDLER_WARNING = "The hook error handler failed:";
+export const NOTICE_DEFAULT_COOLDOWN_MINUTES = 2;
+export const NOTICE_MINUTE_MS = 60_000;
+export const NOTICE_OFF = "off";
+export const NOTICE_STATE_FILE = "notices.json";
+export const NOTICE_KEY_SEPARATOR = "\n";
