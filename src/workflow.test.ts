@@ -48,7 +48,8 @@ const TAG_TEST = /startsWith\(\s*github\.ref\s*,\s*'([^']*)'\s*\)/;
 const APPLE_SECRET = /secrets\.(?:APPLE|CSC)_/;
 const MANIFEST = ".claude-plugin/plugin.json";
 const BUNDLE = "bundle/dispatch.js";
-const PIPELINE_STEP = "Check Out the Scripts This Workflow Runs";
+const INSTALL_STEP = "Install Dependencies";
+const INSTALLED_ENGINE = "node_modules/@langchain/plugins-base";
 const CONFIG_STEP = "Read the Binary Config";
 const VERSION_STEP = "Check the Version Matches the Tag";
 const BETA_STEP = "Find the Branch This Tag Belongs To";
@@ -127,10 +128,10 @@ function runStep(
   cwd: string,
   env: Record<string, string> = {},
 ): Record<string, string> {
-  const pipeline = join(cwd, stepNamed("plan", PIPELINE_STEP).with?.path ?? "");
-  if (!existsSync(pipeline)) {
-    mkdirSync(dirname(pipeline), { recursive: true });
-    symlinkSync(PIPELINE_ROOT, pipeline, "dir");
+  const installed = join(cwd, INSTALLED_ENGINE);
+  if (!existsSync(installed)) {
+    mkdirSync(dirname(installed), { recursive: true });
+    symlinkSync(PIPELINE_ROOT, installed, "dir");
   }
   const outputFile = join(scratch(), "output");
   writeFileSync(outputFile, "");
@@ -154,11 +155,11 @@ function runStep(
 }
 
 describe("reading the plugin's config", () => {
-  it("runs the checks from the commit the plugin pinned, not whatever a branch holds today", () => {
-    expect(stepNamed("plan", PIPELINE_STEP).with).toMatchObject({
-      repository: "${{ job.workflow_repository }}",
-      ref: "${{ job.workflow_sha }}",
-    });
+  it("runs the checks from the engine the plugin installed, after installing it", () => {
+    const steps = (WORKFLOW.jobs.plan?.steps ?? []).map(({ name }) => name);
+    expect(script("plan", INSTALL_STEP)).toBe("pnpm install --frozen-lockfile");
+    expect(steps.indexOf(INSTALL_STEP)).toBeLessThan(steps.indexOf(CONFIG_STEP));
+    expect(script("plan", CONFIG_STEP)).toContain(INSTALLED_ENGINE);
   });
 
   it("finds where the build leaves each binary, however deep the plugin keeps them", () => {

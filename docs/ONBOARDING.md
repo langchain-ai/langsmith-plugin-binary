@@ -35,10 +35,10 @@ Some plugins commit build output with the version baked in, such as a bundled ho
 ## 2. Dependency and scripts
 
 ```
-pnpm add -D github:langchain-ai/langsmith-plugin-binary#v0.3.0
+pnpm add @langchain/plugins-base
 ```
 
-This is not published to npm. It is a git dependency pinned to a tag.
+Pinning a git commit instead, for testing, also needs `@langchain/plugins-base` in `pnpm.onlyBuiltDependencies` so pnpm can build it on install.
 
 Add these to `package.json`:
 

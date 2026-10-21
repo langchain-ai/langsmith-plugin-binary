@@ -1,1 +1,0 @@
-{"version":3,"file":"background-recovery.d.ts","sourceRoot":"","sources":["../../../src/tracing/engine/background-recovery.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAEV,sCAAsC,EACtC,qCAAqC,EACrC,4BAA4B,EAC5B,+BAA+B,EAChC,MAAM,aAAa,CAAC;AAiBrB,wBAAsB,qBAAqB,CACzC,OAAO,EAAE,4BAA4B,EACrC,OAAO,EAAE,sCAAsC,EAC/C,UAAU,CAAC,EAAE,+BAA+B,GAC3C,OAAO,CAAC,qCAAqC,CAAC,CAoChD"}

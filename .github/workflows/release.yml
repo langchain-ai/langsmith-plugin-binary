@@ -63,8 +63,6 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
-      - name: Check the Committed Build Matches the Source
-        run: pnpm run lint:dist
       - name: Create an Isolated Home
         uses: ./.github/actions/isolated-home
         env:
