@@ -52,3 +52,11 @@ chflags schg "$USER_HOME/.langsmith-plugins"   # optional: stops the user renami
 ```
 
 On Linux use `root:root` and `chattr +i` instead of `chflags schg`.
+
+## Signing in with the LangSmith CLI
+
+- With no API key set anywhere, the plugins upload with the login from `langsmith auth login`, and any API key still wins over it
+- The login's own server and workspace are used unless a setting names an endpoint, and a login for a different server than that endpoint isn't used
+- When the login expires, uploads are dropped just like with a rejected API key until you sign in again
+- A rejected API key gets a notice to create a new one until an upload with a key works again
+- A failed upload opens one browser sign-in at a time, unless `login_browser` is `false` or there's no screen (such as over SSH), in which case the plugin only says to run `langsmith auth login`

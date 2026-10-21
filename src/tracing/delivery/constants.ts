@@ -9,7 +9,7 @@ export const DELIVERY_CAPACITY_REASON = "capacity";
 export const DELIVERY_REJECTED_REASON = "rejected";
 export const DELIVERY_DEPENDENCY_DROPPED_REASON = "dependency-dropped";
 export const DELIVERY_AUTH_STATUSES: readonly number[] = [401, 403];
-export const DELIVERY_AUTH_HINT = "Check the LangSmith API key.";
+export const DELIVERY_AUTH_HINT = "Check the LangSmith API key or CLI login and its access.";
 export const DELIVERY_WRITER_REQUIRED_MESSAGE = "A delivery writer is required";
 export const DELIVERY_DESTINATION_REQUIRED_MESSAGE =
   "At least one delivery destination is required";

@@ -1,3 +1,6 @@
+export const DESKTOP_SSH_VARIABLES = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"] as const;
+export const DESKTOP_DISPLAY_VARIABLES = ["DISPLAY", "WAYLAND_DISPLAY"] as const;
+export const DESKTOP_WINDOWED_PLATFORMS: readonly NodeJS.Platform[] = ["darwin", "win32"];
 export const DESKTOP_NOTIFIER = "/usr/bin/osascript";
 export const DESKTOP_NOTIFIER_SCRIPT = [
   "-e",

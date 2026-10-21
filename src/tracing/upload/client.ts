@@ -3,11 +3,11 @@ import { UPLOAD_REQUEST_TIMEOUT_MS, UPLOAD_SDK_MAX_RETRIES } from "./constants.j
 import type { UploadClientOptions } from "./models.js";
 
 export function createUploadClient(options: UploadClientOptions): Client {
-  const { apiKey, apiUrl, workspaceId, anonymizer, redactedFields } = options;
+  const { apiKey, apiUrl, workspaceId, login, anonymizer, redactedFields } = options;
+  const auth = login === undefined ? { apiKey: apiKey ?? "", workspaceId: workspaceId ?? "" } : {};
   return new Client({
-    apiKey,
+    ...auth,
     apiUrl,
-    workspaceId: workspaceId ?? "",
     autoBatchTracing: false,
     manualFlushMode: true,
     timeout_ms: UPLOAD_REQUEST_TIMEOUT_MS,

@@ -8,4 +8,5 @@ export type DesktopLauncher = (
   command: string,
   args: readonly string[],
   env: NodeJS.ProcessEnv,
+  output?: number,
 ) => number | undefined;

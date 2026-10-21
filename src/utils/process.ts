@@ -53,12 +53,13 @@ export function spawnDetached(
   command: string,
   args: readonly string[],
   env: NodeJS.ProcessEnv,
+  output?: number,
 ): number | undefined {
   try {
     const child = spawn(command, args, {
       detached: true,
       env,
-      stdio: "ignore",
+      stdio: output === undefined ? "ignore" : ["ignore", output, output],
       windowsHide: true,
     });
     child.once("error", () => undefined);

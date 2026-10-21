@@ -30,6 +30,10 @@ export function showDesktopNotification(
   );
 }
 
+export function launchDesktopCommand(...command: Parameters<DesktopLauncher>): number | undefined {
+  return launcher(...command);
+}
+
 export function setDesktopLauncherForTests(next: DesktopLauncher = spawnDetached): void {
   launcher = next;
 }

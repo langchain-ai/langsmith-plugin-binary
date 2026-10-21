@@ -3,6 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { fakeTool } from "../../test-support/login.js";
+import { findExecutable } from "./launch.js";
 import { desktopNotificationCommand } from "./notification.js";
 
 const TITLE = "LangSmith tracing";
@@ -50,5 +52,11 @@ describe("desktop notification", () => {
     writeFileSync(join(folder, "notify-send"), "", { mode: 0o755 });
     const env = { PATH: relative(process.cwd(), folder) };
     expect(desktopNotificationCommand(TITLE, MESSAGE, "linux", env)).toBeUndefined();
+  });
+
+  it("finds the langsmith CLI by its Windows extension before a bare file of the same name", () => {
+    const folder = fakeTool("langsmith", "", fakeTool("langsmith.exe"));
+    const env = { PATH: `${join(folder, "missing")};${folder}`, PATHEXT: ".exe" };
+    expect(findExecutable("langsmith", env, "win32")).toBe(join(folder, "langsmith.exe"));
   });
 });
