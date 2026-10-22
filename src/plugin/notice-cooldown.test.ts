@@ -37,5 +37,8 @@ describe("notice cooldown", () => {
     const notice = { plugin: "cursor", kind: "login-expired", cooldown: 5, storageRoot };
     expect(await shouldShowNotice(notice)).toBe(true);
     expect(await shouldShowNotice(notice)).toBe(false);
+    expect(await shouldShowNotice({ ...notice, kind: "blocking", persistentOnly: true })).toBe(
+      false,
+    );
   });
 });
