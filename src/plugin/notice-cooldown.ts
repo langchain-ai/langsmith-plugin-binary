@@ -18,7 +18,7 @@ export async function shouldShowNotice(options: NoticeOptions): Promise<boolean>
   try {
     return await claimStateEntry(join(options.storageRoot, NOTICE_STATE_FILE), key, windowMs);
   } catch {
-    if (shownInProcess.has(key)) return false;
+    if (options.persistentOnly || shownInProcess.has(key)) return false;
     shownInProcess.add(key);
     return true;
   }

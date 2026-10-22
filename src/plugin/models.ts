@@ -62,4 +62,5 @@ export interface NoticeOptions {
   kind: string;
   cooldown?: number | "off" | undefined;
   storageRoot: string;
+  persistentOnly?: boolean;
 }
