@@ -36,6 +36,7 @@ import {
   LOGIN_CLI_SYSTEM_FOLDERS,
   LOGIN_CLI_TIMEOUT_FLAG,
   LOGIN_CLI_WAITING_PATTERN,
+  LOGIN_CLEANUP_WARNING,
   LOGIN_CLI_WINDOWS_FOLDER,
   LOGIN_CLI_WINDOWS_ROOT_VARIABLE,
   LOGIN_CODE_FILE_FLAG,
@@ -138,8 +139,7 @@ export async function recordRejectedKey(options: LoginRenewalOptions): Promise<v
 }
 
 export async function clearRejectedKey(storageRoot: string | undefined): Promise<void> {
-  if (storageRoot !== undefined)
-    await forgetLogins(storageRoot, LOGIN_KEY_REJECTED_ENTRY, undefined);
+  if (storageRoot !== undefined) await clearMarkers(storageRoot, LOGIN_KEY_REJECTED_ENTRY);
 }
 
 async function announce(notice: string, options: LoginRenewalOptions): Promise<void> {
@@ -186,7 +186,15 @@ export async function clearLoginExpiry(
 ): Promise<void> {
   const prefix = expiredMarkerPrefix(login);
   for (const key of unrecorded) if (key.startsWith(prefix)) unrecorded.delete(key);
-  if (storageRoot !== undefined) await forgetLogins(storageRoot, prefix, undefined);
+  if (storageRoot !== undefined) await clearMarkers(storageRoot, prefix);
+}
+
+async function clearMarkers(storageRoot: string, prefix: string): Promise<void> {
+  try {
+    await forgetLogins(storageRoot, prefix, undefined);
+  } catch (error) {
+    console.warn(LOGIN_CLEANUP_WARNING, describe(error));
+  }
 }
 
 async function claimLogin(

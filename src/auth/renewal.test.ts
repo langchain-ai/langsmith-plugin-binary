@@ -18,8 +18,13 @@ import { readLoginNotice } from "./index.js";
 import type { UploadLogin } from "./models.js";
 import type { LoginRenewalOptions } from "./renewal-models.js";
 import { expiredMarkerPrefix, loginTokenHash } from "./profile.js";
-import { renewRejectedLogin } from "./renewal.js";
-import { LOGIN_NOTICE_KIND } from "./renewal-constants.js";
+import {
+  clearLoginExpiry,
+  clearRejectedKey,
+  recordRejectedKey,
+  renewRejectedLogin,
+} from "./renewal.js";
+import { LOGIN_CLEANUP_WARNING, LOGIN_NOTICE_KIND } from "./renewal-constants.js";
 import { shouldShowNotice } from "../plugin/notice-cooldown.js";
 
 const API_URL = "https://login.example";
@@ -298,6 +303,18 @@ describe.skipIf(process.platform === "win32")("expired login renewal", () => {
     expect(await renew(locked, { env, storageRoot: readOnly })).toBe("notice");
     expect(existsSync(calls)).toBe(false);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("Run `langsmith auth login`"));
+  });
+
+  it("warns instead of rejecting when read-only state stops a marker being cleared", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const storageRoot = temporaryFolder("stuck state ");
+    const stuck = login("synthetic-stuck");
+    await recordRejectedKey({ storageRoot });
+    await renew(stuck, { browser: false, storageRoot });
+    chmodSync(storageRoot, 0o555);
+    await expect(clearRejectedKey(storageRoot)).resolves.toBeUndefined();
+    await expect(clearLoginExpiry(stuck, storageRoot)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(LOGIN_CLEANUP_WARNING, expect.any(String));
   });
 
   it("forgets an old login's expiry once the next one is claimed", async () => {

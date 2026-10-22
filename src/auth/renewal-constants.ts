@@ -28,6 +28,7 @@ export const LOGIN_CLI_MISSING_WINDOWS_NOTICE =
   "LangSmith token expired. Install the CLI with `irm https://cli.langsmith.com/install.ps1 | iex`, then run `langsmith auth login`.";
 export const LOGIN_RENEWAL_WARNING = "Could not start the LangSmith sign-in:";
 export const LOGIN_MARKER_WARNING = "Could not record the expired LangSmith login:";
+export const LOGIN_CLEANUP_WARNING = "Could not clear the LangSmith sign-in marker:";
 export const LOGIN_STATE_FILE = "sign-in.json";
 export const LOGIN_CODE_FILE_FLAG = "w";
 export const LOGIN_CODE_FILE_MODE = 0o600;
