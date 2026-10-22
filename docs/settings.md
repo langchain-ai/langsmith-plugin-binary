@@ -55,7 +55,7 @@ On Linux use `root:root` and `chattr +i` instead of `chflags schg`.
 
 ## Signing in with the LangSmith CLI
 
-- With no API key set anywhere, the plugins upload with the login from `langsmith auth login`, and any API key still wins over it
+- The plugins upload with the login from `langsmith auth login` unless the plugin's own API key is set, so a generic `LANGSMITH_API_KEY` or `LANGCHAIN_API_KEY` is only used when there's no usable login
 - The login's own server and workspace are used unless a setting names an endpoint, and a login for a different server than that endpoint isn't used
 - When the login expires, uploads are dropped just like with a rejected API key until you sign in again
 - A rejected API key gets a notice to create a new one until an upload with a key works again

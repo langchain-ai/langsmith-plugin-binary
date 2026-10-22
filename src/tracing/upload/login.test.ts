@@ -169,9 +169,14 @@ describe("uploading with the LangSmith CLI login", () => {
     );
   });
 
-  it("refuses a login destination the SDK would send with an environment key instead", () => {
+  it("sends the login instead of a generic environment key the SDK reads on its own", async () => {
     vi.stubEnv("LANGSMITH_API_KEY", "synthetic-environment-key");
-    expect(() => loginWriter("synthetic-access")).toThrow("CLI login");
+    vi.stubEnv("LANGCHAIN_API_KEY", "synthetic-legacy-key");
+    const { writer, destination } = loginWriter("synthetic-access");
+    await writer.send(submission, destination);
+    expect(headers[0]).toMatchObject({ authorization: "Bearer synthetic-access" });
+    expect(headers[0]).not.toHaveProperty("x-api-key");
+    expect(process.env["LANGSMITH_API_KEY"]).toBe("synthetic-environment-key");
   });
 
   it("treats a 403 as no access, not an expired login", async () => {

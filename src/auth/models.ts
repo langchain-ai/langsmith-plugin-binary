@@ -23,6 +23,10 @@ export type UploadCredential =
   | { kind: "login"; login: UploadLogin; apiUrl: string; workspaceId?: string }
   | { kind: "none"; reason: string };
 
+export interface UploadWorkspace {
+  workspaceId?: string;
+}
+
 export interface LoginReplica {
   apiKey?: string | undefined;
   apiUrl?: string | undefined;
