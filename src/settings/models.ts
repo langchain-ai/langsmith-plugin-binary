@@ -21,7 +21,7 @@ export interface CommonConfig {
   metadata?: Record<string, unknown>;
   redact?: boolean;
   redact_extra_rules?: CommonRedactRule[];
-  login_browser?: boolean;
+  strict_auth?: boolean;
   notice_cooldown?: number | "off";
 }
 

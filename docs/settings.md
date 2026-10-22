@@ -15,6 +15,7 @@ Each setting comes from the highest place in this list that sets it. A settings 
 ## Notices
 
 - A plugin shows the same notice at most once every `notice_cooldown` minutes across its conversations, 2 by default, and `off` silences every notice
+- `strict_auth`, off by default, refuses every prompt while the LangSmith login is expired or the API key is rejected, until the user signs in again or fixes the key
 
 ## Locking settings with the managed file
 
