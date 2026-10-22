@@ -131,18 +131,18 @@ describe.skipIf(!posix)("managed config lock", () => {
     expect(new Set(merged.locked)).toEqual(new Set(["redact", "redact_extra_rules"]));
   });
 
-  it("lets the managed file keep the login browser off over every other source", () => {
+  it("lets the managed file keep strict auth on over every other source", () => {
     const managed = readManagedConfigFile({
-      path: managedFile({ login_browser: false }),
+      path: managedFile({ strict_auth: true }),
       ownerUid: uid,
     });
     const merged = mergeCommonConfig({
       managed,
-      env: { login_browser: true },
-      user: { login_browser: true },
+      env: { strict_auth: false },
+      user: { strict_auth: false },
     });
-    expect(merged.login_browser).toBe(false);
-    expect(merged.locked).toEqual(["login_browser"]);
+    expect(merged.strict_auth).toBe(true);
+    expect(merged.locked).toEqual(["strict_auth"]);
   });
 
   it("lets the managed file lock the notice cooldown and rejects a value that isn't minutes or off", () => {

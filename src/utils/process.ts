@@ -1,4 +1,4 @@
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { CRASH_SIGNALS, NODE_ERROR_PREFIX } from "../constants.js";
 import type { ExecFileFailure, VersionCheck, VersionCheckFailure } from "../models.js";
 import { describe } from "./errors.js";
@@ -46,25 +46,5 @@ export function securityWithoutEchoingCredentials(args: string[], failure: strin
     execFileSync("/usr/bin/security", args, { stdio: "ignore" });
   } catch {
     throw new Error(`could not ${failure}`);
-  }
-}
-
-export function spawnDetached(
-  command: string,
-  args: readonly string[],
-  env: NodeJS.ProcessEnv,
-): number | undefined {
-  try {
-    const child = spawn(command, args, {
-      detached: true,
-      env,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    child.once("error", () => undefined);
-    child.unref();
-    return child.pid;
-  } catch {
-    return undefined;
   }
 }
