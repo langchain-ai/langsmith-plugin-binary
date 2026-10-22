@@ -17,12 +17,14 @@ import { createStateStore } from "../storage/state-store.js";
 import { canOpenBrowser, findExecutable } from "../utils/desktop/launch.js";
 import { launchDesktopCommand, showDesktopNotification } from "../utils/desktop/notification.js";
 import { describe } from "../utils/errors.js";
+import { sdkSetting } from "../utils/sdk/normalize.js";
 import { WINDOWS_PLATFORM } from "../utils/constants.js";
 import { fillTemplate } from "../utils/format.js";
 import { LOGIN_CONFIG_FILE_ENCODING, LOGIN_HOME_VARIABLES } from "./constants.js";
 import type { LoginProfile, UploadLogin } from "./models.js";
-import { expiredMarkerPrefix, readLoginProfile, readProfileAt } from "./profile.js";
+import { credentialHash, expiredMarkerPrefix, readLoginProfile, readProfileAt } from "./profile.js";
 import {
+  LOGIN_BROWSER_CLAIM_SUFFIX,
   LOGIN_BROWSER_CODE_NOTICE,
   LOGIN_BROWSER_NOTICE,
   LOGIN_CLI_API_URL_FLAG,
@@ -62,7 +64,7 @@ const unrecorded = new Set<string>();
 export async function renewRejectedLogin(
   login: UploadLogin,
   apiUrl: string,
-  sentTokenHash: string,
+  sentTokenHash: string | undefined,
   options: LoginRenewalOptions = {},
 ): Promise<LoginRenewalResult> {
   try {
@@ -76,26 +78,26 @@ export async function renewRejectedLogin(
 async function renewLogin(
   login: UploadLogin,
   apiUrl: string,
-  sentTokenHash: string,
+  sentTokenHash: string | undefined,
   options: LoginRenewalOptions,
 ): Promise<LoginRenewalResult> {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const profile = readProfileAt(login.configPath, login.profile);
-  if (profile === undefined || profile.tokenHash !== sentTokenHash) return "superseded";
+  if (profile === undefined || profile.accessTokenHash !== sentTokenHash) return "superseded";
   const key = `${expiredMarkerPrefix(profile)}${profile.tokenHash}`;
   const claim = await claimLogin(profile, key, options.storageRoot);
-  if (claim === "existing") return "already-handled";
   if (claim === "unrecorded" && unrecorded.has(key)) return "already-handled";
   if (claim === "unrecorded") unrecorded.add(key);
   const folders = options.cliFolders ?? loginCliFolders(env);
   const cli = findExecutable(LOGIN_CLI_NAME, env, platform, folders);
-  if (
-    claim === "unrecorded" ||
-    cli === undefined ||
-    options.browser === false ||
-    !canOpenBrowser(env, platform)
-  ) {
+  const launchable =
+    claim !== "unrecorded" &&
+    cli !== undefined &&
+    options.browser !== false &&
+    canOpenBrowser(env, platform);
+  if (!launchable || !(await claimBrowser(key, options.storageRoot!))) {
+    if (claim === "existing") return "already-handled";
     const missing =
       platform === WINDOWS_PLATFORM ? LOGIN_CLI_MISSING_WINDOWS_NOTICE : LOGIN_CLI_MISSING_NOTICE;
     return tell(cli === undefined ? missing : LOGIN_PAUSED_NOTICE, "notice");
@@ -127,19 +129,26 @@ async function renewLogin(
   }
 }
 
-export async function recordRejectedKey(options: LoginRenewalOptions): Promise<void> {
+export async function recordRejectedKey(
+  apiKey: string,
+  options: LoginRenewalOptions,
+): Promise<void> {
   if (options.storageRoot === undefined) return;
   const path = join(options.storageRoot, LOGIN_STATE_FILE);
   try {
-    if (!(await claimStateEntry(path, LOGIN_KEY_REJECTED_ENTRY, Infinity))) return;
+    if (!(await claimStateEntry(path, rejectedKeyEntry(apiKey), Infinity))) return;
   } catch {
     return;
   }
   await announce(LOGIN_KEY_REJECTED_NOTICE, options);
 }
 
-export async function clearRejectedKey(storageRoot: string | undefined): Promise<void> {
-  if (storageRoot !== undefined) await clearMarkers(storageRoot, LOGIN_KEY_REJECTED_ENTRY);
+export async function clearRejectedKey(
+  storageRoot: string | undefined,
+  apiKey?: string,
+): Promise<void> {
+  const entry = apiKey === undefined ? LOGIN_KEY_REJECTED_ENTRY : rejectedKeyEntry(apiKey);
+  if (storageRoot !== undefined) await clearMarkers(storageRoot, entry);
 }
 
 async function announce(notice: string, options: LoginRenewalOptions): Promise<void> {
@@ -161,9 +170,11 @@ async function announce(notice: string, options: LoginRenewalOptions): Promise<v
 export function readLoginNotice(
   storageRoot: string,
   env: NodeJS.ProcessEnv = process.env,
+  apiKey?: string,
 ): string | undefined {
   const saved = loginStore(storageRoot).read();
-  if (saved[LOGIN_KEY_REJECTED_ENTRY] !== undefined) return LOGIN_KEY_REJECTED_NOTICE;
+  if (apiKey !== undefined)
+    return saved[rejectedKeyEntry(apiKey)] === undefined ? undefined : LOGIN_KEY_REJECTED_NOTICE;
   const profile = readLoginProfile(env);
   if (profile === undefined) return undefined;
   const key = `${expiredMarkerPrefix(profile)}${profile.tokenHash}`;
@@ -212,6 +223,19 @@ async function claimLogin(
   }
   await forgetLogins(storageRoot, expiredMarkerPrefix(profile), key);
   return "claimed";
+}
+
+async function claimBrowser(key: string, storageRoot: string): Promise<boolean> {
+  const path = join(storageRoot, LOGIN_STATE_FILE);
+  try {
+    return await claimStateEntry(path, `${key}${LOGIN_BROWSER_CLAIM_SUFFIX}`, Infinity);
+  } catch {
+    return false;
+  }
+}
+
+function rejectedKeyEntry(apiKey: string): string {
+  return `${LOGIN_KEY_REJECTED_ENTRY}${credentialHash(sdkSetting(apiKey) ?? apiKey)}`;
 }
 
 async function forgetLogins(storageRoot: string, prefix: string, keep: string | undefined) {

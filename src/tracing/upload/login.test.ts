@@ -44,6 +44,15 @@ function loginProfile(token: string) {
   };
 }
 
+function keyWriter(apiKey: string) {
+  const writer = createLangSmithUploadWriter({
+    redact: true,
+    storageRoot,
+    destinations: [{ apiKey, apiUrl: endpoint, projectName: "p" }],
+  });
+  return { writer, destination: writer.destinations[0]!.id };
+}
+
 function loginWriter(token: string, workspaceId?: string) {
   const configPath = writeLoginConfig(loginProfile(token));
   vi.stubEnv("LANGSMITH_CONFIG_FILE", configPath);
@@ -150,11 +159,14 @@ describe("uploading with the LangSmith CLI login", () => {
     const destination = writer.destinations[0]!.id;
     await writer.send(submission, destination).catch(() => undefined);
     await waitFor(
-      () => readLoginNotice(storageRoot)?.includes("API key was rejected"),
+      () => readLoginNotice(storageRoot, {}, BLIP_KEY)?.includes("API key was rejected"),
       "the key notice",
     );
     await writer.send(submission, destination);
-    await waitFor(() => readLoginNotice(storageRoot) === undefined, "the key notice to clear");
+    await waitFor(
+      () => readLoginNotice(storageRoot, {}, BLIP_KEY) === undefined,
+      "the key notice to clear",
+    );
   });
 
   it("refuses a login destination the SDK would send with an environment key instead", () => {
@@ -177,5 +189,64 @@ describe("uploading with the LangSmith CLI login", () => {
     expect(failure).toMatchObject({ status: 401, loginRejected: true });
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(readLoginNotice(storageRoot)).toBeUndefined();
+  });
+
+  it("keeps the paused notice when a batch with nothing to send goes through", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { writer, destination } = loginWriter(EXPIRED_TOKEN);
+    await writer.send(submission, destination).catch(() => undefined);
+    await waitFor(
+      () => readLoginNotice(storageRoot)?.includes("token expired"),
+      "the paused notice",
+    );
+    await writer.sendBatch([], destination);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(readLoginNotice(storageRoot)).toContain("token expired");
+  });
+
+  it("doesn't mark a refreshed login expired when its old access token is rejected", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { writer, destination, configPath } = loginWriter(EXPIRED_TOKEN);
+    const refreshed = {
+      access_token: "synthetic-refreshed",
+      refresh_token: `${EXPIRED_TOKEN}-refresh`,
+    };
+    writeLoginConfig({ ...loginProfile(EXPIRED_TOKEN), oauth: refreshed }, configPath);
+    const failure = await writer.send(submission, destination).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ status: 401, loginRejected: true });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(readLoginNotice(storageRoot)).toBeUndefined();
+  });
+
+  it("keeps one key's rejection when a different key uploads fine", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const rejected = keyWriter(BLIP_KEY);
+    await rejected.writer.send(submission, rejected.destination).catch(() => undefined);
+    await waitFor(
+      () => readLoginNotice(storageRoot, {}, BLIP_KEY)?.includes("API key was rejected"),
+      "the key notice",
+    );
+    const working = keyWriter("synthetic-working-key");
+    await working.writer.send(submission, working.destination);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(readLoginNotice(storageRoot, {}, BLIP_KEY)).toContain("API key was rejected");
+    expect(readLoginNotice(storageRoot, {}, "synthetic-working-key")).toBeUndefined();
+  });
+
+  it("drops a rejected key's notice once the CLI login is in use", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const rejected = keyWriter(BLIP_KEY);
+    await rejected.writer.send(submission, rejected.destination).catch(() => undefined);
+    await waitFor(
+      () => readLoginNotice(storageRoot, {}, BLIP_KEY)?.includes("API key was rejected"),
+      "the key notice",
+    );
+    const { writer, destination } = loginWriter("synthetic-access");
+    expect(readLoginNotice(storageRoot)).toBeUndefined();
+    await writer.send(submission, destination);
+    await waitFor(
+      () => readLoginNotice(storageRoot, {}, BLIP_KEY) === undefined,
+      "the stale key notice to clear",
+    );
   });
 });

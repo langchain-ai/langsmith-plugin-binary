@@ -127,6 +127,20 @@ describe.skipIf(process.platform === "win32")("expired login renewal", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("Run `langsmith auth login`"));
   });
 
+  it("still opens the browser once on a desktop after a headless uploader saw the expiry", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { bin, calls } = fakeTools();
+    const shared = login("synthetic-seen-headless");
+    const sshEnv = { PATH: bin, DISPLAY: ":0", SSH_CONNECTION: "10.0.0.1 22 10.0.0.2 22" };
+    expect(await renew(shared, { env: sshEnv })).toBe("notice");
+    expect(await renew(shared, { browser: false, env: { PATH: bin, DISPLAY: ":0" } })).toBe(
+      "already-handled",
+    );
+    expect(await renew(shared, { env: { PATH: bin, DISPLAY: ":0" } })).toBe("browser");
+    expect(await renew(shared, { env: { PATH: bin, DISPLAY: ":0" } })).toBe("already-handled");
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
   it("tells the user how to install the CLI only when it is in none of the usual folders", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const empty = temporaryFolder("empty path ");
@@ -309,10 +323,10 @@ describe.skipIf(process.platform === "win32")("expired login renewal", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const storageRoot = temporaryFolder("stuck state ");
     const stuck = login("synthetic-stuck");
-    await recordRejectedKey({ storageRoot });
+    await recordRejectedKey("synthetic-stuck-key", { storageRoot });
     await renew(stuck, { browser: false, storageRoot });
     chmodSync(storageRoot, 0o555);
-    await expect(clearRejectedKey(storageRoot)).resolves.toBeUndefined();
+    await expect(clearRejectedKey(storageRoot, "synthetic-stuck-key")).resolves.toBeUndefined();
     await expect(clearLoginExpiry(stuck, storageRoot)).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledWith(LOGIN_CLEANUP_WARNING, expect.any(String));
   });

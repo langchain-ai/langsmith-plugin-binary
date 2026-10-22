@@ -1,4 +1,4 @@
-import { loginTokenHash } from "../../auth/profile.js";
+import { credentialHash } from "../../auth/profile.js";
 import { LOGIN_EXPIRED_STATUS } from "../../auth/renewal-constants.js";
 import {
   clearLoginExpiry,
@@ -34,6 +34,7 @@ import {
   UPLOAD_UNKNOWN_DESTINATION_MESSAGE,
 } from "./constants.js";
 import { createUploadClientCache } from "./client-cache.js";
+import { takeRejectedAccessToken } from "./client.js";
 import { UploadError, isAlreadyReceived } from "./errors.js";
 import { redactSdkOmittedFields } from "./redaction.js";
 import { applyRuntimeMetadata } from "./runtime-metadata.js";
@@ -50,9 +51,6 @@ export function createLangSmithUploadWriter(
   const destinations = resolved.destinations.map(({ id }) => Object.freeze({ id }));
   const byId = new Map(resolved.destinations.map((destination) => [destination.id, destination]));
   const clients = createUploadClientCache();
-  const loginTokens = new Map(
-    resolved.destinations.map(({ id, login }) => [id, login && loginTokenHash(login)]),
-  );
   const rate = samplingRate(process.env);
   const routes = Object.freeze(
     Object.fromEntries(
@@ -85,29 +83,40 @@ export function createLangSmithUploadWriter(
       apiUrl: configured.apiUrl,
       ...(configured.workspaceId === undefined ? {} : { workspaceId: configured.workspaceId }),
     };
+    let uploaded = false;
     for (const [client, group] of segmentByClient(prepared)) {
       const sampled = group.filter((item) => isSampled(item, rate));
       try {
         await withDeadline(client.batchIngestRuns(ingestFor(sampled), clientOptions)).catch(
           ignoreAlreadyReceived,
         );
+        uploaded ||= sampled.length > 0;
       } catch (error) {
         const failure = new UploadError(error, configured.login !== undefined);
-        const token = loginTokens.get(destinationId);
-        if (failure.loginRejected && configured.login !== undefined && token !== undefined)
-          void renewRejectedLogin(configured.login, configured.apiUrl, token, {
-            browser: options.loginBrowser,
+        const sent = takeRejectedAccessToken(client);
+        if (failure.loginRejected && configured.login !== undefined)
+          void renewRejectedLogin(
+            configured.login,
+            configured.apiUrl,
+            sent && credentialHash(sent),
+            {
+              browser: options.loginBrowser,
+              notify: options.loginNotify,
+              storageRoot: options.storageRoot,
+            },
+          );
+        if (configured.apiKey !== undefined && failure.status === LOGIN_EXPIRED_STATUS)
+          void recordRejectedKey(configured.apiKey, {
             notify: options.loginNotify,
             storageRoot: options.storageRoot,
           });
-        if (configured.login === undefined && failure.status === LOGIN_EXPIRED_STATUS)
-          void recordRejectedKey({ notify: options.loginNotify, storageRoot: options.storageRoot });
         throw failure;
       }
     }
-    if (configured.login !== undefined)
+    if (uploaded && configured.login !== undefined) {
       void clearLoginExpiry(configured.login, options.storageRoot);
-    else void clearRejectedKey(options.storageRoot);
+      void clearRejectedKey(options.storageRoot);
+    } else if (uploaded) void clearRejectedKey(options.storageRoot, configured.apiKey);
     return prepared.map(({ submission, operation }) => ({
       destinationId,
       runId: submission.run.id,

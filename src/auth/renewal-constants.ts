@@ -33,6 +33,7 @@ export const LOGIN_STATE_FILE = "sign-in.json";
 export const LOGIN_CODE_FILE_FLAG = "w";
 export const LOGIN_CODE_FILE_MODE = 0o600;
 export const LOGIN_NOTICE_KIND = "login-expired";
-export const LOGIN_KEY_REJECTED_ENTRY = "api-key-rejected";
+export const LOGIN_KEY_REJECTED_ENTRY = "api-key-rejected.";
+export const LOGIN_BROWSER_CLAIM_SUFFIX = ".browser";
 export const LOGIN_KEY_REJECTED_NOTICE =
   "LangSmith API key was rejected. Create a new key, or remove it and run `langsmith auth login`.";

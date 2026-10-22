@@ -7,6 +7,7 @@ export interface UploadLogin {
 export interface LoginProfile extends UploadLogin {
   apiUrl: string;
   tokenHash: string;
+  accessTokenHash?: string;
 }
 
 export interface UploadCredentialOptions {

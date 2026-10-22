@@ -52,13 +52,15 @@ export function readProfileAt(configPath: string, name?: string): LoginProfile |
     sdkProfileValue(oauth[LOGIN_CONFIG_KEYS.accessToken]) ??
     sdkProfileValue(entry[LOGIN_CONFIG_KEYS.apiKey]);
   if (secret === undefined) return undefined;
+  const accessToken = sdkProfileValue(oauth[LOGIN_CONFIG_KEYS.accessToken]);
   const workspaceId = sdkSetting(entry[LOGIN_CONFIG_KEYS.workspaceId]);
   return {
     configPath,
     profile,
     ...(workspaceId === undefined ? {} : { workspaceId }),
     apiUrl: sdkSetting(entry[LOGIN_CONFIG_KEYS.apiUrl]) ?? LOGIN_DEFAULT_API_URL,
-    tokenHash: shortHash(secret),
+    tokenHash: credentialHash(secret),
+    ...(accessToken === undefined ? {} : { accessTokenHash: credentialHash(accessToken) }),
   };
 }
 
@@ -67,7 +69,7 @@ export function loginTokenHash(login: UploadLogin): string | undefined {
 }
 
 export function expiredMarkerPrefix(login: UploadLogin): string {
-  return `${LOGIN_EXPIRED_MARKER_PREFIX}${shortHash(`${login.configPath}\n${login.profile}`)}.`;
+  return `${LOGIN_EXPIRED_MARKER_PREFIX}${credentialHash(`${login.configPath}\n${login.profile}`)}.`;
 }
 
 export function sameServer(left: string, right: string): boolean {
@@ -90,6 +92,6 @@ function loginConfigPath(env: NodeJS.ProcessEnv): string | undefined {
   return home ? join(home, LOGIN_CONFIG_DIRECTORY, LOGIN_CONFIG_FILE_NAME) : undefined;
 }
 
-function shortHash(value: string): string {
+export function credentialHash(value: string): string {
   return createHash(LOGIN_TOKEN_HASH).update(value).digest("hex").slice(0, LOGIN_TOKEN_HASH_LENGTH);
 }
