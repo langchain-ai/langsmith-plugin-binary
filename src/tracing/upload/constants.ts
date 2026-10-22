@@ -73,3 +73,6 @@ export const UPLOAD_SAMPLING_RATE_VARIABLES = [
 export const UPLOAD_SAMPLING_HASH = "sha256";
 export const UPLOAD_SAMPLING_BUCKET_BYTES = 6;
 export const UPLOAD_DOTTED_ORDER_ROOT_ID = /^\d{8}T\d+Z([0-9a-f-]{36})/i;
+export const UPLOAD_SDK_API_KEY_FIELD = "apiKey";
+export const UPLOAD_KEY_UNUSABLE_MESSAGE =
+  "The LangSmith SDK read this destination's API key as empty, so nothing is uploaded to it";

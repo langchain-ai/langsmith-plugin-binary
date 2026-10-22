@@ -9,8 +9,9 @@ export type {
   LockableField,
   ManagedConfigFileOptions,
   MergedCommonConfig,
+  PluginFieldOptions,
 } from "./models.js";
 export { mergeCommonConfig, toSdkReplicas } from "./common-config.js";
 export { readCommonConfigFile, readCommonConfigFiles } from "./config-files.js";
-export { readManagedConfigFile } from "./managed-config.js";
+export { lockPluginFields, readManagedConfigFile } from "./managed-config.js";
 export { parseCommonConfig } from "./parse.js";

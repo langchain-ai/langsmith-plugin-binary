@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sdkSetting } from "../../utils/sdk/normalize.js";
 import { canonicalJsonObject } from "../../utils/validation/objects.js";
 import {
   UPLOAD_ACCOUNT_FINGERPRINT_PREFIX,
@@ -79,7 +80,7 @@ function resolveDestination(
   const workspaceId =
     config.workspaceId === undefined
       ? undefined
-      : normalizeRequiredText(config.workspaceId, "workspace ID");
+      : sdkSetting(normalizeRequiredText(config.workspaceId, "workspace ID"));
   const identity = JSON.stringify({
     apiKey: config.apiKey,
     apiUrl,
@@ -193,7 +194,7 @@ function normalizeRequiredText(value: string, name: string): string {
 }
 
 function hasApiKey(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
+  return sdkSetting(value) !== undefined;
 }
 
 function fingerprint(value: string): string {

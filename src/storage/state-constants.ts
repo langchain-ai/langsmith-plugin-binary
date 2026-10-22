@@ -19,3 +19,5 @@ export const PENDING_STATE_WRITE_ATTEMPTS = 3;
 
 export const STATE_PRIVATE_DIR_MODE = 0o700;
 export const STATE_PRIVATE_FILE_MODE = 0o600;
+export const STATE_CLAIM_SUFFIX = ".claim";
+export const STATE_CLAIM_SKEW_MS = 60_000;

@@ -60,6 +60,11 @@ export type MergedCommonConfig = CommonConfig & {
 
 export type LockableField = keyof CommonConfig;
 
+export interface PluginFieldOptions {
+  lockable: readonly string[];
+  unlockable?: readonly string[];
+}
+
 export interface ManagedConfigFileOptions {
   path?: string;
   ownerUid?: number;
