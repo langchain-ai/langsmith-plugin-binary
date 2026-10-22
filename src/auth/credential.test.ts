@@ -76,6 +76,9 @@ describe("upload credential", () => {
       kind: "none",
       reason: expect.stringContaining("LANGCHAIN_API_KEY is overriding"),
     });
+    expect(resolveUploadCredential({ env: { ...loginEnv(), LANGSMITH_API_KEY: '""' } }).kind).toBe(
+      "login",
+    );
   });
 
   it("picks the same profile the SDK does, so it never uploads without auth", () => {

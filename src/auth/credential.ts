@@ -25,7 +25,7 @@ export function resolveUploadCredential(options: UploadCredentialOptions = {}): 
       apiUrl: configuredUrl ?? LOGIN_DEFAULT_API_URL,
       ...workspace,
     };
-  const variable = LOGIN_API_KEY_VARIABLES.find((name) => env[name]?.trim());
+  const variable = LOGIN_API_KEY_VARIABLES.find((name) => sdkSetting(env[name]) !== undefined);
   if (variable !== undefined)
     return { kind: "none", reason: fillTemplate(LOGIN_ENV_KEY_REASON, { variable }) };
   const profile = readLoginProfile(env);
