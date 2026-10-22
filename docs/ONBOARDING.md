@@ -52,7 +52,7 @@ Your plugin also needs its own `test:binary` script. The pipeline runs it on eve
 ## 3. Name the binary target
 
 ```ts
-import { defineBinaryTarget } from "@langchain/langsmith-plugin-binary";
+import { defineBinaryTarget } from "@langchain/plugins-base";
 import config from "../binary.config.json" with { type: "json" };
 
 export const binary = defineBinaryTarget({
