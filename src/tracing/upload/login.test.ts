@@ -147,12 +147,15 @@ describe("uploading with the LangSmith CLI login", () => {
     const destination = writer.destinations[0]!.id;
     await writer.send(submission, destination).catch(() => undefined);
     await waitFor(
-      () => readLoginNotice(storageRoot, {}, BLIP_KEY)?.includes("API key was rejected"),
+      () =>
+        readLoginNotice(storageRoot, {}, { apiKey: BLIP_KEY, apiUrl: endpoint })?.includes(
+          "API key was rejected",
+        ),
       "the key notice",
     );
     await writer.send(submission, destination);
     await waitFor(
-      () => readLoginNotice(storageRoot, {}, BLIP_KEY) === undefined,
+      () => readLoginNotice(storageRoot, {}, { apiKey: BLIP_KEY, apiUrl: endpoint }) === undefined,
       "the key notice to clear",
     );
   });
@@ -211,19 +214,28 @@ describe("uploading with the LangSmith CLI login", () => {
     expect(readLoginNotice(storageRoot)).toBeUndefined();
   });
 
-  it("keeps one key's rejection when a different key uploads fine", async () => {
+  it("keeps a key's rejection for its own server only, even when a different key uploads fine", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const rejected = keyWriter(BLIP_KEY);
     await rejected.writer.send(submission, rejected.destination).catch(() => undefined);
     await waitFor(
-      () => readLoginNotice(storageRoot, {}, BLIP_KEY)?.includes("API key was rejected"),
+      () =>
+        readLoginNotice(storageRoot, {}, { apiKey: BLIP_KEY, apiUrl: endpoint })?.includes(
+          "API key was rejected",
+        ),
       "the key notice",
     );
     const working = keyWriter("synthetic-working-key");
     await working.writer.send(submission, working.destination);
     await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(readLoginNotice(storageRoot, {}, BLIP_KEY)).toContain("API key was rejected");
-    expect(readLoginNotice(storageRoot, {}, "synthetic-working-key")).toBeUndefined();
+    expect(readLoginNotice(storageRoot, {}, { apiKey: BLIP_KEY, apiUrl: endpoint })).toContain(
+      "API key was rejected",
+    );
+    const notice = (apiKey: string, apiUrl: string) =>
+      readLoginNotice(storageRoot, {}, { apiKey, apiUrl });
+    expect(notice("synthetic-working-key", endpoint)).toBeUndefined();
+    expect(notice(BLIP_KEY, `${endpoint}/api/v1/`)).toContain("API key was rejected");
+    expect(notice(BLIP_KEY, "https://other.example")).toBeUndefined();
   });
 
   it("drops a rejected key's notice once the CLI login is in use", async () => {
@@ -231,14 +243,17 @@ describe("uploading with the LangSmith CLI login", () => {
     const rejected = keyWriter(BLIP_KEY);
     await rejected.writer.send(submission, rejected.destination).catch(() => undefined);
     await waitFor(
-      () => readLoginNotice(storageRoot, {}, BLIP_KEY)?.includes("API key was rejected"),
+      () =>
+        readLoginNotice(storageRoot, {}, { apiKey: BLIP_KEY, apiUrl: endpoint })?.includes(
+          "API key was rejected",
+        ),
       "the key notice",
     );
     const { writer, destination } = loginWriter("synthetic-access");
     expect(readLoginNotice(storageRoot)).toBeUndefined();
     await writer.send(submission, destination);
     await waitFor(
-      () => readLoginNotice(storageRoot, {}, BLIP_KEY) === undefined,
+      () => readLoginNotice(storageRoot, {}, { apiKey: BLIP_KEY, apiUrl: endpoint }) === undefined,
       "the stale key notice to clear",
     );
   });

@@ -8,6 +8,7 @@ export { sdkSetting } from "../utils/sdk/normalize.js";
 export { LOGIN_NOTICE_KIND } from "./expiry-constants.js";
 export type {
   LoginReplica,
+  RejectedKey,
   UploadCredential,
   UploadCredentialOptions,
   UploadLogin,

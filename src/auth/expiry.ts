@@ -4,8 +4,14 @@ import type { StateClaim } from "../storage/state-models.js";
 import { createStateStore } from "../storage/state-store.js";
 import { describe } from "../utils/errors.js";
 import { sdkSetting } from "../utils/sdk/normalize.js";
-import type { LoginProfile, UploadLogin } from "./models.js";
-import { credentialHash, expiredMarkerPrefix, readLoginProfile, readProfileAt } from "./profile.js";
+import type { LoginProfile, RejectedKey, UploadLogin } from "./models.js";
+import {
+  credentialHash,
+  expiredMarkerPrefix,
+  readLoginProfile,
+  readProfileAt,
+  serverKey,
+} from "./profile.js";
 import {
   LOGIN_CLEANUP_WARNING,
   LOGIN_KEY_REJECTED_ENTRY,
@@ -39,13 +45,13 @@ export async function recordExpiredLogin(
 }
 
 export async function recordRejectedKey(
-  apiKey: string,
+  key: RejectedKey,
   storageRoot: string | undefined,
 ): Promise<void> {
   if (storageRoot === undefined) return;
   const path = join(storageRoot, LOGIN_STATE_FILE);
   try {
-    if (!(await claimStateEntry(path, rejectedKeyEntry(apiKey), Infinity))) return;
+    if (!(await claimStateEntry(path, rejectedKeyEntry(key), Infinity))) return;
   } catch {
     return;
   }
@@ -54,20 +60,20 @@ export async function recordRejectedKey(
 
 export async function clearRejectedKey(
   storageRoot: string | undefined,
-  apiKey?: string,
+  key?: RejectedKey,
 ): Promise<void> {
-  const entry = apiKey === undefined ? LOGIN_KEY_REJECTED_ENTRY : rejectedKeyEntry(apiKey);
+  const entry = key === undefined ? LOGIN_KEY_REJECTED_ENTRY : rejectedKeyEntry(key);
   if (storageRoot !== undefined) await clearMarkers(storageRoot, entry);
 }
 
 export function readLoginNotice(
   storageRoot: string,
   env: NodeJS.ProcessEnv = process.env,
-  apiKey?: string,
+  rejected?: RejectedKey,
 ): string | undefined {
   const saved = loginStore(storageRoot).read();
-  if (apiKey !== undefined)
-    return saved[rejectedKeyEntry(apiKey)] === undefined ? undefined : LOGIN_KEY_REJECTED_NOTICE;
+  if (rejected !== undefined)
+    return saved[rejectedKeyEntry(rejected)] === undefined ? undefined : LOGIN_KEY_REJECTED_NOTICE;
   const profile = readLoginProfile(env);
   if (profile === undefined) return undefined;
   const key = `${expiredMarkerPrefix(profile)}${profile.tokenHash}`;
@@ -108,8 +114,9 @@ async function claimLogin(
   return "claimed";
 }
 
-function rejectedKeyEntry(apiKey: string): string {
-  return `${LOGIN_KEY_REJECTED_ENTRY}${credentialHash(sdkSetting(apiKey) ?? apiKey)}`;
+function rejectedKeyEntry({ apiKey, apiUrl }: RejectedKey): string {
+  const credential = `${sdkSetting(apiKey) ?? apiKey}\n${serverKey(apiUrl)}`;
+  return `${LOGIN_KEY_REJECTED_ENTRY}${credentialHash(credential)}`;
 }
 
 async function forgetLogins(storageRoot: string, prefix: string, keep: string | undefined) {

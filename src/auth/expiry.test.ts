@@ -15,6 +15,8 @@ import { LOGIN_CLEANUP_WARNING } from "./expiry-constants.js";
 
 const API_URL = "https://login.example";
 const STATE_ROOT = temporaryFolder("login state ");
+const REJECTED = { apiKey: "synthetic-rejected", apiUrl: API_URL };
+const STUCK = { apiKey: "synthetic-stuck-key", apiUrl: API_URL };
 
 function login(token: string, configPath?: string) {
   const path = writeLoginConfig(profileWith(token), configPath);
@@ -68,8 +70,8 @@ describe.skipIf(process.platform === "win32")("expired login", () => {
   it("tells the user to replace a rejected key or sign in instead", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const storageRoot = temporaryFolder("rejected key ");
-    await recordRejectedKey("synthetic-rejected", storageRoot);
-    expect(readLoginNotice(storageRoot, {}, "synthetic-rejected")).toBe(
+    await recordRejectedKey(REJECTED, storageRoot);
+    expect(readLoginNotice(storageRoot, {}, REJECTED)).toBe(
       [
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "⚠️  LANGSMITH TRACING IS PAUSED",
@@ -108,10 +110,10 @@ describe.skipIf(process.platform === "win32")("expired login", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const storageRoot = temporaryFolder("stuck state ");
     const stuck = login("synthetic-stuck");
-    await recordRejectedKey("synthetic-stuck-key", storageRoot);
+    await recordRejectedKey(STUCK, storageRoot);
     await expire(stuck, storageRoot);
     chmodSync(storageRoot, 0o555);
-    await expect(clearRejectedKey(storageRoot, "synthetic-stuck-key")).resolves.toBeUndefined();
+    await expect(clearRejectedKey(storageRoot, STUCK)).resolves.toBeUndefined();
     await expect(clearLoginExpiry(stuck, storageRoot)).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledWith(LOGIN_CLEANUP_WARNING, expect.any(String));
   });

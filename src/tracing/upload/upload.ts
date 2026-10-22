@@ -101,14 +101,21 @@ export function createLangSmithUploadWriter(
             options.storageRoot,
           );
         if (configured.apiKey !== undefined && failure.status === LOGIN_EXPIRED_STATUS)
-          void recordRejectedKey(configured.apiKey, options.storageRoot);
+          void recordRejectedKey(
+            { apiKey: configured.apiKey, apiUrl: configured.apiUrl },
+            options.storageRoot,
+          );
         throw failure;
       }
     }
     if (uploaded && configured.login !== undefined) {
       void clearLoginExpiry(configured.login, options.storageRoot);
       void clearRejectedKey(options.storageRoot);
-    } else if (uploaded) void clearRejectedKey(options.storageRoot, configured.apiKey);
+    } else if (uploaded && configured.apiKey !== undefined)
+      void clearRejectedKey(options.storageRoot, {
+        apiKey: configured.apiKey,
+        apiUrl: configured.apiUrl,
+      });
     return prepared.map(({ submission, operation }) => ({
       destinationId,
       runId: submission.run.id,

@@ -76,7 +76,7 @@ export function sameServer(left: string, right: string): boolean {
   return serverKey(left) === serverKey(right);
 }
 
-function serverKey(value: string): string {
+export function serverKey(value: string): string {
   try {
     const url = new URL(sdkSetting(value) ?? "");
     return `${url.origin}${url.pathname.replace(LOGIN_URL_TRAILING_PATTERN, "")}`;

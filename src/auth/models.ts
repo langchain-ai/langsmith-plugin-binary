@@ -31,3 +31,8 @@ export interface LoginReplica {
   apiKey?: string | undefined;
   apiUrl?: string | undefined;
 }
+
+export interface RejectedKey {
+  apiKey: string;
+  apiUrl: string;
+}
