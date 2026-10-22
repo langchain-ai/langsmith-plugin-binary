@@ -1,1 +1,0 @@
-{"version":3,"file":"errors.d.ts","sourceRoot":"","sources":["../../../src/tracing/upload/errors.ts"],"names":[],"mappings":"AAUA,qBAAa,WAAY,SAAQ,KAAK;IACpC,QAAQ,CAAC,SAAS,EAAE,OAAO,CAAC;IAC5B,QAAQ,CAAC,MAAM,EAAE,MAAM,GAAG,SAAS,CAAC;IAEpC,YAAY,KAAK,EAAE,OAAO,EASzB;CACF;AAED,wBAAgB,iBAAiB,CAAC,KAAK,EAAE,OAAO,GAAG,OAAO,CAKzD"}

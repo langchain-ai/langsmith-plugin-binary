@@ -1,1 +1,0 @@
-{"version":3,"file":"sampling.d.ts","sourceRoot":"","sources":["../../../src/tracing/upload/sampling.ts"],"names":[],"mappings":"AAOA,OAAO,KAAK,EAAwB,kBAAkB,EAAE,MAAM,aAAa,CAAC;AAE5E,wBAAgB,YAAY,CAAC,WAAW,EAAE,MAAM,CAAC,UAAU,GAAG,MAAM,GAAG,SAAS,CAQ/E;AAED,wBAAgB,SAAS,CAAC,IAAI,EAAE,kBAAkB,EAAE,IAAI,EAAE,MAAM,GAAG,SAAS,GAAG,OAAO,CAQrF"}

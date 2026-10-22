@@ -29,5 +29,5 @@ Each plugin calls this repo's reusable `build-binary.yml` workflow pinned to a r
 pnpm install
 pnpm test
 pnpm run lint
-pnpm run build   # dist/ is committed, so rebuild it after changes
+pnpm run build   # also runs on install, since dist/ is built rather than committed
 ```

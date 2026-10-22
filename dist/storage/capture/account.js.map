@@ -1,1 +1,0 @@
-{"version":3,"file":"account.js","sourceRoot":"","sources":["../../../src/storage/capture/account.ts"],"names":[],"mappings":"AAEA,MAAM,UAAU,wBAAwB,CACtC,MAAqB,EACrB,kBAA0B;IAE1B,OAAO,CACL,MAAM,CAAC,sBAAsB,KAAK,kBAAkB;QACpD,MAAM,CAAC,IAAI,CAAC,MAAM,CAAC,QAAQ,EAAE,QAAQ,IAAI,EAAE,CAAC,CAAC,MAAM,KAAK,CAAC,CAC1D,CAAC;AACJ,CAAC"}
