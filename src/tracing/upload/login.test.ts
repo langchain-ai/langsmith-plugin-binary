@@ -4,13 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readLoginNotice } from "../../auth/index.js";
 import { RUN_ID } from "../../test-support/constants.js";
 import { waitFor } from "../../test-support/wait.js";
-import { fakeTool, temporaryFolder, writeLoginConfig } from "../../test-support/login.js";
-import { setDesktopLauncherForTests } from "../../utils/desktop/notification.js";
+import { temporaryFolder, writeLoginConfig } from "../../test-support/login.js";
 import { createLangSmithUploadWriter } from "./index.js";
 import { UploadError } from "./errors.js";
 import type { PreparedRunPostSubmission } from "./models.js";
-
-const launched = vi.fn<(command: string) => undefined>();
 
 const EXPIRED_TOKEN = "synthetic-expired-access";
 const FORBIDDEN_TOKEN = "synthetic-forbidden-access";
@@ -60,7 +57,6 @@ function loginWriter(token: string, workspaceId?: string) {
   const workspace = workspaceId === undefined ? {} : { workspaceId };
   const writer = createLangSmithUploadWriter({
     redact: true,
-    loginBrowser: false,
     storageRoot,
     destinations: [{ login, apiUrl: endpoint, projectName: "p", ...workspace }],
   });
@@ -68,12 +64,9 @@ function loginWriter(token: string, workspaceId?: string) {
 }
 
 beforeEach(async () => {
-  launched.mockClear();
-  setDesktopLauncherForTests(launched);
   storageRoot = temporaryFolder("login state ");
   blips = 0;
   headers = [];
-  vi.stubEnv("PATH", "");
   server = createServer((request, response) => {
     headers.push(request.headers);
     request.resume();
@@ -97,7 +90,6 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  setDesktopLauncherForTests();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -123,18 +115,14 @@ describe("uploading with the LangSmith CLI login", () => {
 
   it("drops a trace the server rejects for an expired login and pauses tracing", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.stubEnv("PATH", fakeTool("langsmith"));
-    vi.stubEnv("DISPLAY", ":0");
     const { writer, destination } = loginWriter(EXPIRED_TOKEN);
     const failure = await writer.send(submission, destination).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(UploadError);
     expect(failure).toMatchObject({ status: 401, retryable: false, loginRejected: true });
     await waitFor(
-      () => readLoginNotice(storageRoot)?.includes("token expired"),
+      () => readLoginNotice(storageRoot)?.includes("login expired"),
       "the paused notice",
     );
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(launched.mock.calls.filter(([command]) => command.endsWith("langsmith"))).toEqual([]);
   });
 
   it("clears the paused notice once an upload with the login succeeds again", async () => {
@@ -142,7 +130,7 @@ describe("uploading with the LangSmith CLI login", () => {
     const { writer, destination } = loginWriter(BLIP_TOKEN);
     await writer.send(submission, destination).catch(() => undefined);
     await waitFor(
-      () => readLoginNotice(storageRoot)?.includes("token expired"),
+      () => readLoginNotice(storageRoot)?.includes("login expired"),
       "the paused notice",
     );
     await writer.send(submission, destination);
@@ -201,12 +189,12 @@ describe("uploading with the LangSmith CLI login", () => {
     const { writer, destination } = loginWriter(EXPIRED_TOKEN);
     await writer.send(submission, destination).catch(() => undefined);
     await waitFor(
-      () => readLoginNotice(storageRoot)?.includes("token expired"),
+      () => readLoginNotice(storageRoot)?.includes("login expired"),
       "the paused notice",
     );
     await writer.sendBatch([], destination);
     await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(readLoginNotice(storageRoot)).toContain("token expired");
+    expect(readLoginNotice(storageRoot)).toContain("login expired");
   });
 
   it("doesn't mark a refreshed login expired when its old access token is rejected", async () => {

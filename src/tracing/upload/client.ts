@@ -1,6 +1,6 @@
 import { Client, type ClientConfig } from "langsmith";
 import { LOGIN_API_KEY_VARIABLES } from "../../auth/constants.js";
-import { LOGIN_EXPIRED_STATUS } from "../../auth/renewal-constants.js";
+import { LOGIN_EXPIRED_STATUS } from "../../auth/expiry-constants.js";
 import { withoutEnvVariables } from "../../utils/env.js";
 import {
   UPLOAD_AUTHORIZATION_HEADER,

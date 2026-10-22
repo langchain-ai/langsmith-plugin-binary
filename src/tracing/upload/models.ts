@@ -6,7 +6,6 @@ import type {
   CodingAgentMetadataOptions,
 } from "../../metadata/index.js";
 import type { UploadLogin } from "../../auth/models.js";
-import type { LoginNotify } from "../../auth/renewal-models.js";
 import type { CodingAgentPrivacyContext } from "../../privacy/index.js";
 import type {
   CaptureDestinationRoute,
@@ -125,8 +124,6 @@ export interface LangSmithUploadIdentityOptions {
 }
 
 export interface LangSmithUploadWriterOptions extends LangSmithUploadIdentityOptions {
-  loginBrowser?: boolean | undefined;
-  loginNotify?: LoginNotify | undefined;
   storageRoot?: string | undefined;
   projectLocked?: boolean | undefined;
 }

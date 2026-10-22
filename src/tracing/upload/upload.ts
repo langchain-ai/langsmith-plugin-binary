@@ -1,11 +1,11 @@
 import { credentialHash } from "../../auth/profile.js";
-import { LOGIN_EXPIRED_STATUS } from "../../auth/renewal-constants.js";
+import { LOGIN_EXPIRED_STATUS } from "../../auth/expiry-constants.js";
 import {
   clearLoginExpiry,
   clearRejectedKey,
+  recordExpiredLogin,
   recordRejectedKey,
-  renewRejectedLogin,
-} from "../../auth/renewal.js";
+} from "../../auth/expiry.js";
 import { buildCodingAgentMetadata } from "../../metadata/index.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
 import type { Client, RunTreeConfig } from "langsmith";
@@ -95,21 +95,13 @@ export function createLangSmithUploadWriter(
         const failure = new UploadError(error, configured.login !== undefined);
         const sent = takeRejectedAccessToken(client);
         if (failure.loginRejected && configured.login !== undefined)
-          void renewRejectedLogin(
+          void recordExpiredLogin(
             configured.login,
-            configured.apiUrl,
             sent && credentialHash(sent),
-            {
-              browser: options.loginBrowser,
-              notify: options.loginNotify,
-              storageRoot: options.storageRoot,
-            },
+            options.storageRoot,
           );
         if (configured.apiKey !== undefined && failure.status === LOGIN_EXPIRED_STATUS)
-          void recordRejectedKey(configured.apiKey, {
-            notify: options.loginNotify,
-            storageRoot: options.storageRoot,
-          });
+          void recordRejectedKey(configured.apiKey, options.storageRoot);
         throw failure;
       }
     }

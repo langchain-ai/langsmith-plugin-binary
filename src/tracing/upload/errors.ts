@@ -1,5 +1,5 @@
 import { describe, failureStatus } from "../../utils/errors.js";
-import { LOGIN_EXPIRED_STATUS } from "../../auth/renewal-constants.js";
+import { LOGIN_EXPIRED_STATUS } from "../../auth/expiry-constants.js";
 import {
   UPLOAD_ALREADY_RECEIVED_MESSAGE,
   UPLOAD_ALREADY_RECEIVED_STATUS,

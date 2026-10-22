@@ -2,29 +2,17 @@ import { accessSync, constants, statSync } from "node:fs";
 import { join, posix, win32 } from "node:path";
 import { WINDOWS_PLATFORM } from "../constants.js";
 import {
-  DESKTOP_DISPLAY_VARIABLES,
   DESKTOP_EXTENSIONS_VARIABLE,
   DESKTOP_PATH_VARIABLES,
   DESKTOP_PATH_SEPARATOR,
-  DESKTOP_SSH_VARIABLES,
-  DESKTOP_WINDOWED_PLATFORMS,
   DESKTOP_WINDOWS_EXTENSIONS,
   DESKTOP_WINDOWS_SEPARATOR,
 } from "./desktop-constants.js";
-
-export function canOpenBrowser(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
-  if (DESKTOP_SSH_VARIABLES.some((name) => env[name])) return false;
-  return (
-    DESKTOP_WINDOWED_PLATFORMS.includes(platform) ||
-    DESKTOP_DISPLAY_VARIABLES.some((name) => env[name])
-  );
-}
 
 export function findExecutable(
   name: string,
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
-  extraFolders: readonly string[] = [],
 ): string | undefined {
   const windows = platform === WINDOWS_PLATFORM;
   const extensions = windows
@@ -37,8 +25,7 @@ export function findExecutable(
   );
   const folders = (path ?? "").split(windows ? DESKTOP_WINDOWS_SEPARATOR : DESKTOP_PATH_SEPARATOR);
   const absolute = windows ? win32.isAbsolute : posix.isAbsolute;
-  const searched = [...folders, ...extraFolders].filter((entry) => entry !== "" && absolute(entry));
-  for (const folder of searched) {
+  for (const folder of folders.filter((entry) => entry !== "" && absolute(entry))) {
     for (const extension of extensions) {
       const candidate = join(folder, `${name}${extension}`);
       try {
