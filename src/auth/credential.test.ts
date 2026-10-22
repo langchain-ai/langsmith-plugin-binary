@@ -90,6 +90,9 @@ describe("upload credential", () => {
       apiKey: "synthetic-env-key",
       apiUrl: "https://other.example",
     });
+    expect(resolveUploadCredential({ env: { ...loginEnv(), LANGSMITH_API_KEY: '""' } }).kind).toBe(
+      "login",
+    );
   });
 
   it("picks the same profile the SDK does, so it never uploads without auth", () => {
