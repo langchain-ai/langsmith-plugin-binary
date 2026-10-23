@@ -233,6 +233,15 @@ describe("per-field precedence fixtures", () => {
     },
   );
 
+  it("names the settings that only came from the plugin defaults", () => {
+    const merged = mergeCommonConfig({
+      managed: noManaged,
+      user: { project: "mine" },
+      defaults: { api_url: "https://default.example", project: "default" },
+    });
+    expect(merged.defaulted).toEqual(["api_url"]);
+  });
+
   it("shallow merges metadata per key; {} cannot clear; __proto__ is safe own data", () => {
     const user = { metadata: { keep: 1, nested: { a: 1 }, winner: "user" } };
     const root = { metadata: { nested: { b: 2 }, winner: "root" } };

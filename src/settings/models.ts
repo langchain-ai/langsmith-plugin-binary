@@ -21,6 +21,8 @@ export interface CommonConfig {
   metadata?: Record<string, unknown>;
   redact?: boolean;
   redact_extra_rules?: CommonRedactRule[];
+  strict_auth?: boolean;
+  notice_cooldown?: number | "off";
 }
 
 /** Raw is only for adapter extensions: never re-validate common fields with an extension schema. */
@@ -54,6 +56,7 @@ export type MergedCommonConfig = CommonConfig & {
   defaultMuted: boolean;
   redact: boolean;
   locked: LockableField[];
+  defaulted: LockableField[];
   diagnostics: string[];
   managedConfigProblem?: string;
 };

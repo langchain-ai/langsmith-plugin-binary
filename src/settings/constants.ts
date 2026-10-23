@@ -5,6 +5,9 @@ export const COMMON_BOOLEAN_SETTINGS = {
   defaultMuted: { default: false, restrictive: true },
 } as const;
 
+export const COMMON_NOTICE_COOLDOWN_OFF = "off";
+export const COMMON_STRICT_BOOLEAN_FIELDS = ["redact", "strict_auth"] as const;
+
 export const COMMON_DEFAULT_API_URL = "https://api.smith.langchain.com";
 
 export const COMMON_CONFIG_FILE_NAME = "langsmith.json";
