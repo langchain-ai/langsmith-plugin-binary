@@ -230,9 +230,8 @@ describe("updating a policy file", () => {
     expectOnlyPolicyLeft();
   });
 
-  it("never steals a held lock and names the old lock folder that blocked", async () => {
+  it("never steals a freshly made lock and names the old lock folder that blocked", async () => {
     mkdirSync(`${file}.lock`, { recursive: true, mode: 0o700 });
-    await fs.utimes(`${file}.lock`, 0, 0);
     const start = performance.now();
     await expect(updatePolicyFile(file, options, add("x"))).rejects.toThrow(`${file}.lock. Retry`);
     expect(performance.now() - start).toBeGreaterThanOrEqual(2000);

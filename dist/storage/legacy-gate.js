@@ -137,7 +137,7 @@ async function legacyGateIsAbandoned(gatePath, isDirectory, modifiedAtMs) {
         : undefined;
     if (pid !== undefined && Number.isSafeInteger(pid) && pid > 0)
         return (processIsAlive(pid) === false || (isDirectory && (await ownerHeartbeatStopped(gatePath))));
-    return !isDirectory && Date.now() - modifiedAtMs >= FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS;
+    return Date.now() - modifiedAtMs >= FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS;
 }
 async function ownerHeartbeatStopped(gatePath) {
     try {

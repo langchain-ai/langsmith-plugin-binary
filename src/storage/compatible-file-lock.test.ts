@@ -685,7 +685,7 @@ function exitedProcessId(): number {
   return Number(child.stdout);
 }
 
-it("reclaims a gate left by a dead holder and a dead or old legacy lock file", async () => {
+it("reclaims a gate left by a dead holder, an old ownerless gate and a dead or old legacy lock file", async () => {
   const deadPid = exitedProcessId();
   const deadDirectory = createArea();
   mkdirSync(deadDirectory.gatePath, { mode: 0o700 });
@@ -695,8 +695,11 @@ it("reclaims a gate left by a dead holder and a dead or old legacy lock file", a
   const oldEmptyFile = createArea();
   writeFileSync(oldEmptyFile.gatePath, "");
   utimesSync(oldEmptyFile.gatePath, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+  const ownerless = createArea();
+  mkdirSync(ownerless.gatePath, { mode: 0o700 });
+  utimesSync(ownerless.gatePath, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
   try {
-    for (const area of [deadDirectory, deadFile, oldEmptyFile]) {
+    for (const area of [deadDirectory, deadFile, oldEmptyFile, ownerless]) {
       const handle = await acquireCompatibleDirectoryFileLock(area.filePath, { timeoutMs: 1_000 });
       expect(readFileSync(join(area.gatePath, "owner"), "utf8")).toBe(String(process.pid));
       await handle.release();
@@ -704,11 +707,12 @@ it("reclaims a gate left by a dead holder and a dead or old legacy lock file", a
       expect(readdirSync(area.directory).filter((name) => name.endsWith(".stale"))).toEqual([]);
     }
   } finally {
-    for (const area of [deadDirectory, deadFile, oldEmptyFile]) cleanDirectory(area.directory);
+    for (const area of [deadDirectory, deadFile, oldEmptyFile, ownerless])
+      cleanDirectory(area.directory);
   }
 });
 
-it("keeps waiting for a live, unknown or ownerless legacy holder", async () => {
+it("keeps waiting for a live or unknown legacy holder, or an ownerless one under 20 seconds old", async () => {
   const liveFile = createArea();
   writeFileSync(liveFile.gatePath, String(process.pid));
   const unknownPid = process.platform === "win32" ? 4 : 1;
@@ -716,8 +720,9 @@ it("keeps waiting for a live, unknown or ownerless legacy holder", async () => {
   writeFileSync(unknownOwner.gatePath, String(unknownPid));
   const ownerless = createArea();
   mkdirSync(ownerless.gatePath, { mode: 0o700 });
+  utimesSync(ownerless.gatePath, new Date(Date.now() - 10_000), new Date(Date.now() - 10_000));
   const areas = [liveFile, unknownOwner, ownerless];
-  for (const area of areas)
+  for (const area of [liveFile, unknownOwner])
     utimesSync(area.gatePath, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
   try {
     for (const area of areas)
