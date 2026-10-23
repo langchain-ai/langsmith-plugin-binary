@@ -58,11 +58,9 @@ describe.skipIf(process.platform === "win32")("expired login", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(noticeFor({ LANGSMITH_CONFIG_FILE: expired.configPath })).toBe(
       [
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "⚠️  LANGSMITH TRACING IS PAUSED",
+        "⚠️ LANGSMITH TRACING IS PAUSED ⚠️",
         "Your LangSmith login expired so this session isn't being traced.",
         "▶ Run the following command: langsmith auth login",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
       ].join("\n"),
     );
   });
@@ -73,11 +71,9 @@ describe.skipIf(process.platform === "win32")("expired login", () => {
     await recordRejectedKey(REJECTED, storageRoot);
     expect(readLoginNotice(storageRoot, {}, REJECTED)).toBe(
       [
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "⚠️  LANGSMITH TRACING IS PAUSED",
+        "⚠️ LANGSMITH TRACING IS PAUSED ⚠️",
         "Your LangSmith API key was rejected so this session isn't being traced.",
         "▶ Replace the key, or remove it and run: langsmith auth login",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
       ].join("\n"),
     );
   });
