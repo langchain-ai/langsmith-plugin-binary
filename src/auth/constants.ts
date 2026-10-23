@@ -28,8 +28,6 @@ export const LOGIN_NONE_REASON = [
   "You're not signed in to LangSmith so this session isn't being traced.",
   "▶ Run the following command: langsmith auth login",
 ].join("\n");
-export const LOGIN_ENV_KEY_REASON =
-  "{variable} is overriding your LangSmith login. Unset it or use it as the plugin's API key.";
 export const LOGIN_ENDPOINT_MISMATCH_REASON = [
   LOGIN_NOTICE_HEADING,
   "Your LangSmith login is for {loginUrl} but tracing sends to {apiUrl} so this session isn't being traced.",

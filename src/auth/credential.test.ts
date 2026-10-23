@@ -14,16 +14,16 @@ function loginEnv(): NodeJS.ProcessEnv {
 }
 
 describe("upload credential", () => {
-  it("keeps an API key ahead of a valid CLI login so existing users see no change", () => {
+  it("keeps a plugin API key ahead of a valid CLI login on the same server", () => {
     const credential = resolveUploadCredential({
       apiKey: "synthetic-key",
-      apiUrl: "https://configured.example",
-      env: loginEnv(),
+      apiUrl: LOGIN_URL,
+      env: { ...loginEnv(), LANGSMITH_API_KEY: "synthetic-env-key" },
     });
     expect(credential).toEqual({
       kind: "api-key",
       apiKey: "synthetic-key",
-      apiUrl: "https://configured.example",
+      apiUrl: LOGIN_URL,
     });
   });
 
@@ -65,7 +65,7 @@ describe("upload credential", () => {
     expect(resolveUploadCredential({ apiUrl, env: loginEnv() }).kind).toBe("login");
   });
 
-  it("reports no credential when there is no login or an environment key would hide it", () => {
+  it("reports no credential when there is neither a login nor an API key", () => {
     expect(resolveUploadCredential({ env: { HOME: "/nonexistent-home" } })).toEqual({
       kind: "none",
       reason: [
@@ -74,11 +74,25 @@ describe("upload credential", () => {
         "▶ Run the following command: langsmith auth login",
       ].join("\n"),
     });
-    expect(
-      resolveUploadCredential({ env: { ...loginEnv(), LANGCHAIN_API_KEY: "synthetic-env-key" } }),
-    ).toMatchObject({
-      kind: "none",
-      reason: expect.stringContaining("LANGCHAIN_API_KEY is overriding"),
+  });
+
+  it("uses the login over a generic environment key so only a plugin key beats it", () => {
+    const env = { ...loginEnv(), LANGCHAIN_API_KEY: "synthetic-env-key" };
+    expect(resolveUploadCredential({ env }).kind).toBe("login");
+  });
+
+  it("falls back to a generic environment key when there's no usable login", () => {
+    const env = { HOME: "/nonexistent-home", LANGSMITH_API_KEY: "synthetic-env-key" };
+    expect(resolveUploadCredential({ env })).toEqual({
+      kind: "api-key",
+      apiKey: "synthetic-env-key",
+      apiUrl: "https://api.smith.langchain.com",
+    });
+    const elsewhere = { ...loginEnv(), LANGCHAIN_API_KEY: "synthetic-env-key" };
+    expect(resolveUploadCredential({ apiUrl: "https://other.example", env: elsewhere })).toEqual({
+      kind: "api-key",
+      apiKey: "synthetic-env-key",
+      apiUrl: "https://other.example",
     });
     expect(resolveUploadCredential({ env: { ...loginEnv(), LANGSMITH_API_KEY: '""' } }).kind).toBe(
       "login",

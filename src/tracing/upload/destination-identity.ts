@@ -1,12 +1,18 @@
 import { createHash } from "node:crypto";
+import type { UploadLogin } from "../../auth/models.js";
+import { refusedLoginReplicas } from "../../auth/credential.js";
+import { sameServer } from "../../auth/profile.js";
 import { sdkSetting } from "../../utils/sdk/normalize.js";
 import { canonicalJsonObject } from "../../utils/validation/objects.js";
 import {
   UPLOAD_ACCOUNT_FINGERPRINT_PREFIX,
   UPLOAD_API_URL_TRAILING_SLASH_PATTERN,
   UPLOAD_CONTROL_CHARACTER_PATTERN,
+  UPLOAD_CREDENTIAL_REQUIRED_MESSAGE,
   UPLOAD_DESTINATION_ID_PREFIX,
   UPLOAD_FINGERPRINT_LENGTH,
+  UPLOAD_LOGIN_FIELD_NAMES,
+  UPLOAD_LOGIN_INVALID_MESSAGE,
   UPLOAD_REPLICA_IDENTITY_UPDATE_FIELDS,
   UPLOAD_REPLICA_PATCH_UPDATE_FIELDS,
 } from "./constants.js";
@@ -36,9 +42,16 @@ export function resolveUploadDestinationIdentities(
   const routedReplicas =
     primary && typeof primary === "object" && !hasApiKey(primary.apiKey)
       ? replicas.filter(
-          (replica) => !replica || typeof replica !== "object" || hasApiKey(replica.apiKey),
+          (replica) =>
+            !replica ||
+            typeof replica !== "object" ||
+            hasApiKey(replica.apiKey) ||
+            (primary.login !== undefined &&
+              (replica.apiUrl === undefined || sameServer(replica.apiUrl, primary.apiUrl))),
         )
       : replicas;
+  if (replicas.length > 0 && routedReplicas.length === 0 && primary?.login !== undefined)
+    throw new TypeError(refusedLoginReplicas(replicas, primary.apiUrl));
   const primaryProjectName =
     routedReplicas.length === 0 || primary === undefined
       ? undefined
@@ -72,8 +85,9 @@ function resolveDestination(
   replicaProjectName?: string | null,
 ): ResolvedUploadDestinationIdentity {
   if (!config || typeof config !== "object") throw new TypeError("Invalid upload destination");
-  if (!hasApiKey(config.apiKey)) {
-    throw new TypeError("An API key is required for each upload destination");
+  const login = hasApiKey(config.apiKey) ? undefined : normalizeLogin(config.login);
+  if (login === undefined && !hasApiKey(config.apiKey)) {
+    throw new TypeError(UPLOAD_CREDENTIAL_REQUIRED_MESSAGE);
   }
   const apiUrl = normalizeApiUrl(config.apiUrl);
   const projectName = normalizeRequiredText(config.projectName, "project name");
@@ -82,7 +96,7 @@ function resolveDestination(
       ? undefined
       : sdkSetting(normalizeRequiredText(config.workspaceId, "workspace ID"));
   const identity = JSON.stringify({
-    apiKey: config.apiKey,
+    ...(login === undefined ? { apiKey: config.apiKey } : { login }),
     apiUrl,
     workspaceId: workspaceId ?? null,
     ...(sourceProjectName === undefined
@@ -92,7 +106,7 @@ function resolveDestination(
   const id = `${UPLOAD_DESTINATION_ID_PREFIX}${fingerprint(identity)}`;
   return {
     id,
-    apiKey: config.apiKey,
+    ...(login === undefined ? { apiKey: config.apiKey! } : { login }),
     apiUrl,
     projectName,
     ...(workspaceId === undefined ? {} : { workspaceId }),
@@ -109,9 +123,12 @@ function resolveReplicaDestination(
   if (!replica || typeof replica !== "object") throw new TypeError("Invalid upload replica");
   const updates = snapshotReplicaUpdates(replica.updates);
   const workspaceId = replica.workspaceId ?? primary.workspaceId;
+  const ownKey = hasApiKey(replica.apiKey);
+  const apiKey = ownKey ? replica.apiKey : primary.apiKey;
   return resolveDestination(
     {
-      apiKey: replica.apiKey ?? primary.apiKey,
+      ...(apiKey === undefined ? {} : { apiKey }),
+      ...(!ownKey && primary.login ? { login: primary.login } : {}),
       apiUrl: replica.apiUrl ?? primary.apiUrl,
       projectName: replica.projectName ?? primary.projectName,
       ...(workspaceId === undefined ? {} : { workspaceId }),
@@ -191,6 +208,20 @@ function normalizeRequiredText(value: string, name: string): string {
     throw new TypeError(`Invalid upload ${name}`);
   }
   return value.trim();
+}
+
+function normalizeLogin(login: UploadLogin | undefined): UploadLogin | undefined {
+  if (login === undefined) return undefined;
+  if (!login || typeof login !== "object") throw new TypeError(UPLOAD_LOGIN_INVALID_MESSAGE);
+  const workspaceId =
+    login.workspaceId === undefined
+      ? undefined
+      : sdkSetting(normalizeRequiredText(login.workspaceId, UPLOAD_LOGIN_FIELD_NAMES.workspaceId));
+  return {
+    configPath: normalizeRequiredText(login.configPath, UPLOAD_LOGIN_FIELD_NAMES.configPath),
+    profile: normalizeRequiredText(login.profile, UPLOAD_LOGIN_FIELD_NAMES.profile),
+    ...(workspaceId === undefined ? {} : { workspaceId }),
+  };
 }
 
 function hasApiKey(value: unknown): value is string {

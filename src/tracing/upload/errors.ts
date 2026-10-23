@@ -1,4 +1,5 @@
 import { describe, failureStatus } from "../../utils/errors.js";
+import { LOGIN_EXPIRED_STATUS } from "../../auth/expiry-constants.js";
 import {
   UPLOAD_ALREADY_RECEIVED_MESSAGE,
   UPLOAD_ALREADY_RECEIVED_STATUS,
@@ -11,12 +12,14 @@ import {
 export class UploadError extends Error {
   readonly retryable: boolean;
   readonly status: number | undefined;
+  readonly loginRejected: boolean;
 
-  constructor(cause: unknown) {
+  constructor(cause: unknown, login = false) {
     super(UPLOAD_FAILED_MESSAGE, { cause });
     this.name = UPLOAD_ERROR_NAME;
     const status = failureStatus(cause);
     this.status = status;
+    this.loginRejected = login && status === LOGIN_EXPIRED_STATUS;
     this.retryable =
       status === undefined ||
       status >= UPLOAD_SERVER_ERROR_MIN_STATUS ||

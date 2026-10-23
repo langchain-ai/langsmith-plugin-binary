@@ -580,6 +580,6 @@ describe("shared replica routing", () => {
     ).not.toBe(writer.accountFingerprint);
     expect(() =>
       createLangSmithUploadWriter({ ...options, replicas: [{ projectName: "unkeyed" }] }),
-    ).toThrow("An API key is required for each upload destination");
+    ).toThrow("An API key or a LangSmith CLI login is required for each upload destination");
   });
 });

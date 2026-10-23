@@ -7,6 +7,7 @@ export interface UploadLogin {
 export interface LoginProfile extends UploadLogin {
   apiUrl: string;
   tokenHash: string;
+  accessTokenHash?: string;
 }
 
 export interface UploadCredentialOptions {
@@ -22,7 +23,16 @@ export type UploadCredential =
   | { kind: "login"; login: UploadLogin; apiUrl: string; workspaceId?: string }
   | { kind: "none"; reason: string };
 
+export interface UploadWorkspace {
+  workspaceId?: string;
+}
+
 export interface LoginReplica {
   apiKey?: string | undefined;
   apiUrl?: string | undefined;
+}
+
+export interface RejectedKey {
+  apiKey: string;
+  apiUrl: string;
 }
