@@ -1,6 +1,6 @@
 import { Client, type ClientConfig } from "langsmith";
 import { LOGIN_API_KEY_VARIABLES } from "../../auth/constants.js";
-import { LOGIN_EXPIRED_STATUS } from "../../auth/expiry-constants.js";
+import { LOGIN_EXPIRED_STATUS, LOGIN_NO_ACCESS_STATUS } from "../../auth/expiry-constants.js";
 import { withoutEnvVariables } from "../../utils/env.js";
 import {
   UPLOAD_AUTHORIZATION_HEADER,
@@ -31,7 +31,7 @@ export function createUploadClient(options: UploadClientOptions): Client {
     ...(redactedFields?.includes("outputs") ? { hideOutputs: false } : {}),
     fetchImplementation: async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const response = await fetch(input, init);
-      if (response.status === LOGIN_EXPIRED_STATUS)
+      if (response.status === LOGIN_EXPIRED_STATUS || response.status === LOGIN_NO_ACCESS_STATUS)
         rejectedAuthorizations.set(
           client,
           new Headers(init?.headers).get(UPLOAD_AUTHORIZATION_HEADER) ?? "",

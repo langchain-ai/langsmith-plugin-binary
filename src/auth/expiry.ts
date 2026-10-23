@@ -17,6 +17,8 @@ import {
   LOGIN_KEY_REJECTED_ENTRY,
   LOGIN_KEY_REJECTED_NOTICE,
   LOGIN_MARKER_WARNING,
+  LOGIN_NO_ACCESS_NOTICE,
+  LOGIN_NO_ACCESS_SUFFIX,
   LOGIN_PAUSED_NOTICE,
   LOGIN_STATE_FILE,
 } from "./expiry-constants.js";
@@ -28,11 +30,12 @@ export async function recordExpiredLogin(
   login: UploadLogin,
   sentTokenHash: string | undefined,
   storageRoot: string | undefined,
+  denied = false,
 ): Promise<LoginExpiryResult> {
   try {
     const profile = readProfileAt(login.configPath, login.profile);
     if (profile === undefined || profile.accessTokenHash !== sentTokenHash) return "superseded";
-    const key = `${expiredMarkerPrefix(profile)}${profile.tokenHash}`;
+    const key = `${expiredMarkerPrefix(profile)}${profile.tokenHash}${denied ? LOGIN_NO_ACCESS_SUFFIX : ""}`;
     const claim = await claimLogin(profile, key, storageRoot);
     if (claim === "existing" || (claim === "unrecorded" && unrecorded.has(key)))
       return "already-handled";
@@ -40,22 +43,24 @@ export async function recordExpiredLogin(
   } catch (error) {
     console.warn(LOGIN_MARKER_WARNING, describe(error));
   }
-  console.warn(LOGIN_PAUSED_NOTICE);
+  console.warn(denied ? LOGIN_NO_ACCESS_NOTICE : LOGIN_PAUSED_NOTICE);
   return "notice";
 }
 
 export async function recordRejectedKey(
   key: RejectedKey,
   storageRoot: string | undefined,
+  denied = false,
 ): Promise<void> {
   if (storageRoot === undefined) return;
   const path = join(storageRoot, LOGIN_STATE_FILE);
+  const entry = `${rejectedKeyEntry(key)}${denied ? LOGIN_NO_ACCESS_SUFFIX : ""}`;
   try {
-    if (!(await claimStateEntry(path, rejectedKeyEntry(key), Infinity))) return;
+    if (!(await claimStateEntry(path, entry, Infinity))) return;
   } catch {
     return;
   }
-  console.warn(LOGIN_KEY_REJECTED_NOTICE);
+  console.warn(denied ? LOGIN_NO_ACCESS_NOTICE : LOGIN_KEY_REJECTED_NOTICE);
 }
 
 export async function clearRejectedKey(
@@ -72,12 +77,13 @@ export function readLoginNotice(
   rejected?: RejectedKey,
 ): string | undefined {
   const saved = loginStore(storageRoot).read();
-  if (rejected !== undefined)
-    return saved[rejectedKeyEntry(rejected)] === undefined ? undefined : LOGIN_KEY_REJECTED_NOTICE;
-  const profile = readLoginProfile(env);
-  if (profile === undefined) return undefined;
-  const key = `${expiredMarkerPrefix(profile)}${profile.tokenHash}`;
-  return unrecorded.has(key) || saved[key] !== undefined ? LOGIN_PAUSED_NOTICE : undefined;
+  const recorded = (key: string) => unrecorded.has(key) || saved[key] !== undefined;
+  const key =
+    rejected === undefined ? loginExpiryKey(readLoginProfile(env)) : rejectedKeyEntry(rejected);
+  if (key === undefined) return undefined;
+  if (recorded(key))
+    return rejected === undefined ? LOGIN_PAUSED_NOTICE : LOGIN_KEY_REJECTED_NOTICE;
+  return recorded(`${key}${LOGIN_NO_ACCESS_SUFFIX}`) ? LOGIN_NO_ACCESS_NOTICE : undefined;
 }
 
 export async function clearLoginExpiry(
@@ -112,6 +118,10 @@ async function claimLogin(
   }
   await forgetLogins(storageRoot, expiredMarkerPrefix(profile), key);
   return "claimed";
+}
+
+function loginExpiryKey(profile: LoginProfile | undefined): string | undefined {
+  return profile && `${expiredMarkerPrefix(profile)}${profile.tokenHash}`;
 }
 
 function rejectedKeyEntry({ apiKey, apiUrl }: RejectedKey): string {

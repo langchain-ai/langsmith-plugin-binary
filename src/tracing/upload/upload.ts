@@ -1,5 +1,5 @@
 import { credentialHash } from "../../auth/profile.js";
-import { LOGIN_EXPIRED_STATUS } from "../../auth/expiry-constants.js";
+import { LOGIN_EXPIRED_STATUS, LOGIN_NO_ACCESS_STATUS } from "../../auth/expiry-constants.js";
 import {
   clearLoginExpiry,
   clearRejectedKey,
@@ -94,16 +94,19 @@ export function createLangSmithUploadWriter(
       } catch (error) {
         const failure = new UploadError(error, configured.login !== undefined);
         const sent = takeRejectedAccessToken(client);
-        if (failure.loginRejected && configured.login !== undefined)
+        const denied = failure.status === LOGIN_NO_ACCESS_STATUS;
+        if ((failure.loginRejected || denied) && configured.login !== undefined)
           void recordExpiredLogin(
             configured.login,
             sent && credentialHash(sent),
             options.storageRoot,
+            denied,
           );
-        if (configured.apiKey !== undefined && failure.status === LOGIN_EXPIRED_STATUS)
+        if (configured.apiKey !== undefined && (failure.status === LOGIN_EXPIRED_STATUS || denied))
           void recordRejectedKey(
             { apiKey: configured.apiKey, apiUrl: configured.apiUrl },
             options.storageRoot,
+            denied,
           );
         throw failure;
       }

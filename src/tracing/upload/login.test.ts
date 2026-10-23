@@ -13,6 +13,7 @@ const EXPIRED_TOKEN = "synthetic-expired-access";
 const FORBIDDEN_TOKEN = "synthetic-forbidden-access";
 const BLIP_TOKEN = "synthetic-blip-access";
 const BLIP_KEY = "synthetic-rejected-key";
+const FORBIDDEN_KEY = "synthetic-forbidden-key";
 let server: ReturnType<typeof createServer>;
 let endpoint: string;
 let headers: IncomingHttpHeaders[];
@@ -81,7 +82,14 @@ beforeEach(async () => {
         ...(blip ? { [`Bearer ${BLIP_TOKEN}`]: 401 } : {}),
       };
       const rejectedKey = blip && request.headers["x-api-key"] === BLIP_KEY;
-      response.writeHead(rejectedKey ? 401 : (status[request.headers.authorization ?? ""] ?? 200));
+      const forbiddenKey = request.headers["x-api-key"] === FORBIDDEN_KEY;
+      response.writeHead(
+        rejectedKey
+          ? 401
+          : forbiddenKey
+            ? 403
+            : (status[request.headers.authorization ?? ""] ?? 200),
+      );
       response.end("{}");
     });
   });
@@ -170,11 +178,22 @@ describe("uploading with the LangSmith CLI login", () => {
     expect(process.env["LANGSMITH_API_KEY"]).toBe("synthetic-environment-key");
   });
 
-  it("treats a 403 as no access, not an expired login", async () => {
+  it("pauses with the no-access message, not the expired one, when a login or key gets a 403", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { writer, destination } = loginWriter(FORBIDDEN_TOKEN);
     const failure = await writer.send(submission, destination).catch((error: unknown) => error);
     expect(failure).toMatchObject({ status: 403, retryable: false, loginRejected: false });
-    expect(readLoginNotice(storageRoot)).toBeUndefined();
+    await waitFor(
+      () => readLoginNotice(storageRoot)?.includes("denied access") === true,
+      "the login no-access notice",
+    );
+    const key = keyWriter(FORBIDDEN_KEY);
+    await key.writer.send(submission, key.destination).catch(() => undefined);
+    const forbidden = { apiKey: FORBIDDEN_KEY, apiUrl: endpoint };
+    await waitFor(
+      () => readLoginNotice(storageRoot, {}, forbidden)?.includes("denied access") === true,
+      "the key no-access notice",
+    );
   });
 
   it("doesn't mark a new sign-in expired when an uploader still sends the old token", async () => {
