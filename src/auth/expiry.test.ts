@@ -102,6 +102,16 @@ describe.skipIf(process.platform === "win32")("expired login", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("langsmith auth login"));
   });
 
+  it("shows the latest of a rejected key's 401 and 403", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const storageRoot = temporaryFolder("flipping key ");
+    await recordRejectedKey(REJECTED, storageRoot);
+    await recordRejectedKey(REJECTED, storageRoot, true);
+    expect(readLoginNotice(storageRoot, {}, REJECTED)).toContain("denied access");
+    await recordRejectedKey(REJECTED, storageRoot);
+    expect(readLoginNotice(storageRoot, {}, REJECTED)).toContain("API key was rejected");
+  });
+
   it("warns instead of rejecting when read-only state stops a marker being cleared", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const storageRoot = temporaryFolder("stuck state ");

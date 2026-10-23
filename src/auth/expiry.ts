@@ -57,6 +57,7 @@ export async function recordRejectedKey(
   const entry = `${rejectedKeyEntry(key)}${denied ? LOGIN_NO_ACCESS_SUFFIX : ""}`;
   try {
     if (!(await claimStateEntry(path, entry, Infinity))) return;
+    await forgetLogins(storageRoot, rejectedKeyEntry(key), entry);
   } catch {
     return;
   }
