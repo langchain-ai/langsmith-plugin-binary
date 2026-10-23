@@ -1,6 +1,6 @@
 {
   "name": "@langchain/plugins-base",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "Shared runtime and build pipeline for LangChain plugins",
   "keywords": [
     "claude-code",

@@ -32,7 +32,7 @@ export declare const FILE_LOCK_COMPATIBLE_GATE_CHANGED_MESSAGE = "Legacy file lo
 export declare const FILE_LOCK_COMPATIBLE_OWNER_FILE = "owner";
 export declare const FILE_LOCK_COMPATIBLE_OWNER_MESSAGE = "Could not record the legacy file lock gate owner";
 export declare const FILE_LOCK_COMPATIBLE_OWNER_PID_PATTERN: RegExp;
-export declare const FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS = 5000;
+export declare const FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS = 20000;
 export declare const FILE_LOCK_COMPATIBLE_STALE_SUFFIX = ".stale";
 export declare const FILE_LOCK_GATE_CLEANUP_WARNING = "Could not remove a half-created lock folder:";
 export declare const FILE_LOCK_STALE_GATE_CLEANUP_WARNING = "Could not remove an old lock folder:";
