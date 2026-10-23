@@ -1,6 +1,6 @@
+import { LOGIN_NOTICE_HEADING, LOGIN_NOTICE_RULE } from "./constants.js";
+
 export const LOGIN_EXPIRED_STATUS = 401;
-export const LOGIN_NOTICE_RULE = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-export const LOGIN_NOTICE_HEADING = "⚠️  LANGSMITH TRACING IS PAUSED";
 export const LOGIN_PAUSED_NOTICE = [
   LOGIN_NOTICE_RULE,
   LOGIN_NOTICE_HEADING,

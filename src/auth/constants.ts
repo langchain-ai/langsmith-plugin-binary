@@ -22,9 +22,21 @@ export const LOGIN_TOKEN_HASH_LENGTH = 16;
 export const LOGIN_EXPIRED_MARKER_PREFIX = "login-expired-";
 export const LOGIN_CONFIG_FILE_ENCODING = "utf8";
 
-export const LOGIN_NONE_REASON =
-  "LangSmith isn't signed in. Run `langsmith auth login` or set an API key.";
-export const LOGIN_ENDPOINT_MISMATCH_REASON =
-  "LangSmith login is for {loginUrl} but tracing sends to {apiUrl}. Check your settings or set an API key.";
+export const LOGIN_NOTICE_RULE = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+export const LOGIN_NOTICE_HEADING = "⚠️  LANGSMITH TRACING IS PAUSED";
+export const LOGIN_NONE_REASON = [
+  LOGIN_NOTICE_RULE,
+  LOGIN_NOTICE_HEADING,
+  "You're not signed in to LangSmith so this session isn't being traced.",
+  "▶ Run the following command: langsmith auth login",
+  LOGIN_NOTICE_RULE,
+].join("\n");
+export const LOGIN_ENDPOINT_MISMATCH_REASON = [
+  LOGIN_NOTICE_RULE,
+  LOGIN_NOTICE_HEADING,
+  "Your LangSmith login is for {loginUrl} but tracing sends to {apiUrl} so this session isn't being traced.",
+  "▶ Point tracing at {loginUrl}, or set an API key for {apiUrl}",
+  LOGIN_NOTICE_RULE,
+].join("\n");
 export const LOGIN_REPLICA_REFUSED_REASON =
   "LangSmith replicas on {urls} need their own API key, so they're skipped.";

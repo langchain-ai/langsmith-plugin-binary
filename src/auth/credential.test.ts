@@ -66,9 +66,15 @@ describe("upload credential", () => {
   });
 
   it("reports no credential when there is neither a login nor an API key", () => {
-    expect(resolveUploadCredential({ env: { HOME: "/nonexistent-home" } })).toMatchObject({
+    expect(resolveUploadCredential({ env: { HOME: "/nonexistent-home" } })).toEqual({
       kind: "none",
-      reason: expect.stringContaining("langsmith auth login"),
+      reason: [
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "⚠️  LANGSMITH TRACING IS PAUSED",
+        "You're not signed in to LangSmith so this session isn't being traced.",
+        "▶ Run the following command: langsmith auth login",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      ].join("\n"),
     });
   });
 
