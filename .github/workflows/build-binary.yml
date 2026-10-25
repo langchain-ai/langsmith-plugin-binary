@@ -62,12 +62,17 @@ jobs:
       - name: Check Out the Plugin Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Check Out the Scripts This Workflow Runs
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          path: pipeline
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Decide Whether This Run Is Releasing
         id: gate
@@ -85,14 +90,14 @@ jobs:
         id: config
         env:
           CONFIG: ${{ inputs.config }}
-        run: node pipeline/dist/workflow/read-config.js
+        run: node node_modules/@langchain/plugins-base/dist/workflow/read-config.js
 
       - name: Check the Version Matches the Tag
         if: steps.gate.outputs.publishing == 'true'
         env:
           CONFIG: ${{ inputs.config }}
           TAG: ${{ github.ref_name }}
-        run: node pipeline/dist/workflow/check-version.js
+        run: node node_modules/@langchain/plugins-base/dist/workflow/check-version.js
 
       - name: Find the Branch This Tag Belongs To
         id: target

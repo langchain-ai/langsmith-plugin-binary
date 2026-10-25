@@ -1,1 +1,0 @@
-{"version":3,"file":"state.d.ts","sourceRoot":"","sources":["../../../src/tracing/background-worker/state.ts"],"names":[],"mappings":"AAkCA,OAAO,KAAK,EAGV,qBAAqB,EAErB,qBAAqB,EACtB,MAAM,aAAa,CAAC;AA4GrB,wBAAsB,eAAe,CACnC,WAAW,EAAE,MAAM,EACnB,SAAS,EAAE,MAAM,EACjB,KAAK,EAAE,qBAAqB,GAC3B,OAAO,CAAC,qBAAqB,CAAC,CAMhC"}
