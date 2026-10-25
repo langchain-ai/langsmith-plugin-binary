@@ -47,7 +47,7 @@ export const FILE_LOCK_COMPATIBLE_OWNER_FILE = "owner";
 export const FILE_LOCK_COMPATIBLE_OWNER_MESSAGE =
   "Could not record the legacy file lock gate owner";
 export const FILE_LOCK_COMPATIBLE_OWNER_PID_PATTERN = /^[1-9]\d*$/u;
-export const FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS = 5_000;
+export const FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS = 20_000;
 export const FILE_LOCK_COMPATIBLE_STALE_SUFFIX = ".stale";
 export const FILE_LOCK_GATE_CLEANUP_WARNING = "Could not remove a half-created lock folder:";
 export const FILE_LOCK_STALE_GATE_CLEANUP_WARNING = "Could not remove an old lock folder:";
