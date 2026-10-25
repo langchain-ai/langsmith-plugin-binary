@@ -1,4 +1,8 @@
-import { COMMON_BOOLEAN_SETTINGS } from "./constants.js";
+import {
+  COMMON_BOOLEAN_SETTINGS,
+  COMMON_NOTICE_COOLDOWN_OFF,
+  COMMON_STRICT_BOOLEAN_FIELDS,
+} from "./constants.js";
 import type {
   CommonConfig,
   CommonConfigResult,
@@ -61,9 +65,16 @@ export function parseCommonConfig(value: unknown): CommonConfigResult {
     if (typeof value[field] !== "string") return invalid(value);
     common[field] = value[field];
   }
-  if (Object.hasOwn(value, "redact")) {
-    if (typeof value.redact !== "boolean") return invalid(value);
-    common.redact = value.redact;
+  for (const field of COMMON_STRICT_BOOLEAN_FIELDS) {
+    if (!Object.hasOwn(value, field)) continue;
+    if (typeof value[field] !== "boolean") return invalid(value);
+    common[field] = value[field];
+  }
+  if (Object.hasOwn(value, "notice_cooldown")) {
+    const cooldown = value.notice_cooldown;
+    const minutes = typeof cooldown === "number" && Number.isFinite(cooldown) && cooldown >= 0;
+    if (!minutes && cooldown !== COMMON_NOTICE_COOLDOWN_OFF) return invalid(value);
+    common.notice_cooldown = cooldown as number | "off";
   }
   if (Object.hasOwn(value, "metadata")) {
     if (!object(value.metadata)) return invalid(value);

@@ -131,6 +131,40 @@ describe.skipIf(!posix)("managed config lock", () => {
     expect(new Set(merged.locked)).toEqual(new Set(["redact", "redact_extra_rules"]));
   });
 
+  it("lets the managed file keep strict auth on over every other source", () => {
+    const managed = readManagedConfigFile({
+      path: managedFile({ strict_auth: true }),
+      ownerUid: uid,
+    });
+    const merged = mergeCommonConfig({
+      managed,
+      env: { strict_auth: false },
+      user: { strict_auth: false },
+    });
+    expect(merged.strict_auth).toBe(true);
+    expect(merged.locked).toEqual(["strict_auth"]);
+  });
+
+  it("lets the managed file lock the notice cooldown and rejects a value that isn't minutes or off", () => {
+    const managed = readManagedConfigFile({
+      path: managedFile({ notice_cooldown: "off" }),
+      ownerUid: uid,
+    });
+    expect(mergeCommonConfig({ managed, user: { notice_cooldown: 10 } }).notice_cooldown).toBe(
+      "off",
+    );
+    const wrong = readManagedConfigFile({
+      path: managedFile({ notice_cooldown: "soon" }),
+      ownerUid: uid,
+    });
+    expect(wrong.status).toBe("invalid");
+    const negative = readManagedConfigFile({
+      path: managedFile({ notice_cooldown: -1 }),
+      ownerUid: uid,
+    });
+    expect(negative.status).toBe("invalid");
+  });
+
   it("hands a plugin its own locked fields and warns about ones it can't lock", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const path = managedFile({ project: "p", attachments: false, cursor_db_path: "/db" });
