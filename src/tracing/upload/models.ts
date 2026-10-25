@@ -5,6 +5,7 @@ import type {
   CodingAgentMetadataMode,
   CodingAgentMetadataOptions,
 } from "../../metadata/index.js";
+import type { UploadLogin } from "../../auth/models.js";
 import type { CodingAgentPrivacyContext } from "../../privacy/index.js";
 import type {
   CaptureDestinationRoute,
@@ -100,7 +101,8 @@ export interface PreparedRunPatchSubmission extends PreparedRunSubmissionBase {
 export type PreparedRunSubmission = PreparedRunPostSubmission | PreparedRunPatchSubmission;
 
 export interface LangSmithUploadDestinationConfig {
-  apiKey: string;
+  apiKey?: string;
+  login?: UploadLogin;
   apiUrl: string;
   projectName: string;
   workspaceId?: string;
@@ -122,12 +124,14 @@ export interface LangSmithUploadIdentityOptions {
 }
 
 export interface LangSmithUploadWriterOptions extends LangSmithUploadIdentityOptions {
+  storageRoot?: string | undefined;
   projectLocked?: boolean | undefined;
 }
 
 export interface ResolvedUploadDestinationIdentity {
   id: string;
-  apiKey: string;
+  apiKey?: string;
+  login?: UploadLogin;
   apiUrl: string;
   projectName: string;
   workspaceId?: string;

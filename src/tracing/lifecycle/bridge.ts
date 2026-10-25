@@ -94,7 +94,10 @@ function createBridgeContext(options: LifecycleBridgeOptions): LifecycleBridgeCo
     sessionId,
     ...(options.policy === undefined ? {} : { policy: options.policy }),
   });
-  const writer = createLangSmithUploadWriter(options.writer);
+  const writer = createLangSmithUploadWriter({
+    ...options.writer,
+    storageRoot: options.storageRoot,
+  });
   const policy = resolvePolicy(options.policy);
   return {
     integration,

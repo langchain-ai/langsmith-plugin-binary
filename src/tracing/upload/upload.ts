@@ -1,3 +1,11 @@
+import { credentialHash } from "../../auth/profile.js";
+import { LOGIN_EXPIRED_STATUS, LOGIN_NO_ACCESS_STATUS } from "../../auth/expiry-constants.js";
+import {
+  clearLoginExpiry,
+  clearRejectedKey,
+  recordExpiredLogin,
+  recordRejectedKey,
+} from "../../auth/expiry.js";
 import { buildCodingAgentMetadata } from "../../metadata/index.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
 import type { Client, RunTreeConfig } from "langsmith";
@@ -26,6 +34,7 @@ import {
   UPLOAD_UNKNOWN_DESTINATION_MESSAGE,
 } from "./constants.js";
 import { createUploadClientCache } from "./client-cache.js";
+import { takeRejectedAccessToken } from "./client.js";
 import { UploadError, isAlreadyReceived } from "./errors.js";
 import { redactSdkOmittedFields } from "./redaction.js";
 import { applyRuntimeMetadata } from "./runtime-metadata.js";
@@ -74,16 +83,42 @@ export function createLangSmithUploadWriter(
       apiUrl: configured.apiUrl,
       ...(configured.workspaceId === undefined ? {} : { workspaceId: configured.workspaceId }),
     };
+    let uploaded = false;
     for (const [client, group] of segmentByClient(prepared)) {
       const sampled = group.filter((item) => isSampled(item, rate));
       try {
         await withDeadline(client.batchIngestRuns(ingestFor(sampled), clientOptions)).catch(
           ignoreAlreadyReceived,
         );
+        uploaded ||= sampled.length > 0;
       } catch (error) {
-        throw new UploadError(error);
+        const failure = new UploadError(error, configured.login !== undefined);
+        const sent = takeRejectedAccessToken(client);
+        const denied = failure.status === LOGIN_NO_ACCESS_STATUS;
+        if ((failure.loginRejected || denied) && configured.login !== undefined)
+          void recordExpiredLogin(
+            configured.login,
+            sent && credentialHash(sent),
+            options.storageRoot,
+            denied,
+          );
+        if (configured.apiKey !== undefined && (failure.status === LOGIN_EXPIRED_STATUS || denied))
+          void recordRejectedKey(
+            { apiKey: configured.apiKey, apiUrl: configured.apiUrl },
+            options.storageRoot,
+            denied,
+          );
+        throw failure;
       }
     }
+    if (uploaded && configured.login !== undefined) {
+      void clearLoginExpiry(configured.login, options.storageRoot);
+      void clearRejectedKey(options.storageRoot);
+    } else if (uploaded && configured.apiKey !== undefined)
+      void clearRejectedKey(options.storageRoot, {
+        apiKey: configured.apiKey,
+        apiUrl: configured.apiUrl,
+      });
     return prepared.map(({ submission, operation }) => ({
       destinationId,
       runId: submission.run.id,
