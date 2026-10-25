@@ -182,7 +182,7 @@ async function legacyGateIsAbandoned(
     return (
       processIsAlive(pid) === false || (isDirectory && (await ownerHeartbeatStopped(gatePath)))
     );
-  return !isDirectory && Date.now() - modifiedAtMs >= FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS;
+  return Date.now() - modifiedAtMs >= FILE_LOCK_COMPATIBLE_ABANDONED_GATE_MS;
 }
 
 async function ownerHeartbeatStopped(gatePath: string): Promise<boolean> {
