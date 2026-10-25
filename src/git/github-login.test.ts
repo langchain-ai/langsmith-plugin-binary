@@ -2,15 +2,22 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { fakeTool } from "../test-support/login.js";
 import { createGitHubLoginFallback } from "./github-login.js";
 
 vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
 
 const root = mkdtempSync(join(tmpdir(), "plugins-base gh login "));
+const installedGh = fakeTool(process.platform === "win32" ? "gh.exe" : "gh");
 const markerPath = join(root, "custom state", "login marker.json");
 
-afterEach(() => vi.resetAllMocks());
+beforeEach(() => vi.stubEnv("PATH", installedGh));
+
+afterEach(() => {
+  vi.resetAllMocks();
+  vi.unstubAllEnvs();
+});
 
 it("uses its configured marker and retries a failed GitHub lookup only after the quiet period", () => {
   const now = 1_800_000_000_000;
@@ -19,11 +26,15 @@ it("uses its configured marker and retries a failed GitHub lookup only after the
 
   expect(failedLookup()).toBeUndefined();
   expect(existsSync(markerPath)).toBe(true);
-  expect(lookup).toHaveBeenCalledWith("gh", ["api", "user", "--jq", ".login"], {
-    encoding: "utf-8",
-    timeout: 5_000,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
+  expect(lookup).toHaveBeenCalledWith(
+    expect.stringContaining(installedGh),
+    ["api", "user", "--jq", ".login"],
+    {
+      encoding: "utf-8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    },
+  );
 
   const duringQuietPeriod = createGitHubLoginFallback({ markerPath, now: () => now + 1_000 });
   expect(duringQuietPeriod()).toBeUndefined();

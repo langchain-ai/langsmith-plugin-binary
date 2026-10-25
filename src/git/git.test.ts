@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { nearestExistingDirectory } from "../utils/paths.js";
 import {
@@ -139,6 +139,19 @@ describe("repository probes", () => {
     expect(getRepoRoot(repo)).toBe(realpathSync.native(repo));
     expect(getGitInfo(repo).branch).toBe("trunk");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "never runs a git the repository or a relative PATH entry provides",
+    () => {
+      const hostile = mkdtempSync(join(tmpdir(), "plugins-base hostile repo "));
+      mkdirSync(join(hostile, "fakebin"));
+      const fake = join(hostile, "fakebin");
+      writeFileSync(join(fake, "git"), '#!/bin/sh\n: > "${0%/*}/ran"\n', { mode: 0o755 });
+      vi.stubEnv("PATH", `${relative(process.cwd(), fake)}:fakebin`);
+      getGitInfo(hostile);
+      expect(existsSync(join(hostile, "fakebin", "ran"))).toBe(false);
+    },
+  );
 
   it("leaves non-repository and unreadable paths distinct", () => {
     const plain = join(root, "plain folder");

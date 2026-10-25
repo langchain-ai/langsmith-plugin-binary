@@ -33,6 +33,8 @@ export const PROVIDER_HOSTS: Record<string, string> = {
 };
 export const GIT_COMMAND_TIMEOUT_MS = 5_000;
 export const GH_LOGIN_COMMAND = "gh";
+export const GIT_COMMAND = "git";
+export const GIT_COMMAND_MISSING = "is not installed in an absolute PATH folder";
 export const GH_LOGIN_ARGUMENTS = ["api", "user", "--jq", ".login"];
 export const GH_LOGIN_TIMEOUT_MS = 5_000;
 export const GH_LOGIN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;

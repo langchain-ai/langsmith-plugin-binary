@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { delimiter, join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReconstructionToolOrigin } from "../tracing/reconstruction/models.js";
 import { createRepositoryAttributor } from "./attribution.js";
+import { fakeTool } from "../test-support/login.js";
 import type { RepositoryAttributor } from "./models.js";
 
 vi.mock("node:child_process", { spy: true });
@@ -12,12 +13,18 @@ vi.mock("node:child_process", { spy: true });
 const { execFileSync: realExecFileSync } =
   await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
+const INSTALLED_GH = fakeTool(process.platform === "win32" ? "gh.exe" : "gh");
+
 function answerGitHubLogin(printed: string): void {
   vi.mocked(execFileSync).mockImplementation(((
     file: string,
     args: readonly string[],
     options: object,
-  ) => (file === "gh" ? printed : realExecFileSync(file, args, options))) as typeof execFileSync);
+  ) =>
+    file.startsWith(INSTALLED_GH)
+      ? printed
+      : realExecFileSync(file, args, options)) as typeof execFileSync);
+  vi.stubEnv("PATH", `${INSTALLED_GH}${delimiter}${process.env.PATH ?? ""}`);
 }
 
 const root = mkdtempSync(join(tmpdir(), "plugins-base attribution "));

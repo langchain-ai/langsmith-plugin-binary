@@ -16,7 +16,9 @@ Each setting comes from the highest place in this list that sets it. A settings 
 
 - Each user account gets its own managed file in that user's home folder, at `~/.langsmith-plugins/managed.json`
 - Every setting in a valid managed file wins and the plugin logs one line naming what it ignored, though metadata (extra labels on traces) is locked one key at a time
-- Locking `api_url` (where traces go) also locks `replicas` (extra copies) to the file's list or none, and locking `redact_extra_rules` keeps redaction on
+- Locking `api_key` or `replicas` also locks `api_url` to the file's value or the default server
+- Locking `api_url` (where traces go) or `project` also locks `replicas` (extra copies) to the file's list or none, and locking `redact_extra_rules` keeps redaction on
+- Locking `project` also applies to traces still waiting to upload, and a plugin's own settings (such as Cursor's `attachments`) lock when that plugin supports it, with a warning for ones it can't
 - It's valid only when the folder and file are owned by root, nobody else can write to them and neither is a symlink (a shortcut to another file)
 - The managed file is only supported on macOS and Linux
 - A missing file changes nothing, while a file that fails these checks stops tracing for the session and tells the user to contact an admin

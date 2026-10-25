@@ -8,13 +8,15 @@ import {
   MANAGED_CONFIG_OPEN_FLAGS,
   MANAGED_CONFIG_OWNER_UID,
   GROUP_OR_OTHERS_WRITE_BITS,
+  MANAGED_CONFIG_UNLOCKABLE_WARNING,
   MANAGED_CONFIG_UNSAFE_OWNERSHIP,
   UTF8_BOM,
 } from "./constants.js";
-import type { CommonConfigResult, ManagedConfigFileOptions } from "./models.js";
+import type { CommonConfigResult, ManagedConfigFileOptions, PluginFieldOptions } from "./models.js";
 import { absent, parseCommonConfig } from "./parse.js";
 import { accountHomeDirectory } from "./utils/account-home.js";
 import { object } from "./utils/records.js";
+import { warnOnce } from "./utils/warnings.js";
 
 function onlyOwnerCanChange(stats: Stats, ownerUid: number): boolean {
   return (
@@ -71,5 +73,17 @@ export function readManagedConfigFile(options: ManagedConfigFileOptions = {}): C
   if (!object(raw)) return rejectManagedConfig(MANAGED_CONFIG_INVALID);
   const parsed = parseCommonConfig(raw);
   if (parsed.status === "invalid") return rejectManagedConfig(MANAGED_CONFIG_INVALID);
-  return { status: "valid", common: parsed.common, diagnostics: parsed.diagnostics };
+  return { status: "valid", common: parsed.common, raw, diagnostics: parsed.diagnostics };
+}
+
+export function lockPluginFields(
+  managed: CommonConfigResult,
+  fields: PluginFieldOptions,
+): Record<string, unknown> {
+  const raw = managed.raw ?? {};
+  const present = (names: readonly string[]) => names.filter((name) => Object.hasOwn(raw, name));
+  const ignored = present(fields.unlockable ?? []);
+  if (ignored.length > 0)
+    warnOnce([MANAGED_CONFIG_UNLOCKABLE_WARNING.replace("{fields}", ignored.join(", "))]);
+  return Object.fromEntries(present(fields.lockable).map((name) => [name, raw[name]]));
 }

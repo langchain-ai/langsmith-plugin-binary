@@ -526,6 +526,37 @@ describe("bound LangSmith upload writer", () => {
     expect((failure as UploadError).retryable).toBe(true);
   });
 
+  it("sends queued runs of one trace to a locked project, not the projects they were saved with", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: true,
+      projectLocked: true,
+      destinations: [destination(PRIMARY_KEY, "locked-project", "primary-workspace")],
+    });
+    const items = [
+      { submission: submission(), route: { projectName: "old-project" } },
+      {
+        submission: submission({
+          run: { ...submission().run, id: CHILD_ID, parent_run_id: RUN_ID },
+        }),
+        route: { projectName: "other-project" },
+      },
+    ];
+    await writer.sendBatch(items, destinationByIndex(writer.destinations, 0));
+    expect(requests.map(({ payload }) => payload["session_name"])).toEqual([
+      "locked-project",
+      "locked-project",
+    ]);
+  });
+
+  it("sends the key and workspace the way the SDK reads them, without quotes or spaces", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: true,
+      destinations: [destination(` "${PRIMARY_KEY}" `, "primary-project", "'primary-workspace'")],
+    });
+    await writer.send(submission(), destinationByIndex(writer.destinations, 0));
+    expect(requests[0]).toMatchObject({ apiKey: PRIMARY_KEY, workspaceId: "primary-workspace" });
+  });
+
   it("sends a failing upload once and leaves retrying to the delivery backoff", async () => {
     const writer = createLangSmithUploadWriter({
       redact: true,
