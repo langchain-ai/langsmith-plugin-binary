@@ -27,6 +27,7 @@ export const LEGACY_GIT_METADATA_KEYS = {
   commit: "git_commit_sha",
 } as const satisfies Record<keyof typeof GIT_METADATA_KEYS, string>;
 export const ATTRIBUTION_IDENTIFIER_KEY = "ls_attribution_identifier";
+export const HOOK_METADATA_KEY = "ls_hooks";
 export const REPOSITORY_METADATA_KEYS = [
   GIT_METADATA_KEYS.repository,
   GIT_METADATA_KEYS.provider,

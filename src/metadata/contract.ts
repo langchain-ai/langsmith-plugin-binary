@@ -24,6 +24,7 @@ import {
   CODING_AGENT_STRUCTURAL_FIELD_DEFAULTS,
   CODING_AGENT_WHERE_KNOWN_FIELD_OPTIONS,
   GIT_METADATA_KEYS,
+  HOOK_METADATA_KEY,
   LEGACY_GIT_METADATA_KEYS,
 } from "./constants.js";
 import type {
@@ -103,6 +104,7 @@ export const CODING_AGENT_V1_CONTRACT: CodingAgentV1Contract = {
       appliesTo: CODING_AGENT_RUN_SCOPES.subagent,
       metadataModeIntegrations: CODING_AGENT_CORE_INTEGRATIONS,
     }),
+    field(HOOK_METADATA_KEY, { appliesTo: CODING_AGENT_RUN_SCOPES.llmTool, type: "object" }),
     field("ls_tool_name", {
       appliesTo: CODING_AGENT_RUN_SCOPES.tool,
       metadataModeIntegrations: CODING_AGENT_CORE_INTEGRATIONS,
