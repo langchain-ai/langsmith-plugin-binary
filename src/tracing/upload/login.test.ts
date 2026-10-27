@@ -131,6 +131,7 @@ describe("uploading with the LangSmith CLI login", () => {
       JSON.stringify({ current_profile: "other", profiles: { work, other } }),
     );
     vi.stubEnv("LANGSMITH_PROFILE", "other");
+    vi.stubEnv("LANGSMITH_API_KEY", "synthetic-shell-key");
     const configFile = process.env["LANGSMITH_CONFIG_FILE"];
     const login = { configPath, profile: "work", workspaceId: "configured-workspace" };
     const writer = createLangSmithUploadWriter({
@@ -143,6 +144,7 @@ describe("uploading with the LangSmith CLI login", () => {
       authorization: "Bearer synthetic-access",
       "x-tenant-id": "configured-workspace",
     });
+    expect(headers[0]).not.toHaveProperty("x-api-key");
     expect(process.env.LANGSMITH_PROFILE).toBe("other");
     expect(process.env["LANGSMITH_CONFIG_FILE"]).toBe(configFile);
   });

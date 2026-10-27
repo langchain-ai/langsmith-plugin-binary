@@ -57,7 +57,7 @@ On Linux use `root:root` and `chattr +i` instead of `chflags schg`.
 ## Sending traces to an agent
 
 - `agent_id` sends traces to that agent's production environment instead of a project, and wins when both are set
-- Replicas keep sending to their own project, and an `agent_id` that isn't a valid agent ID pauses tracing with a reason
+- A replica that names no project and shares the main login, server and workspace sends to the agent too, other replicas keep sending to a project, and an `agent_id` that isn't a valid agent ID pauses tracing with a reason
 
 ## Signing in with the LangSmith CLI
 

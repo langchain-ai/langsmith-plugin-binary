@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { withEnvVariables } from "../utils/env.js";
 import { sdkProfileValue, sdkSetting } from "../utils/sdk/normalize.js";
 import { isPlainRecord } from "../utils/validation/objects.js";
 import {
@@ -34,14 +33,6 @@ export function readLoginProfile(
   return configPath === undefined
     ? undefined
     : readProfileAt(configPath, profile || env[LOGIN_PROFILE_VARIABLE] || undefined);
-}
-
-/** The SDK picks its profile from the environment once, when the client is built. */
-export function withLoginProfile<T>(login: UploadLogin, run: () => T): T {
-  return withEnvVariables(
-    { [LOGIN_CONFIG_FILE_VARIABLE]: login.configPath, [LOGIN_PROFILE_VARIABLE]: login.profile },
-    run,
-  );
 }
 
 export function loginCommand(profile?: string, platform = process.platform): string {

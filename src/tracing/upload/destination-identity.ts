@@ -134,7 +134,11 @@ function resolveReplicaDestination(
       ...(!ownKey && primary.login ? { login: primary.login } : {}),
       apiUrl: replica.apiUrl ?? primary.apiUrl,
       projectName: replica.projectName ?? primary.projectName,
-      ...(replica.projectName === undefined && primary.agentId !== undefined
+      ...(replica.projectName === undefined &&
+      primary.agentId !== undefined &&
+      !ownKey &&
+      (replica.apiUrl === undefined || replica.apiUrl === primary.apiUrl) &&
+      (replica.workspaceId === undefined || replica.workspaceId === primary.workspaceId)
         ? { agentId: primary.agentId }
         : {}),
       ...(workspaceId === undefined ? {} : { workspaceId }),

@@ -127,8 +127,9 @@ describe("upload credential", () => {
   it("sends a configured workspace with a login but leaves API keys alone", () => {
     const login = resolveUploadCredential({ workspaceId: CONFIGURED_WORKSPACE, env: loginEnv() });
     expect(login).toMatchObject({ login: { workspaceId: CONFIGURED_WORKSPACE } });
-    const env = { ...loginEnv(), LANGSMITH_WORKSPACE_ID: "from-env" };
-    expect(resolveUploadCredential({ env })).toMatchObject({ login: { workspaceId: "from-env" } });
+    const fromEnv = "6b8f1c2e-0d3a-4c5b-9e7f-1a2b3c4d5e6f";
+    const env = { ...loginEnv(), LANGSMITH_WORKSPACE_ID: fromEnv };
+    expect(resolveUploadCredential({ env })).toMatchObject({ login: { workspaceId: fromEnv } });
     expect(resolveUploadCredential({ workspaceId: CONFIGURED_WORKSPACE, env })).toMatchObject({
       login: { workspaceId: CONFIGURED_WORKSPACE },
     });
@@ -151,6 +152,11 @@ describe("upload credential", () => {
   });
 
   it("pauses with a reason instead of sending a workspace_id that isn't a workspace ID", () => {
+    const env = { ...loginEnv(), LANGSMITH_WORKSPACE_ID: "env-team" };
+    expect(resolveUploadCredential({ env })).toMatchObject({
+      kind: "none",
+      reason: expect.stringContaining('"env-team" isn\'t a workspace ID'),
+    });
     expect(resolveUploadCredential({ workspaceId: "my-team", env: loginEnv() })).toMatchObject({
       kind: "none",
       reason: expect.stringContaining('workspace_id setting "my-team" isn\'t a workspace ID'),

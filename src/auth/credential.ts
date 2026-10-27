@@ -51,14 +51,12 @@ function loginCredential(
   workspace: UploadWorkspace,
   configuredProfile: string | undefined,
 ): UploadCredential {
-  if (
-    workspace.workspaceId !== undefined &&
-    !LOGIN_WORKSPACE_ID_PATTERN.test(workspace.workspaceId)
-  )
+  const requestedWorkspace = workspace.workspaceId ?? sdkSetting(env[LOGIN_WORKSPACE_VARIABLE]);
+  if (requestedWorkspace !== undefined && !LOGIN_WORKSPACE_ID_PATTERN.test(requestedWorkspace))
     return {
       kind: "none",
       reason: fillTemplate(LOGIN_WORKSPACE_INVALID_REASON, {
-        workspaceId: JSON.stringify(workspace.workspaceId),
+        workspaceId: JSON.stringify(requestedWorkspace),
       }),
     };
   const profile = readLoginProfile(env, configuredProfile);
@@ -75,8 +73,7 @@ function loginCredential(
       reason: fillTemplate(LOGIN_ENDPOINT_MISMATCH_REASON, { loginUrl: profile.apiUrl, apiUrl }),
     };
   const { configPath, profile: name } = profile;
-  const loginWorkspace =
-    workspace.workspaceId ?? sdkSetting(env[LOGIN_WORKSPACE_VARIABLE]) ?? profile.workspaceId;
+  const loginWorkspace = requestedWorkspace ?? profile.workspaceId;
   return {
     kind: "login",
     login: {

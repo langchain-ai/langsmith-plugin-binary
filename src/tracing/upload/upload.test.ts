@@ -299,18 +299,25 @@ describe("bound LangSmith upload writer", () => {
     expect(requests[2]?.payload).not.toHaveProperty("address");
   });
 
-  it("sends a replica that names no project to the agent, like it inherits the project", async () => {
+  it("sends only a replica sharing the main login, server and workspace to the agent", async () => {
     const writer = createLangSmithUploadWriter({
       redact: true,
       destinations: [{ ...destination(PRIMARY_KEY, "primary-project", "w"), agentId: "support" }],
-      replicas: [{ apiKey: REPLICA_KEY }, { apiKey: REPLICA_KEY, projectName: "own-project" }],
+      replicas: [
+        {},
+        { projectName: "own-project" },
+        { apiKey: REPLICA_KEY },
+        { apiUrl: `${endpoint}/other` },
+        { workspaceId: "other-workspace" },
+      ],
     });
     for (const { id } of writer.destinations) await writer.send(submission(), id);
     expect(requests[0]?.payload).toMatchObject({
       address: "lrn:agents/support/environments/production",
     });
     expect(requests[1]?.payload).toMatchObject({ session_name: "own-project" });
-    expect(requests[1]?.payload).not.toHaveProperty("address");
+    expect(requests[2]?.payload).toMatchObject({ session_name: "primary-project" });
+    for (const request of requests.slice(1)) expect(request.payload).not.toHaveProperty("address");
   });
 
   it("keeps a queued trace on the agent or project it started with", async () => {
