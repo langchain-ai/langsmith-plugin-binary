@@ -278,6 +278,57 @@ describe("bound LangSmith upload writer", () => {
     expect(requests[1]?.payload).toMatchObject({ session_name: "replica-project" });
   });
 
+  it("sends to the agent instead of the project only where an agent is set", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: true,
+      destinations: [
+        { ...destination(PRIMARY_KEY, "primary-project", "w"), agentId: "support" },
+        destination(REPLICA_KEY, "replica-project", "w"),
+      ],
+    });
+    const [primaryId, replicaId] = writer.destinations.map(({ id }) => id);
+    await writer.send(submission(), primaryId!);
+    await writer.send(patchSubmission(), primaryId!);
+    await writer.send(submission(), replicaId!);
+    const address = "lrn:agents/support/environments/production";
+    expect(requests[0]?.payload).toMatchObject({ address });
+    expect(requests[1]?.payload).toMatchObject({ address });
+    expect(requests[0]?.payload).not.toHaveProperty("session_name");
+    expect(requests[1]?.payload).not.toHaveProperty("session_name");
+    expect(requests[2]?.payload).toMatchObject({ session_name: "replica-project" });
+    expect(requests[2]?.payload).not.toHaveProperty("address");
+  });
+
+  it("sends a replica that names no project to the agent, like it inherits the project", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: true,
+      destinations: [{ ...destination(PRIMARY_KEY, "primary-project", "w"), agentId: "support" }],
+      replicas: [{ apiKey: REPLICA_KEY }, { apiKey: REPLICA_KEY, projectName: "own-project" }],
+    });
+    for (const { id } of writer.destinations) await writer.send(submission(), id);
+    expect(requests[0]?.payload).toMatchObject({
+      address: "lrn:agents/support/environments/production",
+    });
+    expect(requests[1]?.payload).toMatchObject({ session_name: "own-project" });
+    expect(requests[1]?.payload).not.toHaveProperty("address");
+  });
+
+  it("keeps a queued trace on the agent or project it started with", async () => {
+    const writer = createLangSmithUploadWriter({
+      redact: true,
+      destinations: [{ ...destination(PRIMARY_KEY, "primary-project", "w"), agentId: "now" }],
+    });
+    const id = destinationByIndex(writer.destinations, 0);
+    expect(writer.routes[id]).toEqual({ projectName: "primary-project", agentId: "now" });
+    await writer.send(submission(), id, { projectName: "older-project" });
+    await writer.send(patchSubmission(), id, { projectName: "p", agentId: "older" });
+    expect(requests[0]?.payload).toMatchObject({ session_name: "older-project" });
+    expect(requests[0]?.payload).not.toHaveProperty("address");
+    expect(requests[1]?.payload).toMatchObject({
+      address: "lrn:agents/older/environments/production",
+    });
+  });
+
   it("updates run metadata without resending stored identity or content", async () => {
     const writer = createLangSmithUploadWriter({
       redact: false,

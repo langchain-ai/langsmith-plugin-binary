@@ -14,6 +14,8 @@ export interface UploadCredentialOptions {
   apiKey?: string | undefined;
   apiUrl?: string | undefined;
   apiUrlIsDefault?: boolean;
+  agentId?: string | undefined;
+  profile?: string | undefined;
   workspaceId?: string | undefined;
   env?: NodeJS.ProcessEnv;
 }

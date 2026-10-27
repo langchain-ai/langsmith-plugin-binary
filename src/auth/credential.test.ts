@@ -1,8 +1,10 @@
+import { writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { writeLoginConfig } from "../test-support/login.js";
-import { loginReplicaRefusal, resolveUploadCredential } from "./index.js";
+import { loginCommand, loginReplicaRefusal, resolveUploadCredential } from "./index.js";
 
 const LOGIN_URL = "https://login.example/api/v1";
+const CONFIGURED_WORKSPACE = "0f6aa4d5-4686-425f-bc12-288b4079e73e";
 
 function loginEnv(): NodeJS.ProcessEnv {
   const configPath = writeLoginConfig({
@@ -11,6 +13,10 @@ function loginEnv(): NodeJS.ProcessEnv {
     oauth: { access_token: "synthetic-access", refresh_token: "synthetic-refresh" },
   });
   return { LANGSMITH_CONFIG_FILE: configPath };
+}
+
+function hint(profile: string) {
+  return resolveUploadCredential({ profile, env: loginEnv() });
 }
 
 describe("upload credential", () => {
@@ -102,6 +108,83 @@ describe("upload credential", () => {
   it("picks the same profile the SDK does, so it never uploads without auth", () => {
     const env = { ...loginEnv(), LANGSMITH_PROFILE: " work" };
     expect(resolveUploadCredential({ env }).kind).toBe("none");
+  });
+
+  it("uses the configured profile over LANGSMITH_PROFILE and the CLI's current one", () => {
+    const configPath = loginEnv()["LANGSMITH_CONFIG_FILE"]!;
+    const env = { LANGSMITH_CONFIG_FILE: configPath, LANGSMITH_PROFILE: "work" };
+    const work = { api_url: LOGIN_URL, oauth: { refresh_token: "w" } };
+    const company = { api_url: "https://company.example", oauth: { refresh_token: "r" } };
+    const profiles = { work, company };
+    writeFileSync(configPath, JSON.stringify({ current_profile: "work", profiles }));
+    expect(resolveUploadCredential({ profile: "company", env })).toEqual({
+      kind: "login",
+      apiUrl: "https://company.example",
+      login: { configPath, profile: "company" },
+    });
+  });
+
+  it("sends a configured workspace with a login but leaves API keys alone", () => {
+    const login = resolveUploadCredential({ workspaceId: CONFIGURED_WORKSPACE, env: loginEnv() });
+    expect(login).toMatchObject({ login: { workspaceId: CONFIGURED_WORKSPACE } });
+    const env = { ...loginEnv(), LANGSMITH_WORKSPACE_ID: "from-env" };
+    expect(resolveUploadCredential({ env })).toMatchObject({ login: { workspaceId: "from-env" } });
+    expect(resolveUploadCredential({ workspaceId: CONFIGURED_WORKSPACE, env })).toMatchObject({
+      login: { workspaceId: CONFIGURED_WORKSPACE },
+    });
+    const key = resolveUploadCredential({
+      apiKey: "k",
+      workspaceId: CONFIGURED_WORKSPACE,
+      env: {},
+    });
+    expect(key).not.toHaveProperty("workspaceId");
+  });
+
+  it("pauses with a reason instead of sending an agent_id the server would reject", () => {
+    for (const agentId of ["Support Agent", "-support", "support-", "a".repeat(64)])
+      expect(resolveUploadCredential({ agentId, apiKey: "k" })).toMatchObject({
+        kind: "none",
+        reason: expect.stringContaining("isn't an agent ID"),
+      });
+    for (const agentId of ["support-agent", "a", "a".repeat(63)])
+      expect(resolveUploadCredential({ agentId, apiKey: "k" }).kind).toBe("api-key");
+  });
+
+  it("pauses with a reason instead of sending a workspace_id that isn't a workspace ID", () => {
+    expect(resolveUploadCredential({ workspaceId: "my-team", env: loginEnv() })).toMatchObject({
+      kind: "none",
+      reason: expect.stringContaining('workspace_id setting "my-team" isn\'t a workspace ID'),
+    });
+  });
+
+  it("says to sign in rather than falling back to an environment key when the profile is missing", () => {
+    const env = { ...loginEnv(), LANGCHAIN_API_KEY: "synthetic-env-key" };
+    expect(resolveUploadCredential({ profile: "ghost", env })).toMatchObject({
+      kind: "none",
+      reason: expect.stringMatching(/--profile ghost$/u),
+    });
+  });
+
+  it("double-quotes a profile name on Windows, where single quotes don't quote", () => {
+    expect(loginCommand("my team", "win32")).toBe('langsmith auth login --profile "my team"');
+    expect(loginCommand("my team", "darwin")).toBe("langsmith auth login --profile 'my team'");
+    expect(loginCommand("it's $HOME", "darwin")).toBe(
+      "langsmith auth login --profile 'it'\\''s $HOME'",
+    );
+  });
+
+  it("names LANGSMITH_PROFILE in the sign-in command when that profile isn't signed in", () => {
+    const env = { ...loginEnv(), LANGSMITH_PROFILE: "staging" };
+    expect(resolveUploadCredential({ env })).toMatchObject({
+      reason: expect.stringMatching(/: langsmith auth login --profile staging$/u),
+    });
+  });
+
+  it("names the configured profile in the sign-in command when it isn't signed in", () => {
+    expect(hint("company")).toMatchObject({
+      kind: "none",
+      reason: expect.stringMatching(/: langsmith auth login --profile company$/u),
+    });
   });
 
   it("says why only when every configured replica is refused for the login", () => {

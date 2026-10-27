@@ -55,14 +55,13 @@ describe.skipIf(process.platform === "win32")("expired login", () => {
     const expired = login("synthetic-once");
     expect(await expire(expired)).toBe("notice");
     expect(await expire(expired)).toBe("already-handled");
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(noticeFor({ LANGSMITH_CONFIG_FILE: expired.configPath })).toBe(
-      [
-        "⚠️ LANGSMITH TRACING IS PAUSED ⚠️",
-        "Your LangSmith login expired so this session isn't being traced.",
-        "▶ Run the following command: langsmith auth login",
-      ].join("\n"),
-    );
+    const notice = [
+      "⚠️ LANGSMITH TRACING IS PAUSED ⚠️",
+      "Your LangSmith login expired so this session isn't being traced.",
+      "▶ Run the following command: langsmith auth login --profile work",
+    ].join("\n");
+    expect(warn).toHaveBeenCalledExactlyOnceWith(notice);
+    expect(noticeFor({ LANGSMITH_CONFIG_FILE: expired.configPath })).toBe(notice);
   });
 
   it("tells the user to replace a rejected key or sign in instead", async () => {
@@ -151,6 +150,13 @@ describe.skipIf(process.platform === "win32")("expired login", () => {
     expect(
       noticeFor({ LANGSMITH_CONFIG_FILE: configPath, LANGSMITH_PROFILE: "copy" }),
     ).toBeUndefined();
+    const configured = readLoginNotice(
+      STATE_ROOT,
+      { LANGSMITH_CONFIG_FILE: configPath },
+      undefined,
+      "other",
+    );
+    expect(configured).toContain("langsmith auth login --profile other");
   });
 
   it("treats a refreshed access token as the same login and a new refresh token as a new one", () => {

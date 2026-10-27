@@ -4,6 +4,7 @@ export {
   resolveUploadCredential,
 } from "./credential.js";
 export { readLoginNotice } from "./expiry.js";
+export { loginCommand, withLoginProfile } from "./profile.js";
 export { sdkSetting } from "../utils/sdk/normalize.js";
 export { LOGIN_NOTICE_KIND } from "./expiry-constants.js";
 export type {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { withEnvVariables } from "../utils/env.js";
 import { sdkProfileValue, sdkSetting } from "../utils/sdk/normalize.js";
 import { isPlainRecord } from "../utils/validation/objects.js";
 import {
@@ -10,9 +11,14 @@ import {
   LOGIN_CONFIG_FILE_VARIABLE,
   LOGIN_DEFAULT_API_URL,
   LOGIN_DEFAULT_PROFILE,
+  LOGIN_COMMAND,
   LOGIN_CONFIG_FILE_ENCODING,
   LOGIN_EXPIRED_MARKER_PREFIX,
   LOGIN_HOME_VARIABLES,
+  LOGIN_PLAIN_PROFILE_PATTERN,
+  LOGIN_PROFILE_FLAG,
+  LOGIN_QUOTED_PROFILE_APOSTROPHE,
+  LOGIN_WINDOWS_PLATFORM,
   LOGIN_PROFILE_VARIABLE,
   LOGIN_TOKEN_HASH,
   LOGIN_TOKEN_HASH_LENGTH,
@@ -20,11 +26,32 @@ import {
 } from "./constants.js";
 import type { LoginProfile, UploadLogin } from "./models.js";
 
-export function readLoginProfile(env: NodeJS.ProcessEnv): LoginProfile | undefined {
+export function readLoginProfile(
+  env: NodeJS.ProcessEnv,
+  profile?: string,
+): LoginProfile | undefined {
   const configPath = loginConfigPath(env);
   return configPath === undefined
     ? undefined
-    : readProfileAt(configPath, env[LOGIN_PROFILE_VARIABLE] || undefined);
+    : readProfileAt(configPath, profile || env[LOGIN_PROFILE_VARIABLE] || undefined);
+}
+
+/** The SDK picks its profile from the environment once, when the client is built. */
+export function withLoginProfile<T>(login: UploadLogin, run: () => T): T {
+  return withEnvVariables(
+    { [LOGIN_CONFIG_FILE_VARIABLE]: login.configPath, [LOGIN_PROFILE_VARIABLE]: login.profile },
+    run,
+  );
+}
+
+export function loginCommand(profile?: string, platform = process.platform): string {
+  if (!profile) return LOGIN_COMMAND;
+  const name = LOGIN_PLAIN_PROFILE_PATTERN.test(profile)
+    ? profile
+    : platform === LOGIN_WINDOWS_PLATFORM
+      ? `"${profile}"`
+      : `'${profile.replaceAll("'", LOGIN_QUOTED_PROFILE_APOSTROPHE)}'`;
+  return `${LOGIN_COMMAND} ${LOGIN_PROFILE_FLAG} ${name}`;
 }
 
 export function readProfileAt(configPath: string, name?: string): LoginProfile | undefined {

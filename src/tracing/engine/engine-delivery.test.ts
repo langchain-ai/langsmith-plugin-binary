@@ -235,6 +235,25 @@ it("drops work the service rejects for good", async () => {
   warn.mockRestore();
 });
 
+it("delivers leftover work to its captured agent after the agent is removed", async () => {
+  const root = area();
+  const endpoint = await localEndpoint();
+  const withAgent = {
+    destinations: [{ ...writerFor(endpoint.apiUrl, "p").destinations[0]!, agentId: "agent-a" }],
+  };
+  const runId = "55555555-5555-4555-8555-555555555555";
+  const before = openSession(root, { ...writerFor(endpoint.apiUrl, "p"), ...withAgent }, "agent");
+  await captureRoot(before, "turn-agent", runId);
+
+  const after = openSession(root, writerFor(endpoint.apiUrl, "p"), "agent");
+  await expect(after.drain()).resolves.toBe("completed");
+  expect(endpoint.requests.length).toBeGreaterThan(0);
+  for (const { payload } of endpoint.requests) {
+    expect(payload["address"]).toBe("lrn:agents/agent-a/environments/production");
+    expect(payload).not.toHaveProperty("session_name");
+  }
+});
+
 it("delivers leftover work to its captured project after the project changes", async () => {
   for (const replicas of [undefined, [{ projectName: "project-a" }]]) {
     const root = area();

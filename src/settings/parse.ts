@@ -60,7 +60,14 @@ export function parseCommonConfig(value: unknown): CommonConfigResult {
     common[field] = typeof entry === "boolean" ? entry : COMMON_BOOLEAN_SETTINGS[field].restrictive;
     if (typeof entry !== "boolean") diagnostics.push(`Invalid ${field}; using restrictive value.`);
   }
-  for (const field of ["api_key", "api_url", "project"] as const) {
+  for (const field of [
+    "api_key",
+    "api_url",
+    "project",
+    "agent_id",
+    "profile",
+    "workspace_id",
+  ] as const) {
     if (!Object.hasOwn(value, field)) continue;
     if (typeof value[field] !== "string") return invalid(value);
     common[field] = value[field];

@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -119,6 +120,31 @@ describe("uploading with the LangSmith CLI login", () => {
     const { writer, destination } = loginWriter("synthetic-access", "configured-workspace");
     await writer.send(submission, destination);
     expect(headers[0]).toMatchObject({ "x-tenant-id": "configured-workspace" });
+  });
+
+  it("uploads with the chosen profile's token and workspace, not the CLI's current one", async () => {
+    const configPath = writeLoginConfig(loginProfile("synthetic-access"));
+    const other = { ...loginProfile("synthetic-other-access"), workspace_id: "other-workspace" };
+    const work = loginProfile("synthetic-access");
+    writeFileSync(
+      configPath,
+      JSON.stringify({ current_profile: "other", profiles: { work, other } }),
+    );
+    vi.stubEnv("LANGSMITH_PROFILE", "other");
+    const configFile = process.env["LANGSMITH_CONFIG_FILE"];
+    const login = { configPath, profile: "work", workspaceId: "configured-workspace" };
+    const writer = createLangSmithUploadWriter({
+      redact: true,
+      storageRoot,
+      destinations: [{ login, apiUrl: endpoint, projectName: "p" }],
+    });
+    await writer.send(submission, writer.destinations[0]!.id);
+    expect(headers[0]).toMatchObject({
+      authorization: "Bearer synthetic-access",
+      "x-tenant-id": "configured-workspace",
+    });
+    expect(process.env.LANGSMITH_PROFILE).toBe("other");
+    expect(process.env["LANGSMITH_CONFIG_FILE"]).toBe(configFile);
   });
 
   it("drops a trace the server rejects for an expired login and pauses tracing", async () => {

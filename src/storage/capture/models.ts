@@ -26,6 +26,7 @@ export type CaptureDependency = CaptureScope;
 
 export interface CaptureDestinationRoute {
   projectName: string;
+  agentId?: string;
   sourceProjectName?: string;
 }
 

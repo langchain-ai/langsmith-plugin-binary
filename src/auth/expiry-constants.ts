@@ -4,7 +4,7 @@ export const LOGIN_EXPIRED_STATUS = 401;
 export const LOGIN_PAUSED_NOTICE = [
   LOGIN_NOTICE_HEADING,
   "Your LangSmith login expired so this session isn't being traced.",
-  "▶ Run the following command: langsmith auth login",
+  "▶ Run the following command: {command}",
 ].join("\n");
 export const LOGIN_KEY_REJECTED_NOTICE = [
   LOGIN_NOTICE_HEADING,

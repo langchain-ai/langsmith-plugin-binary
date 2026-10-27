@@ -23,6 +23,7 @@ import {
   CAPTURE_RETRY_LOST_MESSAGE,
   CAPTURE_ROUTES_INVALID_MESSAGE,
   CAPTURE_ROUTE_INVALID_MESSAGE,
+  CAPTURE_ROUTE_AGENT_INVALID_MESSAGE,
   CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE,
   CAPTURE_SKIPPED_WARNING,
   CAPTURE_UNREADABLE_WARNING,
@@ -659,10 +660,14 @@ function normalizeDestinationRoutes(value: unknown): CaptureDestinationRoutes {
     validateIdentifier(destination, "destination");
     if (route === null || typeof route !== "object" || Array.isArray(route))
       throw new TypeError(CAPTURE_ROUTE_INVALID_MESSAGE);
-    const { projectName, sourceProjectName, ...extra } = route as Record<string, unknown>;
+    const { projectName, agentId, sourceProjectName, ...extra } = route as Record<string, unknown>;
     if (Object.keys(extra).length > 0) throw new TypeError(CAPTURE_ROUTE_INVALID_MESSAGE);
     if (typeof projectName !== "string") throw new TypeError(CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE);
     validateIdentifier(projectName, "route project");
+    if (agentId !== undefined) {
+      if (typeof agentId !== "string") throw new TypeError(CAPTURE_ROUTE_AGENT_INVALID_MESSAGE);
+      validateIdentifier(agentId, "route agent");
+    }
     if (sourceProjectName !== undefined) {
       if (typeof sourceProjectName !== "string")
         throw new TypeError(CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE);
@@ -670,6 +675,7 @@ function normalizeDestinationRoutes(value: unknown): CaptureDestinationRoutes {
     }
     routes[destination] = {
       projectName,
+      ...(agentId === undefined ? {} : { agentId }),
       ...(sourceProjectName === undefined ? {} : { sourceProjectName }),
     };
   }

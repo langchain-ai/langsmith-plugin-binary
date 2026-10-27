@@ -105,6 +105,7 @@ export interface LangSmithUploadDestinationConfig {
   login?: UploadLogin;
   apiUrl: string;
   projectName: string;
+  agentId?: string;
   workspaceId?: string;
 }
 
@@ -134,6 +135,7 @@ export interface ResolvedUploadDestinationIdentity {
   login?: UploadLogin;
   apiUrl: string;
   projectName: string;
+  agentId?: string;
   workspaceId?: string;
   sourceProjectName?: string;
   updates?: Record<string, unknown>;
