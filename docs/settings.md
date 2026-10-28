@@ -54,10 +54,17 @@ chflags schg "$USER_HOME/.langsmith-plugins"   # optional: stops the user renami
 
 On Linux use `root:root` and `chattr +i` instead of `chflags schg`.
 
+## Sending traces to an agent
+
+- `agent_id` sends traces to that agent's production environment instead of a project, and wins when both are set
+- A replica that names no project and shares the main login, server and workspace sends to the agent too, other replicas keep sending to a project, and an `agent_id` that isn't a valid agent ID pauses tracing with a reason
+
 ## Signing in with the LangSmith CLI
 
 - The plugins upload with the login from `langsmith auth login` unless the plugin's own API key is set, so a generic `LANGSMITH_API_KEY` or `LANGCHAIN_API_KEY` is only used when there's no usable login
 - The login's own server and workspace are used unless a setting names an endpoint, and a login for a different server than that endpoint isn't used
+- `workspace_id` sends a login's traces to that workspace instead of the login's default, as long as you're a member of it, and API keys ignore it
+- `profile` picks which CLI login to use when you have more than one, so sign in with `langsmith auth login --profile <name>`, which also makes it the CLI's current profile. It's a personal setting, so the managed file can't lock it
 - When the login expires, uploads are dropped just like with a rejected API key until you sign in again
 - A rejected API key gets a notice to replace it until an upload with a key works again
 - The plugins never open a browser, so the user runs `langsmith auth login` themselves

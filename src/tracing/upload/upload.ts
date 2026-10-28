@@ -7,6 +7,7 @@ import {
   recordRejectedKey,
 } from "../../auth/expiry.js";
 import { buildCodingAgentMetadata } from "../../metadata/index.js";
+import { fillTemplate } from "../../utils/format.js";
 import { createCodingAgentRunTree } from "../../privacy/index.js";
 import type { Client, RunTreeConfig } from "langsmith";
 import type { RunCreate, RunUpdate } from "langsmith/schemas";
@@ -28,6 +29,7 @@ import type {
 } from "./models.js";
 import { resolveUploadDestinations } from "./destinations.js";
 import {
+  UPLOAD_AGENT_ADDRESS,
   UPLOAD_BATCH_LIMITS,
   UPLOAD_PATCH_FIELDS,
   UPLOAD_RECEIPT_MISSING_MESSAGE,
@@ -54,10 +56,11 @@ export function createLangSmithUploadWriter(
   const rate = samplingRate(process.env);
   const routes = Object.freeze(
     Object.fromEntries(
-      resolved.destinations.map(({ id, projectName, sourceProjectName }) => [
+      resolved.destinations.map(({ id, projectName, agentId, sourceProjectName }) => [
         id,
         Object.freeze({
           projectName,
+          ...(agentId === undefined ? {} : { agentId }),
           ...(sourceProjectName === undefined ? {} : { sourceProjectName }),
         }),
       ]),
@@ -152,6 +155,8 @@ function routedDestination(
   route: CaptureDestinationRoute,
 ): ResolvedUploadDestination {
   const routed: ResolvedUploadDestination = { ...destination, projectName: route.projectName };
+  if (route.agentId === undefined) delete routed.agentId;
+  else routed.agentId = route.agentId;
   if (route.sourceProjectName === undefined) delete routed.sourceProjectName;
   else routed.sourceProjectName = route.sourceProjectName;
   return routed;
@@ -197,13 +202,24 @@ function ingestFor(items: readonly PreparedUploadItem[]): UploadIngest {
   const runUpdates: RunUpdate[] = [];
   for (const { payload, submission, destination, operation } of items) {
     if (operation === "posted") {
-      runCreates.push({ ...payload, session_name: destination.projectName } as RunCreate);
+      runCreates.push(withTarget(payload as RunCreate, destination));
     } else {
       const id = runIdForDestination(submission.run.id, destination);
-      runUpdates.push({ ...payload, id } as RunUpdate);
+      runUpdates.push(withTarget({ ...payload, id } as RunUpdate, destination));
     }
   }
   return { runCreates, runUpdates };
+}
+
+function withTarget<T extends RunCreate | RunUpdate>(
+  payload: T,
+  destination: ResolvedUploadDestination,
+): T {
+  if (destination.agentId === undefined)
+    return { ...payload, session_name: destination.projectName };
+  const { session_name: _project, ...rest } = payload as RunCreate;
+  const address = fillTemplate(UPLOAD_AGENT_ADDRESS, { agentId: destination.agentId });
+  return { ...rest, address } as unknown as T;
 }
 
 function ignoreAlreadyReceived(error: unknown): void {

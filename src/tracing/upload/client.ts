@@ -1,7 +1,5 @@
 import { Client, type ClientConfig } from "langsmith";
-import { LOGIN_API_KEY_VARIABLES } from "../../auth/constants.js";
 import { LOGIN_EXPIRED_STATUS, LOGIN_NO_ACCESS_STATUS } from "../../auth/expiry-constants.js";
-import { withoutEnvVariables } from "../../utils/env.js";
 import {
   UPLOAD_AUTHORIZATION_HEADER,
   UPLOAD_BEARER_PATTERN,
@@ -14,7 +12,15 @@ const rejectedAuthorizations = new WeakMap<Client, string>();
 
 export function createUploadClient(options: UploadClientOptions): Client {
   const { apiKey, apiUrl, workspaceId, login, anonymizer, redactedFields } = options;
-  const auth = login === undefined ? { apiKey: apiKey ?? "", workspaceId: workspaceId ?? "" } : {};
+  const auth =
+    login === undefined
+      ? { apiKey: apiKey ?? "", workspaceId: workspaceId ?? "" }
+      : {
+          profile: login.profile,
+          profileConfigPath: login.configPath,
+          preferProfileAuth: true,
+          ...(login.workspaceId === undefined ? {} : { workspaceId: login.workspaceId }),
+        };
   const config: ClientConfig = {
     ...auth,
     apiUrl,
@@ -39,7 +45,7 @@ export function createUploadClient(options: UploadClientOptions): Client {
       return response;
     },
   };
-  const client = withoutEnvVariables(LOGIN_API_KEY_VARIABLES, () => new Client(config));
+  const client = new Client(config);
   return client;
 }
 

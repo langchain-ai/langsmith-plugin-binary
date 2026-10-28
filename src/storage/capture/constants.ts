@@ -43,6 +43,7 @@ export const CAPTURE_MARKER_INVALID_WARNING = "Removed an unreadable outcome mar
 export const CAPTURE_ROUTES_INVALID_MESSAGE = "Invalid capture destination routes";
 export const CAPTURE_ROUTE_INVALID_MESSAGE = "Invalid capture destination route";
 export const CAPTURE_ROUTE_PROJECT_INVALID_MESSAGE = "Invalid capture route project";
+export const CAPTURE_ROUTE_AGENT_INVALID_MESSAGE = "Invalid capture route agent";
 export const CAPTURE_FILE_EXTENSION = ".json";
 export const CAPTURE_LOCK_EXTENSION = ".lock";
 export const CAPTURE_STORAGE_DIRECTORY_MESSAGE = "Capture directory must be turns or jobs";

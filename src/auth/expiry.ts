@@ -3,11 +3,13 @@ import { claimStateEntry } from "../storage/state-claim.js";
 import type { StateClaim } from "../storage/state-models.js";
 import { createStateStore } from "../storage/state-store.js";
 import { describe } from "../utils/errors.js";
+import { fillTemplate } from "../utils/format.js";
 import { sdkSetting } from "../utils/sdk/normalize.js";
 import type { LoginProfile, RejectedKey, UploadLogin } from "./models.js";
 import {
   credentialHash,
   expiredMarkerPrefix,
+  loginCommand,
   readLoginProfile,
   readProfileAt,
   serverKey,
@@ -43,7 +45,7 @@ export async function recordExpiredLogin(
   } catch (error) {
     console.warn(LOGIN_MARKER_WARNING, describe(error));
   }
-  console.warn(denied ? LOGIN_NO_ACCESS_NOTICE : LOGIN_PAUSED_NOTICE);
+  console.warn(denied ? LOGIN_NO_ACCESS_NOTICE : pausedNotice(login.profile));
   return "notice";
 }
 
@@ -76,14 +78,15 @@ export function readLoginNotice(
   storageRoot: string,
   env: NodeJS.ProcessEnv = process.env,
   rejected?: RejectedKey,
+  profile?: string,
 ): string | undefined {
   const saved = loginStore(storageRoot).read();
   const recorded = (key: string) => unrecorded.has(key) || saved[key] !== undefined;
-  const key =
-    rejected === undefined ? loginExpiryKey(readLoginProfile(env)) : rejectedKeyEntry(rejected);
+  const login = rejected === undefined ? readLoginProfile(env, profile) : undefined;
+  const key = rejected === undefined ? loginExpiryKey(login) : rejectedKeyEntry(rejected);
   if (key === undefined) return undefined;
   if (recorded(key))
-    return rejected === undefined ? LOGIN_PAUSED_NOTICE : LOGIN_KEY_REJECTED_NOTICE;
+    return login === undefined ? LOGIN_KEY_REJECTED_NOTICE : pausedNotice(login.profile);
   return recorded(`${key}${LOGIN_NO_ACCESS_SUFFIX}`) ? LOGIN_NO_ACCESS_NOTICE : undefined;
 }
 
@@ -119,6 +122,10 @@ async function claimLogin(
   }
   await forgetLogins(storageRoot, expiredMarkerPrefix(profile), key);
   return "claimed";
+}
+
+function pausedNotice(profile: string): string {
+  return fillTemplate(LOGIN_PAUSED_NOTICE, { command: loginCommand(profile) });
 }
 
 function loginExpiryKey(profile: LoginProfile | undefined): string | undefined {

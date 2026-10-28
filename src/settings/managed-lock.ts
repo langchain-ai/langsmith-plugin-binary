@@ -1,21 +1,31 @@
 import { isDeepStrictEqual } from "node:util";
 import {
   COMMON_DEFAULT_API_URL,
+  COMMON_USER_ONLY_FIELDS,
   MANAGED_CONFIG_OVERRIDE_FIELD_SEPARATOR,
   MANAGED_CONFIG_OVERRIDE_SOURCE_SEPARATOR,
   MANAGED_CONFIG_OVERRIDE_SOURCES,
   MANAGED_CONFIG_OVERRIDE_WARNING,
+  MANAGED_CONFIG_UNLOCKABLE_WARNING,
 } from "./constants.js";
 import type { CommonConfig, CommonConfigSources, LockableField } from "./models.js";
 import { object } from "./utils/records.js";
 
 export function lockedValues(common: CommonConfig): CommonConfig {
   const lock = { ...common };
+  for (const field of COMMON_USER_ONLY_FIELDS) delete lock[field];
   if (lock.api_key !== undefined || lock.replicas !== undefined)
     lock.api_url ??= COMMON_DEFAULT_API_URL;
   if (lock.api_url !== undefined || lock.project !== undefined) lock.replicas ??= [];
   if (lock.redact_extra_rules !== undefined) lock.redact ??= true;
   return lock;
+}
+
+export function userOnlyDiagnostics(common: CommonConfig): string[] {
+  const ignored = COMMON_USER_ONLY_FIELDS.filter((field) => common[field] !== undefined);
+  return ignored.length === 0
+    ? []
+    : [MANAGED_CONFIG_UNLOCKABLE_WARNING.replace("{fields}", ignored.join(", "))];
 }
 
 export function lockedFields(lock: CommonConfig): LockableField[] {

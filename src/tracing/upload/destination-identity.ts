@@ -91,6 +91,8 @@ function resolveDestination(
   }
   const apiUrl = normalizeApiUrl(config.apiUrl);
   const projectName = normalizeRequiredText(config.projectName, "project name");
+  const agentId =
+    config.agentId === undefined ? undefined : normalizeRequiredText(config.agentId, "agent ID");
   const workspaceId =
     config.workspaceId === undefined
       ? undefined
@@ -109,6 +111,7 @@ function resolveDestination(
     ...(login === undefined ? { apiKey: config.apiKey! } : { login }),
     apiUrl,
     projectName,
+    ...(agentId === undefined ? {} : { agentId }),
     ...(workspaceId === undefined ? {} : { workspaceId }),
     ...(sourceProjectName === undefined ? {} : { sourceProjectName }),
     ...(updates === undefined ? {} : { updates }),
@@ -131,6 +134,13 @@ function resolveReplicaDestination(
       ...(!ownKey && primary.login ? { login: primary.login } : {}),
       apiUrl: replica.apiUrl ?? primary.apiUrl,
       projectName: replica.projectName ?? primary.projectName,
+      ...(replica.projectName === undefined &&
+      primary.agentId !== undefined &&
+      !ownKey &&
+      (replica.apiUrl === undefined || replica.apiUrl === primary.apiUrl) &&
+      (replica.workspaceId === undefined || replica.workspaceId === primary.workspaceId)
+        ? { agentId: primary.agentId }
+        : {}),
       ...(workspaceId === undefined ? {} : { workspaceId }),
     },
     primaryProjectName,

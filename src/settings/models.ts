@@ -17,6 +17,9 @@ export interface CommonConfig {
   api_key?: string;
   api_url?: string;
   project?: string;
+  agent_id?: string;
+  profile?: string;
+  workspace_id?: string;
   replicas?: CommonReplica[];
   metadata?: Record<string, unknown>;
   redact?: boolean;

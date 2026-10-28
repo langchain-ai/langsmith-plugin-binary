@@ -1,6 +1,11 @@
 import { COMMON_BOOLEAN_SETTINGS } from "./constants.js";
 import { readManagedConfigFile } from "./managed-config.js";
-import { lockedFields, lockedValues, overrideDiagnostics } from "./managed-lock.js";
+import {
+  lockedFields,
+  lockedValues,
+  overrideDiagnostics,
+  userOnlyDiagnostics,
+} from "./managed-lock.js";
 import type {
   CommonConfig,
   CommonConfigSources,
@@ -49,7 +54,11 @@ export function mergeCommonConfig(
     defaulted: (Object.keys(defaults) as LockableField[]).filter(
       (field) => resolveField([lock, env, ...files], field) === undefined,
     ),
-    diagnostics: [...managed.diagnostics, ...overrideDiagnostics(sources, lock)],
+    diagnostics: [
+      ...managed.diagnostics,
+      ...userOnlyDiagnostics(managed.common),
+      ...overrideDiagnostics(sources, lock),
+    ],
   };
   for (const field of ["enabled", "defaultMuted"] as const) {
     merged[field] = resolveField(switches, field) ?? COMMON_BOOLEAN_SETTINGS[field].default;
@@ -62,6 +71,10 @@ export function mergeCommonConfig(
   merged.api_key = resolveField(precedence, "api_key");
   merged.api_url = resolveField(precedence, "api_url");
   merged.project = resolveField(precedence, "project");
+  merged.agent_id = resolveField(precedence, "agent_id");
+  if (lock.project !== undefined && lock.agent_id === undefined) delete merged.agent_id;
+  merged.profile = resolveField(precedence, "profile");
+  merged.workspace_id = resolveField(precedence, "workspace_id");
   merged.replicas = resolveField(precedence, "replicas");
   merged.redact = resolveField(precedence, "redact") ?? true;
   merged.redact_extra_rules = resolveField(precedence, "redact_extra_rules");

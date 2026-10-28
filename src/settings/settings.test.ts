@@ -68,7 +68,7 @@ describe("canonical common schema fixtures", () => {
   });
 
   const invalidFields = [
-    ...["api_key", "api_url", "project"].flatMap((key) =>
+    ...["api_key", "api_url", "project", "agent_id", "profile", "workspace_id"].flatMap((key) =>
       [null, 1, false, [], {}].map((value) => ({ [key]: value })),
     ),
     ...[null, "false", 0, [], {}].map((redact) => ({ redact })),
@@ -209,7 +209,17 @@ describe("per-field precedence fixtures", () => {
     },
   );
 
-  it.each(["api_key", "api_url", "project", "replicas", "redact", "redact_extra_rules"] as const)(
+  it.each([
+    "api_key",
+    "api_url",
+    "project",
+    "agent_id",
+    "profile",
+    "workspace_id",
+    "replicas",
+    "redact",
+    "redact_extra_rules",
+  ] as const)(
     "%s uses env > harness > root > user > userRoot > defaults, including empty values",
     (field) => {
       const sources: Record<string, CommonConfig> = {};
