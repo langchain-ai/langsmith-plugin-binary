@@ -72,6 +72,7 @@ describe("canonical common schema fixtures", () => {
       [null, 1, false, [], {}].map((value) => ({ [key]: value })),
     ),
     ...[null, "false", 0, [], {}].map((redact) => ({ redact })),
+    ...[null, "false", 0, [], {}].map((capture_hook_outputs) => ({ capture_hook_outputs })),
     ...[null, [], "x", true, 1].map((metadata) => ({ metadata })),
     ...[
       null,
@@ -219,20 +220,20 @@ describe("per-field precedence fixtures", () => {
     "replicas",
     "redact",
     "redact_extra_rules",
+    "capture_hook_outputs",
   ] as const)(
     "%s uses env > harness > root > user > userRoot > defaults, including empty values",
     (field) => {
       const sources: Record<string, CommonConfig> = {};
-      const empty =
-        field === "redact" ? false : ["replicas", "redact_extra_rules"].includes(field) ? [] : "";
-      const nonempty =
-        field === "redact"
-          ? true
-          : field === "replicas"
-            ? [{}]
-            : field === "redact_extra_rules"
-              ? [{ pattern: "x" }]
-              : "default";
+      const toggle = field === "redact" || field === "capture_hook_outputs";
+      const empty = toggle ? false : ["replicas", "redact_extra_rules"].includes(field) ? [] : "";
+      const nonempty = toggle
+        ? true
+        : field === "replicas"
+          ? [{}]
+          : field === "redact_extra_rules"
+            ? [{ pattern: "x" }]
+            : "default";
       sources.defaults = { [field]: nonempty };
       expect(mergeCommonConfig({ ...sources, managed: noManaged })[field]).toEqual(nonempty);
       for (const scope of ["userRoot", "user", "root", "harness", "env"]) {

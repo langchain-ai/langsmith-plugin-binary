@@ -25,6 +25,7 @@ export interface CommonConfig {
   redact?: boolean;
   redact_extra_rules?: CommonRedactRule[];
   strict_auth?: boolean;
+  capture_hook_outputs?: boolean;
   notice_cooldown?: number | "off";
 }
 

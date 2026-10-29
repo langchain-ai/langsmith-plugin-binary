@@ -20,6 +20,8 @@ Each notice repeats at most once every `notice_cooldown` minutes across conversa
 
 Strict auth refuses every prompt while the LangSmith login is expired or the API key is rejected, and keeps refusing until the user signs in again or fixes the key. Turn it on with `strict_auth` since it's off by default.
 
+Hook capture adds the text your own hooks give the agent to the traced turn or tool call it belongs to. Turn it on with `capture_hook_outputs` since it's off by default.
+
 ## Enforce settings with the managed file
 
 Each user account gets its own managed file in its home folder at `~/.langsmith-plugins/managed.json`. It only works on macOS and Linux.
