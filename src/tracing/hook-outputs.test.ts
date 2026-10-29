@@ -12,6 +12,7 @@ it("lists hook outputs under one key and adds nothing when no hook ran", () => {
       { name: "UserPromptSubmit", output: "Run the linter" },
       sessionStart,
       missingOutput,
+      null as unknown as HookOutput,
     ]),
   ).toStrictEqual({
     hooks: [
