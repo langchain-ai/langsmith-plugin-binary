@@ -1,5 +1,5 @@
-import { HOOK_OUTPUTS_KEY } from "./hook-outputs-constants.js";
-import type { HookOutput } from "./hook-outputs-models.js";
+import { HOOK_OUTPUTS_KEY } from "./engine/constants.js";
+import type { HookOutput } from "./engine/models.js";
 
 export function hookOutputs(
   hooks: readonly HookOutput[],
