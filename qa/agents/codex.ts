@@ -1,25 +1,18 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  CODEX_MODEL,
-  CODEX_TYPING,
-  EXIT_COMMAND,
-  DEV_ENDPOINT,
-  GATEWAY_KEY_ENV,
-  GATEWAY_URL,
-} from "../constants.ts";
+import { CODEX_MODEL, CODEX_TYPING, EXIT_COMMAND, GATEWAY_KEY_ENV } from "../constants.ts";
 import type { PreparedAgent, HooksFile, RunOptions } from "../models.ts";
 import { quoteForShell } from "../utils/shell.ts";
 import { baseEnvironment, createWorkspace, recorderHooks } from "../workspace.ts";
 
-function codexConfig(projectDir: string): string {
+function codexConfig(projectDir: string, openaiUrl: string): string {
   return [
     `model = ${JSON.stringify(CODEX_MODEL)}`,
     `model_provider = "langsmith-gateway"`,
     "",
     "[model_providers.langsmith-gateway]",
     `name = "LangSmith Gateway"`,
-    `base_url = ${JSON.stringify(`${GATEWAY_URL}/v1`)}`,
+    `base_url = ${JSON.stringify(openaiUrl)}`,
     `env_key = ${JSON.stringify(GATEWAY_KEY_ENV)}`,
     `wire_api = "responses"`,
     "supports_websockets = false",
@@ -38,8 +31,8 @@ function writeTracingEnvironment(path: string, options: RunOptions): void {
     TRACE_TO_LANGSMITH: "true",
     HOME: join(options.workDir, "plugin-home"),
     PLUGIN_ROOT: options.pluginDir,
-    LANGSMITH_ENDPOINT: DEV_ENDPOINT,
-    LANGSMITH_CODEX_ENDPOINT: DEV_ENDPOINT,
+    LANGSMITH_ENDPOINT: options.endpoints.tracing,
+    LANGSMITH_CODEX_ENDPOINT: options.endpoints.tracing,
     LANGSMITH_CODEX_API_KEY: options.tracingApiKey,
     LANGSMITH_CODEX_PROJECT: options.project,
   };
@@ -78,7 +71,10 @@ export function prepareCodex(options: RunOptions): PreparedAgent {
   const workspace = createWorkspace(options.workDir, options.scenario);
   const codexHome = join(options.workDir, "codex-home");
   mkdirSync(codexHome, { recursive: true });
-  writeFileSync(join(codexHome, "config.toml"), codexConfig(workspace.project));
+  writeFileSync(
+    join(codexHome, "config.toml"),
+    codexConfig(workspace.project, options.endpoints.openai),
+  );
   const environmentFile = join(options.workDir, "tracing.env");
   writeTracingEnvironment(environmentFile, options);
   const pluginHooks = pluginHooksWithSettings(options.pluginDir, environmentFile);
@@ -88,18 +84,27 @@ export function prepareCodex(options: RunOptions): PreparedAgent {
     JSON.stringify(mergedHooks(pluginHooks, workspace.eventsFile), null, 2),
   );
 
+  const baseArgs = [
+    "--dangerously-bypass-hook-trust",
+    "--sandbox",
+    "workspace-write",
+    "--ask-for-approval",
+    "never",
+  ];
+
   return {
     eventsFile: workspace.eventsFile,
+    headlessArgs: (prompt, turnIndex) => [
+      ...baseArgs,
+      "exec",
+      ...(turnIndex === 0 ? [] : ["resume", "--last"]),
+      "--skip-git-repo-check",
+      prompt,
+    ],
     secretFiles: [environmentFile],
     launch: {
       command: options.agentCommand,
-      args: [
-        "--dangerously-bypass-hook-trust",
-        "--sandbox",
-        "workspace-write",
-        "--ask-for-approval",
-        "never",
-      ],
+      args: baseArgs,
       cwd: workspace.project,
       env: {
         ...baseEnvironment(workspace.home),

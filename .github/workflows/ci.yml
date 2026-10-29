@@ -63,6 +63,59 @@ jobs:
       - name: Test
         run: pnpm test
 
+  headless-plugin-checks:
+    if: ${{ !inputs.windows_only }}
+    name: Headless ${{ matrix.agent }} With This Engine
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: claude
+            repository: langchain-ai/langsmith-claude-code-plugins
+            plugin: plugins/langsmith-tracing
+          - agent: codex
+            repository: langchain-ai/langsmith-codex-plugins
+            plugin: plugins/tracing
+    env:
+      CLAUDE_CODE_VERSION: 2.1.300
+      CODEX_VERSION: 0.162.1
+    steps:
+      - name: Check Out the Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check Out the Plugin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repository }}
+          path: plugin-under-test
+      - name: Create an Isolated Home
+        uses: ./.github/actions/isolated-home
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.8.2
+          cache: pnpm
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build the Plugin Against This Engine
+        working-directory: plugin-under-test
+        run: |
+          pnpm install --frozen-lockfile
+          rm node_modules/@langchain/plugins-base
+          ln -s "$GITHUB_WORKSPACE" node_modules/@langchain/plugins-base
+          pnpm build
+      - name: Install the Agents
+        run: |
+          npm install --prefix "$RUNNER_TEMP/agents" --no-save --package-lock=false "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" "@openai/codex@$CODEX_VERSION"
+          echo "$RUNNER_TEMP/agents/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Run the Scenarios
+        run: |
+          for scenario in qa/scenarios/*.json; do
+            node qa/headless.ts --agent ${{ matrix.agent }} --plugin "plugin-under-test/${{ matrix.plugin }}" --scenario "$scenario"
+          done
+
   test-on-macos:
     if: ${{ !inputs.windows_only }}
     name: Test on macOS

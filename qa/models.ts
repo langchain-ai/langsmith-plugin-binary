@@ -2,6 +2,7 @@ export type AgentName = "claude" | "codex";
 
 export interface ScenarioTurn {
   prompt: string;
+  command: string;
   minTools: number;
   toolOutputContains?: string;
 }
@@ -22,6 +23,13 @@ export interface RunOptions {
   tracingApiKey: string;
   gatewayApiKey: string;
   agentCommand: string;
+  endpoints: Endpoints;
+}
+
+export interface Endpoints {
+  tracing: string;
+  anthropic: string;
+  openai: string;
 }
 
 export interface AgentLaunch {
@@ -53,8 +61,19 @@ export interface Workspace {
 
 export interface PreparedAgent {
   launch: AgentLaunch;
+  headlessArgs: (prompt: string, turnIndex: number) => string[];
   eventsFile: string;
   secretFiles: string[];
+}
+
+export type FakeStep =
+  | { kind: "tool"; callId: string; command: string }
+  | { kind: "reply"; text: string };
+
+export interface FakeServer {
+  url: string;
+  runs: () => TracedRun[];
+  close: () => Promise<void>;
 }
 
 export interface HookCommand {
@@ -74,4 +93,19 @@ export interface HooksFile {
 export interface TypingPace {
   keyDelayMs: number;
   enterDelayMs: number;
+}
+
+export interface RunPayload {
+  id: string;
+  [field: string]: unknown;
+}
+
+export interface RunBatch {
+  post?: RunPayload[];
+  patch?: RunPayload[];
+}
+
+export interface AnthropicContentBlock {
+  start: unknown;
+  delta: unknown;
 }
