@@ -75,6 +75,8 @@ export const SETUP_INVALID_URL = "{url} isn't a valid URL, so nothing was change
 export const SETUP_TOO_MANY_URLS = "Setup takes one URL, so nothing was changed.";
 export const SETUP_URL_WITH_CREDENTIALS =
   "Leave the username and password out of the URL and put the API key in your config file instead, so nothing was changed.";
+export const SETUP_URL_WITH_QUERY =
+  "Leave the ? and # parts out of the URL, since uploads can't use them, so nothing was changed.";
 export const SETUP_INVALID_CONFIG =
   "{path} has a setting LangSmith can't use, so nothing was changed. Fix that setting and run setup again.";
 export const SETUP_UNREADABLE_CONFIG =

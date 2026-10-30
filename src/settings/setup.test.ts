@@ -69,6 +69,17 @@ describe("reading the setup command's arguments", () => {
     }
   });
 
+  it("refuses a URL with a query or fragment, since uploads reject it", () => {
+    for (const url of [
+      "https://api.smith.langchain.com?region=eu",
+      "https://api.smith.langchain.com/#eu",
+    ]) {
+      expect(() => parseSetupArguments(`demo ${url}`)).toThrow(
+        "Leave the ? and # parts out of the URL",
+      );
+    }
+  });
+
   it("refuses a URL it can't parse, two URLs, or a URL carrying a password", () => {
     expect(() => parseSetupArguments("demo https://")).toThrow(
       "https:// isn't a valid URL, so nothing was changed.",

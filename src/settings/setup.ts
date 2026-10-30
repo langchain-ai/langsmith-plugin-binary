@@ -1,11 +1,13 @@
 import {
   closeSync,
+  fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
   readlinkSync,
   realpathSync,
   renameSync,
+  rmSync,
   writeSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -40,6 +42,7 @@ import {
   SETUP_UNREADABLE_CONFIG,
   SETUP_URL_PATTERN,
   SETUP_URL_WITH_CREDENTIALS,
+  SETUP_URL_WITH_QUERY,
   UTF8_BOM,
 } from "./constants.js";
 import type { SetupOutcome, SetupRequest } from "./models.js";
@@ -57,8 +60,9 @@ export function parseSetupArguments(text: string): SetupRequest {
     throw new Error(SETUP_INVALID_URL.replace("{url}", () => apiUrl));
   }
   if (apiUrl !== undefined) {
-    const { username, password } = new URL(apiUrl);
+    const { username, password, search, hash } = new URL(apiUrl);
     if (username || password) throw new Error(SETUP_URL_WITH_CREDENTIALS);
+    if (search || hash) throw new Error(SETUP_URL_WITH_QUERY);
   }
   const project = words
     .filter((word) => word !== apiUrl)
@@ -115,11 +119,17 @@ function writeAtomically(target: string, contents: string): void {
   const temp = `${target}.${randomUUID()}${SETUP_TEMP_SUFFIX}`;
   const fd = openSync(temp, "wx", SETUP_FILE_MODE);
   try {
-    writeSync(fd, contents);
-  } finally {
-    closeSync(fd);
+    try {
+      writeSync(fd, contents);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(temp, target);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
   }
-  renameSync(temp, target);
 }
 
 export function writeSetupConfig(
