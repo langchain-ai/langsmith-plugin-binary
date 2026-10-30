@@ -7,6 +7,7 @@ import type { ReconstructionToolOrigin } from "../tracing/reconstruction/models.
 import { createRepositoryAttributor, snapshotRepositories } from "./attribution.js";
 import { fakeTool } from "../test-support/login.js";
 import type { RepositoryAttributor } from "./models.js";
+import { getRepositoryMetadata } from "./repository.js";
 
 vi.mock("node:child_process", { spy: true });
 
@@ -86,6 +87,15 @@ git(alpha, "worktree", "add", "-b", "side-branch", worktree);
 const submodule = makeDir(alpha, "broken submodule");
 writeFileSync(join(submodule, ".git"), `gitdir: ${join(alpha, ".git", "modules", "gone")}\n`);
 const markerPath = join(root, "plugin state", "langsmith_gh_login.json");
+const packed = makeRepo(
+  "packed repo",
+  "trunk-packed",
+  "Packed Owner",
+  "https://github.com/acme/packed.git",
+);
+git(packed, "pack-refs", "--all");
+const detached = makeRepo("detached repo", "trunk-detached", "Detached Owner");
+git(detached, "checkout", "-q", "--detach");
 
 const alphaSeed = join(alpha, "seed.txt");
 const betaSeed = join(beta, "seed.txt");
@@ -395,6 +405,36 @@ describe("snapshotRepositories", () => {
     expect(uploader.turnMetadata(base, nameless, [])).toMatchObject({
       ls_git_branch: "trunk-nameless",
       ls_attribution_identifier: "signed-in-user",
+    });
+  });
+
+  it.each<[name: string, repository: string, want: Row]>([
+    ["a normal checkout", alpha, { ls_git_repo: "acme/alpha", ls_git_branch: "trunk-alpha" }],
+    ["a linked worktree", worktree, { ls_git_repo: "acme/alpha", ls_git_branch: "side-branch" }],
+    [
+      "a branch whose ref is packed",
+      packed,
+      { ls_git_repo: "acme/packed", ls_git_branch: "trunk-packed" },
+    ],
+    ["a detached HEAD", detached, { ls_git_commit_hash: git(detached, "rev-parse", "HEAD") }],
+    ["a repository with no remote", remoteless, { ls_git_branch: "trunk-local" }],
+  ])("reads %s from its files, matching git without running it", (_name, repository, want) => {
+    const snapshot = snapshotRepositories(repository);
+
+    expect(gitCommands()).toEqual([]);
+    expect(snapshot.repositories[repository]).toMatchObject(want);
+    expect(snapshot.repositories[repository]).toEqual(getRepositoryMetadata(repository));
+    expect(snapshot.identifiers[repository]).toEqual({
+      ls_attribution_identifier: git(repository, "config", "user.name"),
+    });
+  });
+
+  it("reads an author set only in the global config without running git", () => {
+    const snapshot = snapshotRepositories(nameless);
+
+    expect(gitCommands()).toEqual([]);
+    expect(snapshot.identifiers[nameless]).toEqual({
+      ls_attribution_identifier: "Global Fallback",
     });
   });
 

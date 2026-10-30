@@ -5,12 +5,13 @@ import type { ReconstructionToolOrigin } from "../tracing/reconstruction/models.
 import { nearestExistingDirectory } from "../utils/paths.js";
 import { createGitHubLoginFallback } from "./github-login.js";
 import type {
-  GitUserNameOptions,
   RepositoryAttributor,
   RepositoryAttributorOptions,
   RepositoryCaches,
+  RepositoryReader,
   RepositorySnapshot,
 } from "./models.js";
+import { repositoryMetadataFromFiles, userNameFromFiles } from "./files.js";
 import { rootFromGitMarker } from "./paths.js";
 import { getGitUserName, getRepoRoot, getRepositoryMetadata } from "./repository.js";
 
@@ -18,7 +19,10 @@ export function createRepositoryAttributor(
   options: RepositoryAttributorOptions,
 ): RepositoryAttributor {
   const githubLogin = createGitHubLoginFallback({ markerPath: options.githubLoginMarkerPath });
-  return attributorOver(cachesFrom(options.snapshot), { githubLogin });
+  return attributorOver(cachesFrom(options.snapshot), {
+    repository: getRepositoryMetadata,
+    userName: (root) => getGitUserName(root, { githubLogin }),
+  });
 }
 
 export function snapshotRepositories(
@@ -26,7 +30,10 @@ export function snapshotRepositories(
   toolOrigins: Iterable<ReconstructionToolOrigin> = [],
 ): RepositorySnapshot {
   const caches = cachesFrom(undefined);
-  const attributor = attributorOver(caches, {});
+  const attributor = attributorOver(caches, {
+    repository: repositoryMetadataFromFiles,
+    userName: userNameFromFiles,
+  });
   const origins = [...toolOrigins];
   attributor.turnMetadata(undefined, cwd, origins);
   for (const origin of origins) attributor.toolMetadata(undefined, origin);
@@ -53,7 +60,7 @@ function cachesFrom(snapshot: RepositorySnapshot | undefined): RepositoryCaches 
 
 function attributorOver(
   { rootByDirectory, repositoryByRoot, identifierByRoot }: RepositoryCaches,
-  userNameOptions: GitUserNameOptions,
+  reader: RepositoryReader,
 ): RepositoryAttributor {
   function rootForPath(path: string): string | null | undefined {
     const directory = nearestExistingDirectory(path);
@@ -73,7 +80,7 @@ function attributorOver(
   function identifierForRoot(root: string): RepositoryAttribution {
     const cached = identifierByRoot.get(root);
     if (cached) return cached;
-    const userName = getGitUserName(root, userNameOptions);
+    const userName = reader.userName(root);
     const identifier: RepositoryAttribution = userName
       ? { ls_attribution_identifier: userName }
       : {};
@@ -84,7 +91,7 @@ function attributorOver(
   function repositoryForRoot(root: string): RepositoryAttribution {
     const cached = repositoryByRoot.get(root);
     if (cached) return cached;
-    const repository = getRepositoryMetadata(root);
+    const repository = reader.repository(root);
     repositoryByRoot.set(root, repository);
     return repository;
   }

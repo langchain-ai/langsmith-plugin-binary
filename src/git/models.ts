@@ -66,3 +66,30 @@ export interface RepositoryAttributor {
     toolOrigins: Iterable<ReconstructionToolOrigin>,
   ): Record<string, unknown> | undefined;
 }
+
+export interface GitDirectories {
+  gitDirectory: string;
+  commonDirectory: string;
+}
+
+export interface GitConfigEntry {
+  section: string;
+  subsection?: string;
+  key: string;
+  value?: string;
+}
+
+export interface GitConfigKey {
+  section: string;
+  key: string;
+}
+
+export interface GitConfigValue {
+  value?: string;
+  continues: boolean;
+}
+
+export interface RepositoryReader {
+  repository(root: string): RepositoryAttribution;
+  userName(root: string): string | undefined;
+}

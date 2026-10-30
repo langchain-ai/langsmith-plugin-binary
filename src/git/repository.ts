@@ -86,18 +86,22 @@ export function getRepoName(cwd: string): GitRepositoryName | undefined {
       const url = parts[1];
       if (name && url && line.includes("(fetch)")) remotes.push({ name, url });
     }
-
-    const origin = remotes.find((remote) => remote.name === "origin");
-    if (origin) {
-      const name = parseRepoName(origin.url);
-      if (name) return name;
-    }
-
-    for (const remote of remotes) {
-      const name = parseRepoName(remote.url);
-      if (name) return name;
-    }
+    return repoNameFromRemotes(remotes);
   } catch {}
+  return undefined;
+}
+
+export function repoNameFromRemotes(remotes: GitRemote[]): GitRepositoryName | undefined {
+  const origin = remotes.find((remote) => remote.name === "origin");
+  if (origin) {
+    const name = parseRepoName(origin.url);
+    if (name) return name;
+  }
+
+  for (const remote of remotes) {
+    const name = parseRepoName(remote.url);
+    if (name) return name;
+  }
   return undefined;
 }
 
@@ -138,8 +142,14 @@ export function getGitInfo(cwd: string): GitInfo {
 }
 
 export function getRepositoryMetadata(cwd: string): RepositoryAttribution {
+  return repositoryMetadataOf(getRepoName(cwd), getGitInfo(cwd));
+}
+
+export function repositoryMetadataOf(
+  repoName: GitRepositoryName | undefined,
+  gitInfo: GitInfo,
+): RepositoryAttribution {
   const metadata: RepositoryAttribution = {};
-  const repoName = getRepoName(cwd);
   if (repoName) {
     metadata[GIT_METADATA_KEYS.repository] = repoName.name;
     metadata[GIT_METADATA_KEYS.provider] = repoName.provider;
@@ -148,7 +158,6 @@ export function getRepositoryMetadata(cwd: string): RepositoryAttribution {
       : getRepoUrl(repoName.provider, repoName.name);
     if (url) metadata[GIT_METADATA_KEYS.repositoryUrl] = url;
   }
-  const gitInfo = getGitInfo(cwd);
   if (gitInfo.branch) metadata[GIT_METADATA_KEYS.branch] = gitInfo.branch;
   if (gitInfo.commit) metadata[GIT_METADATA_KEYS.commit] = gitInfo.commit;
   return withBothGitMetadataNames(metadata);

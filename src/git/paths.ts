@@ -10,18 +10,30 @@ function gitMarkerAt(directory: string): GitMarker {
   } catch {
     return GIT_MARKERS.NOTHING_HERE;
   }
-  return pointsAtGitDirectory(directory, marker)
+  return gitDirectoryPointedAt(directory, marker) !== undefined
     ? GIT_MARKERS.REPOSITORY_ROOT
     : GIT_MARKERS.ONLY_GIT_CAN_SAY;
 }
 
-function pointsAtGitDirectory(directory: string, marker: string): boolean {
+function gitDirectoryPointedAt(directory: string, marker: string): string | undefined {
   try {
     const pointer = readFileSync(marker, "utf-8").match(GIT_FILE_POINTER)?.[1];
-    return pointer !== undefined && statSync(resolve(directory, pointer)).isDirectory();
+    if (pointer === undefined) return undefined;
+    const gitDirectory = resolve(directory, pointer);
+    return statSync(gitDirectory).isDirectory() ? gitDirectory : undefined;
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+export function gitDirectoryOf(root: string): string | undefined {
+  const marker = join(root, GIT_DIRECTORY_NAME);
+  try {
+    if (statSync(marker).isDirectory()) return marker;
+  } catch {
+    return undefined;
+  }
+  return gitDirectoryPointedAt(root, marker);
 }
 
 export function rootFromGitMarker(directory: string): string | null | undefined {
