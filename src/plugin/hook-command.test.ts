@@ -93,6 +93,6 @@ it("rejects options without a hooks table before running anything", async () => 
 
 it("hands the model a command reply that starts with the marker hook readers skip", () => {
   expect(commandReplyContext("Thread tracing muted.")).toBe(
-    "[LangSmith tracing command] The user ran a LangSmith tracing command and the plugin already handled it. Reply with exactly the text below and nothing else:\n\nThread tracing muted.",
+    "[LangSmith tracing command] The user ran a LangSmith tracing command and the plugin already did what they asked. Let them know what happened, based on the result below:\n\nThread tracing muted.",
   );
 });

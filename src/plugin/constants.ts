@@ -46,4 +46,4 @@ export const NOTICE_STATE_FILE = "notices.json";
 export const NOTICE_KEY_SEPARATOR = "\n";
 export const COMMAND_REPLY_MARKER = "[LangSmith tracing command]";
 export const COMMAND_REPLY_INSTRUCTION =
-  "The user ran a LangSmith tracing command and the plugin already handled it. Reply with exactly the text below and nothing else:";
+  "The user ran a LangSmith tracing command and the plugin already did what they asked. Let them know what happened, based on the result below:";
