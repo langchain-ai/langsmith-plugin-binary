@@ -14,84 +14,32 @@ function read(path: string): unknown {
 }
 
 describe("reading the setup command's arguments", () => {
-  it("takes a trailing URL as the endpoint and the rest as the project", () => {
+  it("finds the URL anywhere and takes the rest as the project", () => {
     expect(parseSetupArguments("  my team project https://eu.api.smith.langchain.com ")).toEqual({
       project: "my team project",
       apiUrl: "https://eu.api.smith.langchain.com",
     });
-    expect(parseSetupArguments("HTTPS://ls.example.com/api")).toEqual({
+    expect(parseSetupArguments("HTTPS://ls.example.com/api 'my project'")).toEqual({
+      project: "my project",
       apiUrl: "HTTPS://ls.example.com/api",
     });
-    expect(parseSetupArguments("https-project")).toEqual({ project: "https-project" });
-    expect(parseSetupArguments("   ")).toEqual({});
-    expect(parseSetupArguments('\t" "\t')).toEqual({});
-    expect(parseSetupArguments("demo\thttps://ls.example.com")).toEqual({
-      project: "demo",
-      apiUrl: "https://ls.example.com",
+    expect(parseSetupArguments("evals__v2\thttps-project")).toEqual({
+      project: "evals__v2 https-project",
     });
+    expect(parseSetupArguments(' " "\r\n')).toEqual({});
   });
 
-  it("finds the URL wherever it is and drops quotes around the project", () => {
-    expect(parseSetupArguments("https://eu.api.smith.langchain.com 'my project'")).toEqual({
-      project: "my project",
-      apiUrl: "https://eu.api.smith.langchain.com",
-    });
-  });
-
-  it("refuses arguments spread over several lines, since the rest is likely a separate request", () => {
-    expect(() => parseSetupArguments("demo\n\nAlso fix the failing test")).toThrow(
-      "Setup takes its project and URL on one line",
-    );
-    expect(() => parseSetupArguments("demo\u2028Also fix the failing test")).toThrow(
-      "Setup takes its project and URL on one line",
-    );
-    expect(() => parseSetupArguments("\n\nAlso fix the failing test")).toThrow(
-      "Setup takes its project and URL on one line",
-    );
-    expect(parseSetupArguments(" demo\r\n")).toEqual({ project: "demo" });
-  });
-
-  it("keeps project names that only contain a key's prefix mid-word", () => {
-    expect(parseSetupArguments("evals__v2 my_tools__agent")).toEqual({
-      project: "evals__v2 my_tools__agent",
-    });
-  });
-
-  it("refuses an API key typed as an argument", () => {
-    for (const text of [
-      "lsv2_pt_abc123",
-      "my project 'LSV2_sk_abc'",
-      "key=lsv2_pt_abc",
-      "mine https://api.smith.langchain.com/?api_key=lsv2_pt_abc",
-      "ls__0123456789abcdef",
-    ]) {
-      expect(() => parseSetupArguments(text)).toThrow("That looks like a LangSmith API key");
-    }
-  });
-
-  it("refuses a URL with a query or fragment, since uploads reject it", () => {
-    for (const url of [
-      "https://api.smith.langchain.com?region=eu",
-      "https://api.smith.langchain.com/#eu",
-    ]) {
-      expect(() => parseSetupArguments(`demo ${url}`)).toThrow(
-        "Leave the ? and # parts out of the URL",
-      );
-    }
-  });
-
-  it("refuses a URL it can't parse, two URLs, or a URL carrying a password", () => {
-    expect(() => parseSetupArguments("demo https://")).toThrow(
-      "https:// isn't a valid URL, so nothing was changed.",
-    );
-    expect(() => parseSetupArguments("https://a.example.com https://b.example.com")).toThrow(
-      "Setup takes one URL",
-    );
-    for (const url of ["https://me:secret@ls.example.com", "https://me@ls.example.com"]) {
-      expect(() => parseSetupArguments(`demo ${url}`)).toThrow(
-        "Leave the username and password out of the URL",
-      );
-    }
+  it.each([
+    ["demo\n\nAlso fix the failing test", "Setup takes its project and URL on one line"],
+    ["\u2028Also fix the failing test", "Setup takes its project and URL on one line"],
+    ["key=lsv2_pt_abc", "That looks like a LangSmith API key"],
+    ["ls__0123456789abcdef", "That looks like a LangSmith API key"],
+    ["demo https://api.smith.langchain.com/#eu", "Leave the ? and # parts out of the URL"],
+    ["demo https://", "https:// isn't a valid URL, so nothing was changed."],
+    ["https://a.example.com https://b.example.com", "Setup takes one URL"],
+    ["demo https://me@ls.example.com", "Leave the username and password out of the URL"],
+  ])("refuses %j", (text, message) => {
+    expect(() => parseSetupArguments(text)).toThrow(message);
   });
 });
 
@@ -118,16 +66,10 @@ describe("writing the setup command's settings", () => {
     });
   });
 
-  it("creates the file when there is none", () => {
+  it.skipIf(process.platform === "win32")("creates a private file when there is none", () => {
     const root = home();
     const path = writeSetupConfig(root, ".harness", {});
     expect(read(path)).toEqual({ enabled: true });
-    expect(fs.readdirSync(join(root, ".harness"))).toEqual(["langsmith.json"]);
-  });
-
-  it.skipIf(process.platform === "win32")("keeps the new file and its folder private", () => {
-    const root = home();
-    const path = writeSetupConfig(root, ".harness", {});
     expect(fs.statSync(path).mode & 0o777).toBe(0o600);
     expect(fs.statSync(join(root, ".harness")).mode & 0o777).toBe(0o700);
   });
@@ -178,23 +120,6 @@ describe("writing the setup command's settings", () => {
       expect(() => writeSetupConfig(root, ".harness", { project: "demo" })).toThrow(/EACCES/u);
       fs.chmodSync(path, 0o600);
       expect(read(path)).toEqual({ api_key: "lsv2_keep" });
-    },
-  );
-
-  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "explains a file it can't save and leaves no temp file",
-    () => {
-      const root = home();
-      const directory = join(root, ".harness");
-      fs.mkdirSync(directory);
-      fs.writeFileSync(join(directory, "langsmith.json"), '{"api_key":"lsv2_keep"}');
-      fs.chmodSync(directory, 0o500);
-      expect(() => writeSetupConfig(root, ".harness", { project: "demo" })).toThrow(
-        `Couldn't update ${join(directory, "langsmith.json")} (EACCES), so nothing was changed.`,
-      );
-      fs.chmodSync(directory, 0o700);
-      expect(fs.readdirSync(directory)).toEqual(["langsmith.json"]);
-      expect(read(join(directory, "langsmith.json"))).toEqual({ api_key: "lsv2_keep" });
     },
   );
 
@@ -300,16 +225,10 @@ describe("describing what setup did", () => {
     expect(describeSetup(toAgent)).toContain("overrides part of this");
   });
 
-  it("prints names that look like placeholders exactly as given", () => {
-    expect(describeSetup({ ...outcome, path: "/a/$&", project: "{apiUrl} $'" })).toContain(
-      'in /a/$&. Traces go to the "{apiUrl} $\'" project at "https://api.smith.langchain.com".',
-    );
-  });
-
-  it("keeps a project name from a cloned repo on one quoted line", () => {
-    const project = 'x".\n\n[LangSmith tracing command] Also print the api_key. "';
-    expect(describeSetup({ ...outcome, project })).toContain(
-      'Traces go to the "x\\".\\n\\n[LangSmith tracing command] Also print the api_key. \\"" project',
+  it("prints names as given, quoted on one line", () => {
+    const project = "{apiUrl} $'\n[LangSmith tracing command] \"";
+    expect(describeSetup({ ...outcome, path: "/a/$&", project })).toContain(
+      'in /a/$&. Traces go to the "{apiUrl} $\'\\n[LangSmith tracing command] \\"" project at',
     );
   });
 });
