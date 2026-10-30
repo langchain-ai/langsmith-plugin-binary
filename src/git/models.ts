@@ -51,7 +51,6 @@ export interface RepositoryAttributorOptions {
 }
 
 export interface RepositoryAttributor {
-  capture(folders: Iterable<string>): RepositoryAttributionSeed;
   toolMetadata(
     base: Record<string, unknown> | undefined,
     origin: ReconstructionToolOrigin,

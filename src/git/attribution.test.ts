@@ -364,6 +364,33 @@ describe("captureRepositoryAttribution", () => {
 
     expect(gitCommands().some((command) => command.includes("gh"))).toBe(false);
     expect(Object.keys(seed.metadata)).toHaveLength(3);
-    expect(seed.identifiers[nameless]).toBeUndefined();
+    expect(seed.identifiers[nameless]).toEqual({});
+  });
+
+  it("counts distinct repositories toward the cap rather than folders", () => {
+    const second = makeDir(alpha, "second dir");
+    const seed = captureRepositoryAttribution([alpha, nested, second, beta]);
+
+    expect(Object.keys(seed.metadata).toSorted()).toEqual([alpha, beta].toSorted());
+  });
+
+  it("leaves an author missing at turn end to the GitHub login, never a name set later", () => {
+    vi.stubEnv("GIT_CONFIG_GLOBAL", process.platform === "win32" ? "NUL" : "/dev/null");
+    const seed = captureRepositoryAttribution([nameless]);
+    git(nameless, "config", "user.name", "Set Later");
+    try {
+      answerGitHubLogin("octocat");
+      const freshMarker = join(root, "fresh state", "langsmith_gh_login.json");
+      const seeded = createRepositoryAttributor({ githubLoginMarkerPath: freshMarker, seed });
+      expect(seeded.turnMetadata(base, nameless, [])).toMatchObject({
+        ls_attribution_identifier: "octocat",
+      });
+    } finally {
+      git(nameless, "config", "--unset", "user.name");
+    }
+  });
+
+  it("only offers capturing through the standalone function", () => {
+    expect("capture" in attributor).toBe(false);
   });
 });

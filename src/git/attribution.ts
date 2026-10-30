@@ -16,6 +16,13 @@ import { getGitUserName, getRepoRoot, getRepositoryMetadata } from "./repository
 export function createRepositoryAttributor(
   options: RepositoryAttributorOptions,
 ): RepositoryAttributor {
+  const { toolMetadata, turnMetadata } = attributorWithCapture(options);
+  return { toolMetadata, turnMetadata };
+}
+
+function attributorWithCapture(
+  options: RepositoryAttributorOptions,
+): RepositoryAttributor & { capture(folders: Iterable<string>): RepositoryAttributionSeed } {
   const seed = options.seed;
   const rootByDirectory = new Map<string, string | null | undefined>(
     Object.entries(seed?.roots ?? {}),
@@ -48,8 +55,10 @@ export function createRepositoryAttributor(
 
   function identifierForRoot(root: string): RepositoryAttribution {
     const cached = identifierByRoot.get(root);
-    if (cached) return cached;
-    const userName = getGitUserName(root, githubLogin && { githubLogin });
+    if (cached?.ls_attribution_identifier) return cached;
+    const userName = cached
+      ? githubLogin?.()
+      : getGitUserName(root, githubLogin && { githubLogin });
     const identifier: RepositoryAttribution = userName
       ? { ls_attribution_identifier: userName }
       : {};
@@ -134,15 +143,16 @@ export function createRepositoryAttributor(
 
   function capture(folders: Iterable<string>): RepositoryAttributionSeed {
     const captured: RepositoryAttributionSeed = { roots: {}, metadata: {}, identifiers: {} };
-    for (const folder of [...new Set(folders)].slice(0, MAX_SEEDED_FOLDERS)) {
+    for (const folder of new Set(folders)) {
       const directory = nearestExistingDirectory(folder);
       const root = rootForPath(folder);
       if (!directory || root === undefined) continue;
+      const room = Object.keys(captured.metadata).length < MAX_SEEDED_FOLDERS;
+      if (typeof root === "string" && !(root in captured.metadata) && !room) continue;
       captured.roots[directory] = root;
       if (root === null) continue;
       captured.metadata[root] = metadataByRoot.get(root) ?? getRepositoryMetadata(root);
-      const identifier = identifierForRoot(root);
-      if (identifier.ls_attribution_identifier) captured.identifiers[root] = identifier;
+      captured.identifiers[root] = identifierForRoot(root);
     }
     return captured;
   }
@@ -151,7 +161,7 @@ export function createRepositoryAttributor(
 }
 
 export function captureRepositoryAttribution(folders: Iterable<string>): RepositoryAttributionSeed {
-  return createRepositoryAttributor({ githubLoginMarkerPath: "", skipGitHubLogin: true }).capture(
+  return attributorWithCapture({ githubLoginMarkerPath: "", skipGitHubLogin: true }).capture(
     folders,
   );
 }
