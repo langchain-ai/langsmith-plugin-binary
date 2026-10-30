@@ -67,6 +67,8 @@ export const SYSTEM_CONFIG_PATHS = [
   "/opt/homebrew/etc/gitconfig",
   "/usr/local/etc/gitconfig",
 ];
+export const WINDOWS_SYSTEM_CONFIG_PATH = ["etc", "gitconfig"];
+export const WINDOWS_PROGRAM_DATA_CONFIG_PATH = ["Git", "config"];
 export const XDG_GIT_CONFIG_PATH = ["git", "config"];
 export const DEFAULT_XDG_CONFIG_DIRECTORY = ".config";
 export const GLOBAL_CONFIG_FILE = ".gitconfig";

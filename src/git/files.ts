@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { RepositoryAttribution } from "../metadata/models.js";
+import { findExecutable } from "../utils/desktop/launch.js";
 import {
   AMBIGUOUS_REF_AFFIXES,
   BRANCH_REF_PREFIX,
@@ -14,6 +15,7 @@ import {
   CONFIG_SECTION_PATTERN,
   CONFIG_WHITESPACE,
   DEFAULT_XDG_CONFIG_DIRECTORY,
+  GIT_COMMAND,
   GIT_COMMON_DIRECTORY_FILE,
   GIT_CONFIG_FILE,
   GIT_HEAD_FILE,
@@ -23,6 +25,8 @@ import {
   OBJECT_ID_PATTERN,
   SYMBOLIC_REF_PATTERN,
   SYSTEM_CONFIG_PATHS,
+  WINDOWS_PROGRAM_DATA_CONFIG_PATH,
+  WINDOWS_SYSTEM_CONFIG_PATH,
   XDG_GIT_CONFIG_PATH,
 } from "./constants.js";
 import type {
@@ -147,19 +151,27 @@ function configEntries(directories: GitDirectories): GitConfigEntry[] | undefine
 
 function configPaths(directories: GitDirectories): string[] | undefined {
   const { env } = process;
-  if (process.platform === "win32") return undefined;
   if (CONFIG_OVERRIDE_ENV_KEYS.some((key) => env[key])) return undefined;
-  const home = env.HOME ?? homedir();
+  const system = systemConfigPaths(env);
+  if (!system) return undefined;
+  const home = env.HOME || homedir();
   const xdg = env.XDG_CONFIG_HOME || join(home, DEFAULT_XDG_CONFIG_DIRECTORY);
-  const system = env.GIT_CONFIG_NOSYSTEM
-    ? []
-    : env.GIT_CONFIG_SYSTEM
-      ? [env.GIT_CONFIG_SYSTEM]
-      : SYSTEM_CONFIG_PATHS;
   const global = env.GIT_CONFIG_GLOBAL
     ? [env.GIT_CONFIG_GLOBAL]
     : [join(xdg, ...XDG_GIT_CONFIG_PATH), join(home, GLOBAL_CONFIG_FILE)];
   return [...system, ...global, join(directories.commonDirectory, GIT_CONFIG_FILE)];
+}
+
+function systemConfigPaths(env: NodeJS.ProcessEnv): string[] | undefined {
+  if (env.GIT_CONFIG_NOSYSTEM) return [];
+  if (env.GIT_CONFIG_SYSTEM) return [env.GIT_CONFIG_SYSTEM];
+  if (process.platform !== "win32") return SYSTEM_CONFIG_PATHS;
+  const git = findExecutable(GIT_COMMAND, env, process.platform);
+  if (!git) return undefined;
+  const installed = join(dirname(dirname(git)), ...WINDOWS_SYSTEM_CONFIG_PATH);
+  return env.ProgramData
+    ? [join(env.ProgramData, ...WINDOWS_PROGRAM_DATA_CONFIG_PATH), installed]
+    : [installed];
 }
 
 function parseConfig(text: string): GitConfigEntry[] | undefined {
