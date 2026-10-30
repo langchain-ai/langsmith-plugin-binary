@@ -580,16 +580,6 @@ describe("snapshotRepositories", () => {
       },
     ],
     [
-      "a GIT_CONFIG file that git remote ignores",
-      () => {
-        writeFileSync(
-          join(root, "elsewhere"),
-          '[remote "origin"]\n\turl = https://github.com/a/e\n',
-        );
-        vi.stubEnv("GIT_CONFIG", join(root, "elsewhere"));
-      },
-    ],
-    [
       "an author padded with quoted spaces",
       (repository) => git(repository, "config", "user.name", " Padded Owner "),
     ],
@@ -727,20 +717,31 @@ describe("snapshotRepositories", () => {
       cpSync(alpha, copy, { recursive: true });
       return copy;
     });
-    const touched = repositories
-      .slice(0, 12)
-      .map((repository) => file(join(repository, "seed.txt")));
+    const seeds = repositories.map((repository) => join(repository, "seed.txt"));
+    const touched = seeds.slice(0, 12).map((path) => file(path));
     const crossing = touched.map(({ path }, index) => file(path!, repositories[12 + index]));
 
     expect(Object.keys(snapshotRepositories(central, touched).repositories).toSorted()).toEqual(
       [repositories[0]!, ...repositories.slice(3, 12)].toSorted(),
     );
     expect(Object.keys(snapshotRepositories(central, crossing).repositories)).toHaveLength(9);
-    const seeds = repositories.slice(0, 10).map((repository) => join(repository, "seed.txt"));
-    for (const cwd of [plain, join(repositories[0]!, "sub dir")]) {
-      const reaching = seeds.map((path) => file(path, cwd));
-      expect(Object.keys(snapshotRepositories(plain, reaching).repositories)).toHaveLength(10);
+    for (const cwd of [plain, join(repositories[0]!, "sub dir"), submodule]) {
+      const reaching = seeds.slice(0, 10).map((path) => file(path, cwd));
+      const count = cwd === submodule ? 9 : 10;
+      expect(Object.keys(snapshotRepositories(plain, reaching).repositories)).toHaveLength(count);
     }
+  });
+
+  it("ignores a GIT_CONFIG file as git remote and git commit do", () => {
+    const elsewhere = join(root, "elsewhere");
+    writeFileSync(
+      elsewhere,
+      '[remote "origin"]\n\turl = https://github.com/a/e\n[user]\n\tname = E\n',
+    );
+    vi.stubEnv("GIT_CONFIG", elsewhere);
+    const { snapshot } = readThroughSnapshot(alpha);
+    expect(snapshot.repositories[alpha]).toMatchObject({ ls_git_repo: "acme/alpha" });
+    expect(snapshot.identifiers[alpha]).toEqual({ ls_attribution_identifier: "Alpha Owner" });
   });
 
   it("reads no branch from a HEAD git cannot read", () => {
