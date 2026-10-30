@@ -509,7 +509,7 @@ describe("snapshotRepositories", () => {
         writeFileSync(included, "[user]\n\tname = Conditional Owner\n");
         writeFileSync(
           global,
-          `[includeIf "gitdir:${realpathSync(repository).replaceAll("\\", "/")}/"]\n\tpath = ${included}\n`,
+          `[includeIf "gitdir:${realpathSync(repository).replaceAll("\\", "/")}/"]\n\tpath = ${included.replaceAll("\\", "/")}\n`,
         );
         vi.stubEnv("GIT_CONFIG_GLOBAL", global);
         git(repository, "config", "--unset", "user.name");
