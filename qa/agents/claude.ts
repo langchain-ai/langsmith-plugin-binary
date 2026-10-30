@@ -2,9 +2,20 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLAUDE_ALLOWED_TOOLS, CLAUDE_TYPING, EXIT_COMMAND, CLAUDE_MODEL } from "../constants.ts";
-import type { PreparedAgent, RunOptions } from "../models.ts";
+import type { PreparedAgent, RunOptions, TracingSettings } from "../models.ts";
 import { quoteForShell } from "../utils/shell.ts";
 import { baseEnvironment, createWorkspace, recorderHooks } from "../workspace.ts";
+
+export function claudeTracingEnvironment(options: TracingSettings): Record<string, string> {
+  return {
+    TRACE_TO_LANGSMITH: "true",
+    CLAUDE_PLUGIN_ROOT: options.pluginDir,
+    LANGSMITH_ENDPOINT: options.endpoints.tracing,
+    CC_LANGSMITH_ENDPOINT: options.endpoints.tracing,
+    CC_LANGSMITH_API_KEY: options.tracingApiKey,
+    CC_LANGSMITH_PROJECT: options.project,
+  };
+}
 
 export function prepareClaude(options: RunOptions): PreparedAgent {
   const workspace = createWorkspace(options.workDir, options.scenario);
@@ -56,11 +67,7 @@ export function prepareClaude(options: RunOptions): PreparedAgent {
         CLAUDE_CONFIG_DIR: configDir,
         ANTHROPIC_BASE_URL: options.endpoints.anthropic,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-        TRACE_TO_LANGSMITH: "true",
-        LANGSMITH_ENDPOINT: options.endpoints.tracing,
-        CC_LANGSMITH_ENDPOINT: options.endpoints.tracing,
-        CC_LANGSMITH_API_KEY: options.tracingApiKey,
-        CC_LANGSMITH_PROJECT: options.project,
+        ...claudeTracingEnvironment(options),
       },
       typing: CLAUDE_TYPING,
       exitCommand: EXIT_COMMAND,

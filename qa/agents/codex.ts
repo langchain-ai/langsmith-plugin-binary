@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CODEX_MODEL, CODEX_TYPING, EXIT_COMMAND, GATEWAY_KEY_ENV } from "../constants.ts";
-import type { PreparedAgent, HooksFile, RunOptions } from "../models.ts";
+import type { PreparedAgent, HooksFile, RunOptions, TracingSettings } from "../models.ts";
 import { quoteForShell } from "../utils/shell.ts";
 import { baseEnvironment, createWorkspace, recorderHooks } from "../workspace.ts";
 
@@ -26,15 +26,21 @@ function codexConfig(projectDir: string, openaiUrl: string): string {
   ].join("\n");
 }
 
-function writeTracingEnvironment(path: string, options: RunOptions): void {
-  const settings = {
+export function codexTracingEnvironment(options: TracingSettings): Record<string, string> {
+  return {
     TRACE_TO_LANGSMITH: "true",
-    HOME: join(options.workDir, "plugin-home"),
     PLUGIN_ROOT: options.pluginDir,
     LANGSMITH_ENDPOINT: options.endpoints.tracing,
     LANGSMITH_CODEX_ENDPOINT: options.endpoints.tracing,
     LANGSMITH_CODEX_API_KEY: options.tracingApiKey,
     LANGSMITH_CODEX_PROJECT: options.project,
+  };
+}
+
+function writeTracingEnvironment(path: string, options: RunOptions): void {
+  const settings = {
+    ...codexTracingEnvironment(options),
+    HOME: join(options.workDir, "plugin-home"),
   };
   const lines = Object.entries(settings).map(
     ([name, value]) => `export ${name}=${quoteForShell(value)}`,

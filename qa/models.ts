@@ -4,6 +4,9 @@ export interface ScenarioTurn {
   prompt: string;
   command: string;
   minTools: number;
+  maxTools?: number;
+  reply?: string | null;
+  expectsModelCall?: boolean;
   toolOutputContains?: string;
 }
 
@@ -25,6 +28,11 @@ export interface RunOptions {
   agentCommand: string;
   endpoints: Endpoints;
 }
+
+export type TracingSettings = Pick<
+  RunOptions,
+  "pluginDir" | "project" | "tracingApiKey" | "endpoints"
+>;
 
 export interface Endpoints {
   tracing: string;
@@ -108,4 +116,17 @@ export interface RunBatch {
 export interface AnthropicContentBlock {
   start: unknown;
   delta: unknown;
+}
+
+export type TranscriptLine = Record<string, any>;
+
+export interface ReplayEvent {
+  payload: Record<string, unknown>;
+  transcriptLines: number;
+}
+
+export interface ReplayPlan {
+  sessionId: string;
+  events: ReplayEvent[];
+  turns: ScenarioTurn[];
 }
