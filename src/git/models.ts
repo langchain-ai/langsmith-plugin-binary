@@ -50,7 +50,7 @@ export interface RepositorySnapshot {
 }
 
 export interface RepositoryCaches {
-  rootByDirectory: Map<string, string | null | undefined>;
+  rootByPath: Map<string, string | null | undefined>;
   repositoryByRoot: Map<string, RepositoryAttribution>;
   identifierByRoot: Map<string, RepositoryAttribution>;
 }
@@ -73,6 +73,7 @@ export interface GitDirectories {
 }
 
 export interface GitConfigEntry {
+  scope?: string;
   section: string;
   subsection?: string;
   key: string;
@@ -87,6 +88,12 @@ export interface GitConfigKey {
 export interface GitConfigValue {
   value?: string;
   continues: boolean;
+}
+
+export interface SharedGitConfig {
+  lower: GitConfigEntry[];
+  upper: GitConfigEntry[];
+  conditional: boolean;
 }
 
 export interface RepositoryReader {

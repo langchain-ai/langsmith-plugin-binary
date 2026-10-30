@@ -11,7 +11,8 @@ import type {
   RepositoryReader,
   RepositorySnapshot,
 } from "./models.js";
-import { repositoryMetadataFromFiles, userNameFromFiles } from "./files.js";
+import { SNAPSHOT_MAX_REPOSITORIES } from "./constants.js";
+import { createFileReader } from "./files.js";
 import { rootFromGitMarker } from "./paths.js";
 import { getGitUserName, getRepoRoot, getRepositoryMetadata } from "./repository.js";
 
@@ -30,16 +31,16 @@ export function snapshotRepositories(
   toolOrigins: Iterable<ReconstructionToolOrigin> = [],
 ): RepositorySnapshot {
   const caches = cachesFrom(undefined);
-  const attributor = attributorOver(caches, {
-    repository: repositoryMetadataFromFiles,
-    userName: userNameFromFiles,
-  });
+  const attributor = attributorOver(caches, createFileReader());
   const origins = [...toolOrigins];
   attributor.turnMetadata(undefined, cwd, origins);
-  for (const origin of origins) attributor.toolMetadata(undefined, origin);
+  for (const origin of origins) {
+    if (caches.repositoryByRoot.size >= SNAPSHOT_MAX_REPOSITORIES) break;
+    attributor.toolMetadata(undefined, origin);
+  }
   return {
     roots: Object.fromEntries(
-      [...caches.rootByDirectory].filter(
+      [...caches.rootByPath].filter(
         (entry): entry is [string, string | null] => entry[1] !== undefined,
       ),
     ),
@@ -52,24 +53,23 @@ export function snapshotRepositories(
 
 function cachesFrom(snapshot: RepositorySnapshot | undefined): RepositoryCaches {
   return {
-    rootByDirectory: new Map(Object.entries(snapshot?.roots ?? {})),
+    rootByPath: new Map(Object.entries(snapshot?.roots ?? {})),
     repositoryByRoot: new Map(Object.entries(snapshot?.repositories ?? {})),
     identifierByRoot: new Map(Object.entries(snapshot?.identifiers ?? {})),
   };
 }
 
 function attributorOver(
-  { rootByDirectory, repositoryByRoot, identifierByRoot }: RepositoryCaches,
+  { rootByPath, repositoryByRoot, identifierByRoot }: RepositoryCaches,
   reader: RepositoryReader,
 ): RepositoryAttributor {
   function rootForPath(path: string): string | null | undefined {
+    if (rootByPath.has(path)) return rootByPath.get(path);
     const directory = nearestExistingDirectory(path);
     if (!directory) return undefined;
-    if (rootByDirectory.has(directory)) return rootByDirectory.get(directory);
-    const walked = rootFromGitMarker(directory);
-    const onlyGitCanSay = walked === undefined;
-    const root = onlyGitCanSay ? getRepoRoot(directory) : walked;
-    rootByDirectory.set(directory, root);
+    if (!rootByPath.has(directory)) rootByPath.set(directory, rootOfDirectory(directory));
+    const root = rootByPath.get(directory);
+    rootByPath.set(path, root);
     return root;
   }
 
@@ -165,6 +165,12 @@ function attributorOver(
   }
 
   return { toolMetadata, turnMetadata };
+}
+
+function rootOfDirectory(directory: string): string | null | undefined {
+  const walked = rootFromGitMarker(directory);
+  const onlyGitCanSay = walked === undefined;
+  return onlyGitCanSay ? getRepoRoot(directory) : walked;
 }
 
 function withoutPinnedKeys(

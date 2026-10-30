@@ -1,33 +1,27 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { RepositoryAttribution } from "../metadata/models.js";
-import { findExecutable } from "../utils/desktop/launch.js";
+import { fileSize, readText } from "../utils/files/read.js";
 import {
   AMBIGUOUS_REF_AFFIXES,
   BRANCH_REF_PREFIX,
+  CONDITIONAL_INCLUDE_SECTION,
   CONFIG_COMMENT_STARTS,
   CONFIG_INCLUDE_SECTIONS,
   CONFIG_KEY_PATTERN,
   CONFIG_KEYS,
   CONFIG_LINE_BREAK,
-  CONFIG_OVERRIDE_ENV_KEYS,
+  CONFIG_SCOPES,
   CONFIG_SECTION_PATTERN,
-  CONFIG_WHITESPACE,
-  DEFAULT_XDG_CONFIG_DIRECTORY,
-  GIT_COMMAND,
   GIT_COMMON_DIRECTORY_FILE,
   GIT_CONFIG_FILE,
   GIT_HEAD_FILE,
-  GIT_LEGACY_REMOTE_DIRECTORIES,
   GIT_PACKED_REFS_FILE,
-  GLOBAL_CONFIG_FILE,
+  LISTED_CONFIG_SEPARATOR,
+  LISTED_CONFIG_VALUE_SEPARATOR,
   OBJECT_ID_PATTERN,
+  PACKED_REFS_MAX_BYTES,
   SYMBOLIC_REF_PATTERN,
-  SYSTEM_CONFIG_PATHS,
-  WINDOWS_PROGRAM_DATA_CONFIG_PATH,
-  WINDOWS_SYSTEM_CONFIG_PATH,
-  XDG_GIT_CONFIG_PATH,
 } from "./constants.js";
 import type {
   GitConfigEntry,
@@ -36,9 +30,12 @@ import type {
   GitDirectories,
   GitInfo,
   GitRemote,
+  RepositoryReader,
+  SharedGitConfig,
 } from "./models.js";
 import { gitDirectoryOf } from "./paths.js";
 import {
+  getConfigList,
   getGitInfo,
   getGitUserName,
   getRepoName,
@@ -46,9 +43,38 @@ import {
   repositoryMetadataOf,
 } from "./repository.js";
 
-export function repositoryMetadataFromFiles(root: string): RepositoryAttribution {
+export function createFileReader(): RepositoryReader {
+  let shared: SharedGitConfig | undefined;
+  const configByRoot = new Map<string, GitConfigEntry[] | undefined>();
+
+  function configFor(root: string): GitConfigEntry[] | undefined {
+    if (!configByRoot.has(root)) configByRoot.set(root, readConfig(root));
+    return configByRoot.get(root);
+  }
+
+  function readConfig(root: string): GitConfigEntry[] | undefined {
+    if (!shared) {
+      const listed = listedConfig(root);
+      if (listed) shared = sharedLayers(listed);
+      return listed;
+    }
+    const directories = gitDirectoriesOf(root);
+    const local = shared.conditional || !directories ? undefined : localConfig(directories);
+    return local ? [...shared.lower, ...local, ...shared.upper] : listedConfig(root);
+  }
+
+  return {
+    repository: (root) => repositoryFromFiles(root, configFor(root)),
+    userName: (root) => userNameFromConfig(root, configFor(root)),
+  };
+}
+
+function repositoryFromFiles(
+  root: string,
+  config: GitConfigEntry[] | undefined,
+): RepositoryAttribution {
   const directories = gitDirectoriesOf(root);
-  const remotes = directories && remotesFromFiles(directories);
+  const remotes = config && remotesFromConfig(config);
   const gitInfo = directories && gitInfoFromFiles(directories);
   return repositoryMetadataOf(
     remotes ? repoNameFromRemotes(remotes) : getRepoName(root),
@@ -56,12 +82,15 @@ export function repositoryMetadataFromFiles(root: string): RepositoryAttribution
   );
 }
 
-export function userNameFromFiles(root: string): string | undefined {
-  const directories = gitDirectoriesOf(root);
-  const entries = directories && configEntries(directories);
-  const names = entries?.filter((entry) => matches(entry, CONFIG_KEYS.user));
-  const name = names?.at(-1)?.value?.trim().replace(CONFIG_WHITESPACE, " ");
-  return name || getGitUserName(root);
+function userNameFromConfig(
+  root: string,
+  config: GitConfigEntry[] | undefined,
+): string | undefined {
+  if (!config) return getGitUserName(root);
+  const name = config.filter((entry) => matches(entry, CONFIG_KEYS.user)).at(-1);
+  if (!name) return undefined;
+  if (name.value === undefined) return getGitUserName(root);
+  return name.value.trim() || undefined;
 }
 
 function gitDirectoriesOf(root: string): GitDirectories | undefined {
@@ -77,48 +106,50 @@ function gitInfoFromFiles(directories: GitDirectories): GitInfo | undefined {
   if (OBJECT_ID_PATTERN.test(head)) return { commit: head };
   const ref = head.match(SYMBOLIC_REF_PATTERN)?.[1];
   if (!ref?.startsWith(BRANCH_REF_PREFIX)) return undefined;
+  const packed = packedRefs(directories);
+  if (!packed) return undefined;
   const branch = ref.slice(BRANCH_REF_PREFIX.length);
   const shortNameIsAmbiguous = AMBIGUOUS_REF_AFFIXES.some(([prefix, suffix]) =>
-    refExists(directories, `${prefix}${branch}${suffix}`),
+    refExists(directories, packed, `${prefix}${branch}${suffix}`),
   );
   if (shortNameIsAmbiguous) return undefined;
-  const commit = resolveRef(directories, ref);
+  const commit = resolveRef(directories, packed, ref);
   return commit ? { branch, commit } : undefined;
 }
 
-function resolveRef(directories: GitDirectories, ref: string): string | undefined {
+function resolveRef(
+  directories: GitDirectories,
+  packed: Map<string, string>,
+  ref: string,
+): string | undefined {
   const loose = readText(join(directories.commonDirectory, ref))?.trim();
   if (loose !== undefined) return OBJECT_ID_PATTERN.test(loose) ? loose : undefined;
-  return packedRefs(directories).get(ref);
+  return packed.get(ref);
 }
 
-function refExists(directories: GitDirectories, ref: string): boolean {
+function refExists(directories: GitDirectories, packed: Map<string, string>, ref: string): boolean {
   return (
     existsSync(join(directories.gitDirectory, ref)) ||
     existsSync(join(directories.commonDirectory, ref)) ||
-    packedRefs(directories).has(ref)
+    packed.has(ref)
   );
 }
 
-function packedRefs(directories: GitDirectories): Map<string, string> {
+function packedRefs(directories: GitDirectories): Map<string, string> | undefined {
+  const path = join(directories.commonDirectory, GIT_PACKED_REFS_FILE);
+  if ((fileSize(path) ?? 0) > PACKED_REFS_MAX_BYTES) return undefined;
   const refs = new Map<string, string>();
-  const text = readText(join(directories.commonDirectory, GIT_PACKED_REFS_FILE)) ?? "";
-  for (const line of text.split(CONFIG_LINE_BREAK)) {
+  for (const line of (readText(path) ?? "").split(CONFIG_LINE_BREAK)) {
     const [objectId, ref] = line.split(" ");
     if (objectId && ref && OBJECT_ID_PATTERN.test(objectId)) refs.set(ref, objectId);
   }
   return refs;
 }
 
-function remotesFromFiles(directories: GitDirectories): GitRemote[] | undefined {
-  const hasLegacyRemotes = GIT_LEGACY_REMOTE_DIRECTORIES.some(
-    (name) => listDirectory(join(directories.commonDirectory, name)).length > 0,
-  );
-  if (hasLegacyRemotes) return undefined;
-  const entries = configEntries(directories);
-  if (!entries || entries.some((entry) => matches(entry, CONFIG_KEYS.insteadOf))) return undefined;
+function remotesFromConfig(config: GitConfigEntry[]): GitRemote[] | undefined {
+  if (config.some((entry) => matches(entry, CONFIG_KEYS.insteadOf))) return undefined;
   const urlByRemote = new Map<string, string | undefined>();
-  for (const entry of entries) {
+  for (const entry of config) {
     if (!matches(entry, CONFIG_KEYS.remoteUrl) || entry.subsection === undefined) continue;
     if (!urlByRemote.has(entry.subsection)) urlByRemote.set(entry.subsection, entry.value);
   }
@@ -131,47 +162,48 @@ function remotesFromFiles(directories: GitDirectories): GitRemote[] | undefined 
   return remotes;
 }
 
-function configEntries(directories: GitDirectories): GitConfigEntry[] | undefined {
-  const paths = configPaths(directories);
-  if (!paths) return undefined;
+function listedConfig(root: string): GitConfigEntry[] | undefined {
+  const listed = getConfigList(root);
+  if (listed === undefined) return undefined;
+  const fields = listed.split(LISTED_CONFIG_SEPARATOR);
   const entries: GitConfigEntry[] = [];
-  for (const path of paths) {
-    const text = readText(path);
-    if (text === undefined) continue;
-    const parsed = parseConfig(text);
-    if (!parsed) return undefined;
-    entries.push(...parsed);
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const [name = "", ...value] = fields[index + 1]!.split(LISTED_CONFIG_VALUE_SEPARATOR);
+    const firstDot = name.indexOf(".");
+    const lastDot = name.lastIndexOf(".");
+    entries.push({
+      scope: fields[index]!,
+      section: name.slice(0, firstDot),
+      ...(firstDot < lastDot ? { subsection: name.slice(firstDot + 1, lastDot) } : {}),
+      key: name.slice(lastDot + 1),
+      ...(value.length > 0 ? { value: value.join(LISTED_CONFIG_VALUE_SEPARATOR) } : {}),
+    });
   }
-  const unusual = entries.some(
+  return entries;
+}
+
+function sharedLayers(listed: GitConfigEntry[]): SharedGitConfig {
+  const repositoryScopes = new Set<string>([CONFIG_SCOPES.local, CONFIG_SCOPES.worktree]);
+  return {
+    lower: listed.filter(
+      ({ scope }) => !repositoryScopes.has(scope!) && scope !== CONFIG_SCOPES.command,
+    ),
+    upper: listed.filter(({ scope }) => scope === CONFIG_SCOPES.command),
+    conditional: listed.some(({ section }) => section === CONDITIONAL_INCLUDE_SECTION),
+  };
+}
+
+function localConfig(directories: GitDirectories): GitConfigEntry[] | undefined {
+  const text = readText(join(directories.commonDirectory, GIT_CONFIG_FILE)) ?? "";
+  const entries = parseConfig(text);
+  const unusual = entries?.some(
     (entry) =>
-      CONFIG_INCLUDE_SECTIONS.has(entry.section) || matches(entry, CONFIG_KEYS.worktreeConfig),
+      CONFIG_INCLUDE_SECTIONS.has(entry.section) ||
+      matches(entry, CONFIG_KEYS.worktreeConfig) ||
+      (entry.value === undefined &&
+        (matches(entry, CONFIG_KEYS.user) || matches(entry, CONFIG_KEYS.remoteUrl))),
   );
   return unusual ? undefined : entries;
-}
-
-function configPaths(directories: GitDirectories): string[] | undefined {
-  const { env } = process;
-  if (CONFIG_OVERRIDE_ENV_KEYS.some((key) => env[key])) return undefined;
-  const system = systemConfigPaths(env);
-  if (!system) return undefined;
-  const home = env.HOME || homedir();
-  const xdg = env.XDG_CONFIG_HOME || join(home, DEFAULT_XDG_CONFIG_DIRECTORY);
-  const global = env.GIT_CONFIG_GLOBAL
-    ? [env.GIT_CONFIG_GLOBAL]
-    : [join(xdg, ...XDG_GIT_CONFIG_PATH), join(home, GLOBAL_CONFIG_FILE)];
-  return [...system, ...global, join(directories.commonDirectory, GIT_CONFIG_FILE)];
-}
-
-function systemConfigPaths(env: NodeJS.ProcessEnv): string[] | undefined {
-  if (env.GIT_CONFIG_NOSYSTEM) return [];
-  if (env.GIT_CONFIG_SYSTEM) return [env.GIT_CONFIG_SYSTEM];
-  if (process.platform !== "win32") return SYSTEM_CONFIG_PATHS;
-  const git = findExecutable(GIT_COMMAND, env, process.platform);
-  if (!git) return undefined;
-  const installed = join(dirname(dirname(git)), ...WINDOWS_SYSTEM_CONFIG_PATH);
-  return env.ProgramData
-    ? [join(env.ProgramData, ...WINDOWS_PROGRAM_DATA_CONFIG_PATH), installed]
-    : [installed];
 }
 
 function parseConfig(text: string): GitConfigEntry[] | undefined {
@@ -228,20 +260,4 @@ function scanValue(raw: string): GitConfigValue {
 
 function matches(entry: GitConfigEntry, { section, key }: GitConfigKey): boolean {
   return entry.section === section && entry.key === key;
-}
-
-function readText(path: string): string | undefined {
-  try {
-    return readFileSync(path, "utf-8");
-  } catch {
-    return undefined;
-  }
-}
-
-function listDirectory(path: string): string[] {
-  try {
-    return readdirSync(path);
-  } catch {
-    return [];
-  }
 }

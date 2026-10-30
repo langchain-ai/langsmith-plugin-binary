@@ -44,7 +44,6 @@ export const GIT_HEAD_FILE = "HEAD";
 export const GIT_COMMON_DIRECTORY_FILE = "commondir";
 export const GIT_PACKED_REFS_FILE = "packed-refs";
 export const GIT_CONFIG_FILE = "config";
-export const GIT_LEGACY_REMOTE_DIRECTORIES = ["remotes", "branches"];
 export const BRANCH_REF_PREFIX = "refs/heads/";
 export const SYMBOLIC_REF_PATTERN = /^ref:\s*(\S+)$/;
 export const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -60,18 +59,6 @@ export const CONFIG_SECTION_PATTERN =
   /^\[([A-Za-z][A-Za-z0-9-]*)(?:\s+"([^"\\]*)")?\]\s*(?:[#;].*)?$/;
 export const CONFIG_KEY_PATTERN = /^([A-Za-z][A-Za-z0-9-]*)\s*(?:=(.*))?$/;
 export const CONFIG_COMMENT_STARTS = new Set(["#", ";"]);
-export const CONFIG_WHITESPACE = /\s/g;
-export const CONFIG_OVERRIDE_ENV_KEYS = ["GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"];
-export const SYSTEM_CONFIG_PATHS = [
-  "/etc/gitconfig",
-  "/opt/homebrew/etc/gitconfig",
-  "/usr/local/etc/gitconfig",
-];
-export const WINDOWS_SYSTEM_CONFIG_PATH = ["etc", "gitconfig"];
-export const WINDOWS_PROGRAM_DATA_CONFIG_PATH = ["Git", "config"];
-export const XDG_GIT_CONFIG_PATH = ["git", "config"];
-export const DEFAULT_XDG_CONFIG_DIRECTORY = ".config";
-export const GLOBAL_CONFIG_FILE = ".gitconfig";
 export const CONFIG_INCLUDE_SECTIONS = new Set(["include", "includeif"]);
 export const CONFIG_KEYS = {
   user: { section: "user", key: "name" },
@@ -79,3 +66,10 @@ export const CONFIG_KEYS = {
   insteadOf: { section: "url", key: "insteadof" },
   worktreeConfig: { section: "extensions", key: "worktreeconfig" },
 } as const;
+export const GIT_CONFIG_LIST_ARGUMENTS = ["config", "--list", "--show-scope", "-z"];
+export const LISTED_CONFIG_SEPARATOR = "\0";
+export const LISTED_CONFIG_VALUE_SEPARATOR = "\n";
+export const CONFIG_SCOPES = { local: "local", worktree: "worktree", command: "command" } as const;
+export const CONDITIONAL_INCLUDE_SECTION = "includeif";
+export const PACKED_REFS_MAX_BYTES = 1_000_000;
+export const SNAPSHOT_MAX_REPOSITORIES = 10;

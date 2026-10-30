@@ -1,13 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReconstructionToolOrigin } from "../tracing/reconstruction/models.js";
 import { createRepositoryAttributor, snapshotRepositories } from "./attribution.js";
 import { fakeTool } from "../test-support/login.js";
-import type { RepositoryAttributor } from "./models.js";
-import { getRepositoryMetadata } from "./repository.js";
+import type { RepositoryAttributor, RepositorySnapshot } from "./models.js";
+import { getGitUserName, getRepositoryMetadata } from "./repository.js";
 
 vi.mock("node:child_process", { spy: true });
 
@@ -340,6 +348,23 @@ describe("turnMetadata", () => {
   });
 });
 
+function readThroughSnapshot(repository: string): {
+  snapshot: RepositorySnapshot;
+  commands: string[];
+} {
+  const before = gitCommands().length;
+  const snapshot = snapshotRepositories(beta, [file(join(repository, "seed.txt"), beta)]);
+  return { snapshot, commands: gitCommands().slice(before) };
+}
+
+function expectGitsOwnAnswer(snapshot: RepositorySnapshot, repository: string): void {
+  expect(snapshot.repositories[repository]).toEqual(getRepositoryMetadata(repository));
+  const name = getGitUserName(repository);
+  expect(snapshot.identifiers[repository]).toEqual(
+    name ? { ls_attribution_identifier: name } : undefined,
+  );
+}
+
 describe("snapshotRepositories", () => {
   const options = { githubLoginMarkerPath: markerPath };
 
@@ -408,34 +433,187 @@ describe("snapshotRepositories", () => {
     });
   });
 
-  it.each<[name: string, repository: string, want: Row]>([
-    ["a normal checkout", alpha, { ls_git_repo: "acme/alpha", ls_git_branch: "trunk-alpha" }],
-    ["a linked worktree", worktree, { ls_git_repo: "acme/alpha", ls_git_branch: "side-branch" }],
+  it.each<[name: string, repository: () => string]>([
+    ["a normal checkout", () => alpha],
+    ["a linked worktree", () => worktree],
+    ["a branch whose ref is packed", () => packed],
+    ["a detached HEAD", () => detached],
+    ["a repository with no remote", () => remoteless],
+    ["an author set only in the global config", () => nameless],
     [
-      "a branch whose ref is packed",
-      packed,
-      { ls_git_repo: "acme/packed", ls_git_branch: "trunk-packed" },
+      "a SHA-256 repository",
+      () => {
+        const path = makeDir(root, "sha256 repo");
+        git(path, "init", "-q", "--object-format=sha256", "--initial-branch", "trunk-sha256");
+        git(path, "config", "user.name", "Long Hash Owner");
+        writeFileSync(join(path, "seed.txt"), "seed\n");
+        git(path, "add", "seed.txt");
+        git(path, "-c", "user.email=s@example.test", "commit", "-q", "-m", "Seed");
+        return path;
+      },
     ],
-    ["a detached HEAD", detached, { ls_git_commit_hash: git(detached, "rev-parse", "HEAD") }],
-    ["a repository with no remote", remoteless, { ls_git_branch: "trunk-local" }],
-  ])("reads %s from its files, matching git without running it", (_name, repository, want) => {
-    const snapshot = snapshotRepositories(repository);
+    [
+      "an author with a tab inside",
+      () => {
+        const path = makeRepo("tabbed repo", "trunk-tabbed", "Temporary");
+        git(path, "config", "--unset", "user.name");
+        appendFileSync(join(path, ".git", "config"), "[user]\n\tname = Tabbed\tOwner\n");
+        return path;
+      },
+    ],
+  ])("reads %s as git does with one shared config listing", (_name, repository) => {
+    const path = repository();
+    const { snapshot, commands } = readThroughSnapshot(path);
 
-    expect(gitCommands()).toEqual([]);
-    expect(snapshot.repositories[repository]).toMatchObject(want);
-    expect(snapshot.repositories[repository]).toEqual(getRepositoryMetadata(repository));
-    expect(snapshot.identifiers[repository]).toEqual({
-      ls_attribution_identifier: git(repository, "config", "user.name"),
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toContain("config --list");
+    expectGitsOwnAnswer(snapshot, path);
+  });
+
+  it.each<[name: string, prepare: (repository: string) => void]>([
+    [
+      "a remote rewritten by insteadOf",
+      (repository) =>
+        git(
+          repository,
+          "config",
+          "url.https://github.com/acme/real.insteadOf",
+          "https://github.com/acme/fake",
+        ),
+    ],
+    [
+      "a remote rewritten in a system config git still reads",
+      () => {
+        const system = join(root, "system config");
+        writeFileSync(
+          system,
+          '[url "https://github.com/acme/real"]\n\tinsteadOf = https://github.com/acme/fake\n',
+        );
+        vi.stubEnv("GIT_CONFIG_SYSTEM", system);
+        vi.stubEnv("GIT_CONFIG_NOSYSTEM", "0");
+      },
+    ],
+    [
+      "an author from an included file",
+      (repository) => {
+        const included = join(root, "included config");
+        writeFileSync(included, "[user]\n\tname = Included Owner\n");
+        git(repository, "config", "include.path", included);
+      },
+    ],
+    [
+      "an author from a global include that applies to this folder only",
+      (repository) => {
+        const included = join(root, "conditional config");
+        const global = join(root, "conditional global");
+        writeFileSync(included, "[user]\n\tname = Conditional Owner\n");
+        writeFileSync(
+          global,
+          `[includeIf "gitdir:${realpathSync(repository)}/"]\n\tpath = ${included}\n`,
+        );
+        vi.stubEnv("GIT_CONFIG_GLOBAL", global);
+        git(repository, "config", "--unset", "user.name");
+      },
+    ],
+    ["a quoted author", (repository) => git(repository, "config", "user.name", "Quoted # Owner")],
+    [
+      "an author set by the environment",
+      () => {
+        vi.stubEnv("GIT_CONFIG_COUNT", "1");
+        vi.stubEnv("GIT_CONFIG_KEY_0", "user.name");
+        vi.stubEnv("GIT_CONFIG_VALUE_0", "Environment Owner");
+      },
+    ],
+    [
+      "an author set for this worktree only",
+      (repository) => {
+        git(repository, "config", "extensions.worktreeConfig", "true");
+        git(repository, "config", "--worktree", "user.name", "Worktree Owner");
+      },
+    ],
+    ["a branch named like a tag", (repository) => git(repository, "tag", "trunk-guarded")],
+    [
+      "a branch that points at another branch",
+      (repository) => {
+        git(repository, "branch", "real-branch");
+        git(repository, "symbolic-ref", "refs/heads/alias", "refs/heads/real-branch");
+        git(repository, "symbolic-ref", "HEAD", "refs/heads/alias");
+      },
+    ],
+    [
+      "packed refs too large to read faster than git",
+      (repository) => {
+        git(repository, "pack-refs", "--all");
+        const head = git(repository, "rev-parse", "HEAD");
+        const filler = Array.from(
+          { length: 20_000 },
+          (_, index) => `${head} refs/tags/filler-${index}`,
+        );
+        appendFileSync(join(repository, ".git", "packed-refs"), `${filler.join("\n")}\n`);
+      },
+    ],
+  ])("answers %s exactly as git does", (name, prepare) => {
+    const repository = makeRepo(
+      `guarded ${name}`,
+      "trunk-guarded",
+      "Guarded Owner",
+      "https://github.com/acme/fake.git",
+    );
+    prepare(repository);
+    const { snapshot } = readThroughSnapshot(repository);
+
+    expectGitsOwnAnswer(snapshot, repository);
+  });
+
+  it("leaves packed refs too large to beat git to git", () => {
+    const repository = makeRepo("huge packed repo", "trunk-huge", "Huge Owner");
+    git(repository, "pack-refs", "--all");
+    const head = git(repository, "rev-parse", "HEAD");
+    const filler = Array.from(
+      { length: 20_000 },
+      (_, index) => `${head} refs/tags/filler-${index}`,
+    );
+    appendFileSync(join(repository, ".git", "packed-refs"), `${filler.join("\n")}\n`);
+
+    expect(
+      readThroughSnapshot(repository).commands.some((command) => command.includes("rev-parse")),
+    ).toBe(true);
+  });
+
+  it("keeps the repository of a worktree deleted before the upload", () => {
+    const home = makeRepo(
+      "worktree home",
+      "trunk-home",
+      "Home Owner",
+      "https://github.com/acme/home.git",
+    );
+    const tree = join(root, "short lived worktree");
+    git(home, "worktree", "add", "-q", "-b", "short-lived", tree);
+    const touched = file(join(tree, "seed.txt"), tree);
+    const snapshot = snapshotRepositories(tree, [touched]);
+    git(home, "worktree", "remove", tree);
+
+    expect(
+      createRepositoryAttributor({ ...options, snapshot }).turnMetadata(base, tree, [touched]),
+    ).toMatchObject({
+      ls_git_repo: "acme/home",
+      ls_git_branch: "short-lived",
     });
   });
 
-  it("reads an author set only in the global config without running git", () => {
-    const snapshot = snapshotRepositories(nameless);
-
-    expect(gitCommands()).toEqual([]);
-    expect(snapshot.identifiers[nameless]).toEqual({
-      ls_attribution_identifier: "Global Fallback",
+  it("reads at most ten tool repositories, leaving the rest to the uploader", () => {
+    const template = makeRepo("capped template", "trunk-capped", "Capped Owner");
+    const repositories = Array.from({ length: 12 }, (_, index) => {
+      const copy = join(root, `capped ${index}`);
+      cpSync(template, copy, { recursive: true });
+      return copy;
     });
+    const snapshot = snapshotRepositories(
+      central,
+      repositories.map((repository) => file(join(repository, "seed.txt"))),
+    );
+
+    expect(Object.keys(snapshot.repositories)).toHaveLength(10);
   });
 
   it("still reads git for a path the snapshot never saw", () => {

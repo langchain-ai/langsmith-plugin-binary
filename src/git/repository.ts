@@ -5,6 +5,7 @@ import {
   GIT_COMMAND,
   GIT_COMMAND_MISSING,
   GIT_COMMAND_TIMEOUT_MS,
+  GIT_CONFIG_LIST_ARGUMENTS,
   GIT_LOCATION_ENV_KEYS,
   GIT_PROVIDERS,
   NOT_A_REPOSITORY,
@@ -126,6 +127,14 @@ export function getGitUserName(cwd: string, options?: GitUserNameOptions): strin
     if (name) return name;
   } catch {}
   return options?.githubLogin?.();
+}
+
+export function getConfigList(cwd: string): string | undefined {
+  try {
+    return gitOutput(GIT_CONFIG_LIST_ARGUMENTS, cwd);
+  } catch {
+    return undefined;
+  }
 }
 
 export function getGitInfo(cwd: string): GitInfo {
