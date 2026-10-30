@@ -107,12 +107,17 @@ describe("writing the setup command's settings", () => {
     });
   });
 
-  it("creates a private file when there is none", () => {
+  it("creates the file when there is none", () => {
     const root = home();
     const path = writeSetupConfig(root, ".harness", {});
     expect(read(path)).toEqual({ enabled: true });
-    expect(fs.statSync(path).mode & 0o777).toBe(0o600);
     expect(fs.readdirSync(join(root, ".harness"))).toEqual(["langsmith.json"]);
+  });
+
+  it.skipIf(process.platform === "win32")("keeps the new file and its folder private", () => {
+    const root = home();
+    const path = writeSetupConfig(root, ".harness", {});
+    expect(fs.statSync(path).mode & 0o777).toBe(0o600);
     expect(fs.statSync(join(root, ".harness")).mode & 0o777).toBe(0o700);
   });
 
@@ -152,17 +157,20 @@ describe("writing the setup command's settings", () => {
     },
   );
 
-  it.skipIf(process.getuid?.() === 0)("leaves a file it isn't allowed to read untouched", () => {
-    const root = home();
-    const path = join(root, ".harness", "langsmith.json");
-    fs.mkdirSync(join(root, ".harness"));
-    fs.writeFileSync(path, '{"api_key":"lsv2_keep"}', { mode: 0o000 });
-    expect(() => writeSetupConfig(root, ".harness", { project: "demo" })).toThrow(/EACCES/u);
-    fs.chmodSync(path, 0o600);
-    expect(read(path)).toEqual({ api_key: "lsv2_keep" });
-  });
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "leaves a file it isn't allowed to read untouched",
+    () => {
+      const root = home();
+      const path = join(root, ".harness", "langsmith.json");
+      fs.mkdirSync(join(root, ".harness"));
+      fs.writeFileSync(path, '{"api_key":"lsv2_keep"}', { mode: 0o000 });
+      expect(() => writeSetupConfig(root, ".harness", { project: "demo" })).toThrow(/EACCES/u);
+      fs.chmodSync(path, 0o600);
+      expect(read(path)).toEqual({ api_key: "lsv2_keep" });
+    },
+  );
 
-  it.skipIf(process.getuid?.() === 0)(
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "explains a file it can't save and leaves no temp file",
     () => {
       const root = home();
