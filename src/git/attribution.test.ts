@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReconstructionToolOrigin } from "../tracing/reconstruction/models.js";
-import { createRepositoryAttributor } from "./attribution.js";
+import { captureRepositoryAttribution, createRepositoryAttributor } from "./attribution.js";
 import { fakeTool } from "../test-support/login.js";
 import type { RepositoryAttributor } from "./models.js";
 
@@ -320,5 +320,77 @@ describe("turnMetadata", () => {
       ls_git_repo: "acme/alpha",
       ls_attribution_identifier: "Chosen",
     });
+  });
+});
+
+describe("captureRepositoryAttribution", () => {
+  it("lets a later attributor answer with the branch the turn ended on", () => {
+    const seed = JSON.parse(JSON.stringify(captureRepositoryAttribution([alpha])));
+    git(alpha, "checkout", "-b", "moved-on");
+    try {
+      const seeded = createRepositoryAttributor({ githubLoginMarkerPath: markerPath, seed });
+      expect(seeded.turnMetadata(base, alpha, [])).toMatchObject({ ls_git_branch: "trunk-alpha" });
+      expect(attributor.turnMetadata(base, alpha, [])).toMatchObject({ ls_git_branch: "moved-on" });
+    } finally {
+      git(alpha, "checkout", "trunk-alpha");
+    }
+  });
+
+  it("keeps the author the turn ended with after the name changes", () => {
+    const seed = captureRepositoryAttribution([alpha]);
+    git(alpha, "config", "user.name", "Renamed");
+    try {
+      const seeded = createRepositoryAttributor({ githubLoginMarkerPath: markerPath, seed });
+      expect(seeded.turnMetadata(base, alpha, [])).toMatchObject({
+        ls_attribution_identifier: "Alpha Owner",
+      });
+    } finally {
+      git(alpha, "config", "user.name", "Alpha Owner");
+    }
+  });
+
+  it("answers for a folder from the repository the seed says it is in", () => {
+    const captured = captureRepositoryAttribution([alpha]);
+    const seed = { ...captured, roots: { [plain]: alpha } };
+    const seeded = createRepositoryAttributor({ githubLoginMarkerPath: markerPath, seed });
+
+    expect(seeded.turnMetadata(base, plain, [])).toMatchObject({ ls_git_branch: "trunk-alpha" });
+  });
+
+  it("never asks GitHub for an author and keeps at most three folders", () => {
+    answerGitHubLogin("octocat");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", process.platform === "win32" ? "NUL" : "/dev/null");
+    const seed = captureRepositoryAttribution([nameless, alpha, beta, remoteless]);
+
+    expect(gitCommands().some((command) => command.includes("gh"))).toBe(false);
+    expect(Object.keys(seed.metadata)).toHaveLength(3);
+    expect(seed.identifiers[nameless]).toEqual({});
+  });
+
+  it("counts distinct repositories toward the cap rather than folders", () => {
+    const second = makeDir(alpha, "second dir");
+    const seed = captureRepositoryAttribution([alpha, nested, second, beta]);
+
+    expect(Object.keys(seed.metadata).toSorted()).toEqual([alpha, beta].toSorted());
+  });
+
+  it("leaves an author missing at turn end to the GitHub login, never a name set later", () => {
+    vi.stubEnv("GIT_CONFIG_GLOBAL", process.platform === "win32" ? "NUL" : "/dev/null");
+    const seed = captureRepositoryAttribution([nameless]);
+    git(nameless, "config", "user.name", "Set Later");
+    try {
+      answerGitHubLogin("octocat");
+      const freshMarker = join(root, "fresh state", "langsmith_gh_login.json");
+      const seeded = createRepositoryAttributor({ githubLoginMarkerPath: freshMarker, seed });
+      expect(seeded.turnMetadata(base, nameless, [])).toMatchObject({
+        ls_attribution_identifier: "octocat",
+      });
+    } finally {
+      git(nameless, "config", "--unset", "user.name");
+    }
+  });
+
+  it("only offers capturing through the standalone function", () => {
+    expect("capture" in attributor).toBe(false);
   });
 });
