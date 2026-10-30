@@ -95,12 +95,7 @@ git(alpha, "worktree", "add", "-b", "side-branch", worktree);
 const submodule = makeDir(alpha, "broken submodule");
 writeFileSync(join(submodule, ".git"), `gitdir: ${join(alpha, ".git", "modules", "gone")}\n`);
 const markerPath = join(root, "plugin state", "langsmith_gh_login.json");
-const packed = makeRepo(
-  "packed repo",
-  "trunk-packed",
-  "Packed Owner",
-  "https://github.com/acme/packed.git",
-);
+const packed = makeRepo("packed", "trunk-packed", "Packed Owner", "https://github.com/a/p.git");
 git(packed, "pack-refs", "--all");
 const detached = makeRepo("detached repo", "trunk-detached", "Detached Owner");
 git(detached, "checkout", "-q", "--detach");
@@ -108,6 +103,7 @@ git(detached, "checkout", "-q", "--detach");
 const alphaSeed = join(alpha, "seed.txt");
 const betaSeed = join(beta, "seed.txt");
 const central = "/somewhere/central";
+const FAKE_REMOTE = "https://github.com/acme/fake";
 const gitCommands = () =>
   vi.mocked(execFileSync).mock.calls.map(([file, args]) => [file, ...(args ?? [])].join(" "));
 
@@ -357,6 +353,23 @@ function readThroughSnapshot(repository: string): {
   return { snapshot, commands: gitCommands().slice(before) };
 }
 
+function shareName(repository: string, ref: string): string {
+  if (ref) git(repository, "update-ref", ref, "HEAD");
+  else
+    writeFileSync(
+      join(repository, ".git", "SHARED_NAME"),
+      `${git(repository, "rev-parse", "HEAD")}\n`,
+    );
+  return repository;
+}
+
+function shareNameInWorktree(repository: string): string {
+  git(repository, "checkout", "-q", "trunk-shared");
+  const tree = `${repository} worktree`;
+  git(repository, "worktree", "add", "-q", tree, "SHARED_NAME");
+  return tree;
+}
+
 function expectGitsOwnAnswer(snapshot: RepositorySnapshot, repository: string): void {
   expect(snapshot.repositories[repository]).toEqual(getRepositoryMetadata(repository));
   const name = getGitUserName(repository);
@@ -369,12 +382,7 @@ describe("snapshotRepositories", () => {
   const options = { githubLoginMarkerPath: markerPath };
 
   it("keeps the branch, commit and author a turn ended on after the repositories move on", () => {
-    const own = makeRepo(
-      "snapshot own repo",
-      "turn-one",
-      "First Author",
-      "git@github.com:acme/own.git",
-    );
+    const own = makeRepo("snapshot own", "turn-one", "First Author", "git@github.com:acme/own.git");
     const other = makeRepo("snapshot other repo", "other-one", "Other Author");
     const otherFile = file(join(other, "seed.txt"), own);
     const ownCommit = git(own, "rev-parse", "HEAD");
@@ -416,21 +424,41 @@ describe("snapshotRepositories", () => {
     ).toBe(base);
   });
 
-  it("never asks GitHub for the author, leaving that to the uploader", () => {
+  it("leaves only the GitHub login to the uploader when the turn ended with no author", () => {
     answerGitHubLogin("signed-in-user");
     vi.stubEnv("GIT_CONFIG_GLOBAL", join(root, "missing config"));
+    const authorless = makeRepo("authorless repo", "trunk-authorless", "Temporary");
+    git(authorless, "config", "--unset", "user.name");
 
-    const snapshot = snapshotRepositories(nameless);
+    const snapshot = snapshotRepositories(authorless);
     expect(gitCommands().filter((command) => command.startsWith(INSTALLED_GH))).toEqual([]);
+    git(authorless, "config", "user.name", "Named Too Late");
 
     const uploader = createRepositoryAttributor({
       githubLoginMarkerPath: join(root, "uploader state", "login.json"),
       snapshot,
     });
-    expect(uploader.turnMetadata(base, nameless, [])).toMatchObject({
-      ls_git_branch: "trunk-nameless",
+    expect(uploader.turnMetadata(base, authorless, [])).toMatchObject({
+      ls_git_branch: "trunk-authorless",
       ls_attribution_identifier: "signed-in-user",
     });
+  });
+
+  it("asks git for the config once and reads the rest alone when the listing fails", () => {
+    vi.mocked(execFileSync).mockImplementation(((
+      command: string,
+      args: readonly string[],
+      spawnOptions: object,
+    ) => {
+      if (args.includes("--show-scope")) throw new Error("unknown option");
+      return realExecFileSync(command, args, spawnOptions);
+    }) as typeof execFileSync);
+
+    const snapshot = snapshotRepositories(alpha, [file(betaSeed, alpha)]);
+
+    expect(gitCommands().filter((command) => command.includes("--show-scope"))).toHaveLength(1);
+    expect(snapshot.repositories[beta]).toEqual(getRepositoryMetadata(beta));
+    expect(snapshot.identifiers[beta]).toEqual({ ls_attribution_identifier: "Beta Owner" });
   });
 
   it.each<[name: string, repository: () => string]>([
@@ -457,7 +485,10 @@ describe("snapshotRepositories", () => {
       () => {
         const path = makeRepo("tabbed repo", "trunk-tabbed", "Temporary");
         git(path, "config", "--unset", "user.name");
-        appendFileSync(join(path, ".git", "config"), "[user]\n\tname = Tabbed\tOwner\n");
+        appendFileSync(
+          join(path, ".git", "config"),
+          "[User]\n\t# owner\n\tName = Tabbed\tOwner ; note\n",
+        );
         return path;
       },
     ],
@@ -474,12 +505,7 @@ describe("snapshotRepositories", () => {
     [
       "a remote rewritten by insteadOf",
       (repository) =>
-        git(
-          repository,
-          "config",
-          "url.https://github.com/acme/real.insteadOf",
-          "https://github.com/acme/fake",
-        ),
+        git(repository, "config", "url.https://github.com/acme/real.insteadOf", FAKE_REMOTE),
     ],
     [
       "a remote rewritten in a system config git still reads",
@@ -487,7 +513,7 @@ describe("snapshotRepositories", () => {
         const system = join(root, "system config");
         writeFileSync(
           system,
-          '[url "https://github.com/acme/real"]\n\tinsteadOf = https://github.com/acme/fake\n',
+          `[url "https://github.com/acme/real"]\n\tinsteadOf = ${FAKE_REMOTE}\n`,
         );
         vi.stubEnv("GIT_CONFIG_SYSTEM", system);
         vi.stubEnv("GIT_CONFIG_NOSYSTEM", "0");
@@ -531,7 +557,56 @@ describe("snapshotRepositories", () => {
         git(repository, "config", "--worktree", "user.name", "Worktree Owner");
       },
     ],
-    ["a branch named like a tag", (repository) => git(repository, "tag", "trunk-guarded")],
+    [
+      "a remote url reset before a new one",
+      (repository) =>
+        appendFileSync(
+          join(repository, ".git", "config"),
+          '[remote "origin"]\n\turl =\n\turl = https://github.com/acme/after.git\n',
+        ),
+    ],
+    [
+      "an author with an escaped tab",
+      (repository) => git(repository, "config", "user.name", "Escaped\tOwner"),
+    ],
+    [
+      "a value continued onto the next line",
+      (repository) =>
+        appendFileSync(
+          join(repository, ".git", "config"),
+          '[user]\n\tnote = "a # b" \\\nname = Continued Owner\n',
+        ),
+    ],
+    [
+      "a HEAD pointing outside the branches",
+      (repository) => {
+        git(repository, "tag", "outside");
+        writeFileSync(join(repository, ".git", "HEAD"), "ref: refs/tags/outside\n");
+      },
+    ],
+    [
+      "an author padded with quoted spaces",
+      (repository) => git(repository, "config", "user.name", " Padded Owner "),
+    ],
+    [
+      "a remote with two urls",
+      (repository) =>
+        git(
+          repository,
+          "config",
+          "--add",
+          "remote.origin.url",
+          "https://github.com/acme/second.git",
+        ),
+    ],
+    [
+      "remotes listed in a different order than configured",
+      (repository) => {
+        git(repository, "remote", "remove", "origin");
+        git(repository, "remote", "add", "zeta", "https://github.com/acme/zeta.git");
+        git(repository, "remote", "add", "alpha", "https://github.com/acme/first.git");
+      },
+    ],
     [
       "a branch that points at another branch",
       (repository) => {
@@ -540,29 +615,75 @@ describe("snapshotRepositories", () => {
         git(repository, "symbolic-ref", "HEAD", "refs/heads/alias");
       },
     ],
-    [
-      "packed refs too large to read faster than git",
-      (repository) => {
-        git(repository, "pack-refs", "--all");
-        const head = git(repository, "rev-parse", "HEAD");
-        const filler = Array.from(
-          { length: 20_000 },
-          (_, index) => `${head} refs/tags/filler-${index}`,
-        );
-        appendFileSync(join(repository, ".git", "packed-refs"), `${filler.join("\n")}\n`);
-      },
-    ],
   ])("answers %s exactly as git does", (name, prepare) => {
-    const repository = makeRepo(
-      `guarded ${name}`,
-      "trunk-guarded",
-      "Guarded Owner",
-      "https://github.com/acme/fake.git",
-    );
+    const repository = makeRepo(name, "trunk-guarded", "Guarded Owner", `${FAKE_REMOTE}.git`);
     prepare(repository);
     const { snapshot } = readThroughSnapshot(repository);
 
     expectGitsOwnAnswer(snapshot, repository);
+  });
+
+  it.each<[name: string, prepare: (repository: string) => string]>([
+    ["a root ref", (repository) => shareName(repository, "")],
+    ["a ref under refs", (repository) => shareName(repository, "refs/SHARED_NAME")],
+    ["a tag", (repository) => shareName(repository, "refs/tags/SHARED_NAME")],
+    ["a remote", (repository) => shareName(repository, "refs/remotes/SHARED_NAME")],
+    ["a remote's HEAD", (repository) => shareName(repository, "refs/remotes/SHARED_NAME/HEAD")],
+    [
+      "a packed tag",
+      (repository) => {
+        shareName(repository, "refs/tags/SHARED_NAME");
+        git(repository, "pack-refs", "--all");
+        return repository;
+      },
+    ],
+    [
+      "a worktree's own root ref",
+      (repository) => {
+        const tree = shareNameInWorktree(repository);
+        writeFileSync(
+          join(git(tree, "rev-parse", "--absolute-git-dir"), "SHARED_NAME"),
+          `${git(tree, "rev-parse", "HEAD")}\n`,
+        );
+        return tree;
+      },
+    ],
+    [
+      "a tag seen from a worktree",
+      (repository) => shareName(shareNameInWorktree(repository), "refs/tags/SHARED_NAME"),
+    ],
+  ])("leaves a branch that shares its name with %s to git", (name, prepare) => {
+    const repository = makeRepo(`shared name ${name}`, "trunk-shared", "Shared Owner");
+    git(repository, "checkout", "-q", "-b", "SHARED_NAME");
+    const checkout = prepare(repository);
+    const { snapshot } = readThroughSnapshot(checkout);
+
+    expect(snapshot.repositories[checkout]).toMatchObject({ ls_git_branch: "heads/SHARED_NAME" });
+  });
+
+  it("keeps the first repository's worktree-only author out of the others", () => {
+    const first = makeRepo("worktree author repo", "trunk-first", "Temporary");
+    git(first, "config", "extensions.worktreeConfig", "true");
+    git(first, "config", "--worktree", "user.name", "First Worktree Owner");
+    const before = gitCommands().length;
+    const snapshot = snapshotRepositories(first, [file(join(nameless, "seed.txt"), first)]);
+    expect(gitCommands().slice(before)).toHaveLength(1);
+
+    expectGitsOwnAnswer(snapshot, nameless);
+  });
+
+  it("names neither remote nor author when git cannot read the config", () => {
+    const repository = makeRepo(
+      "unreadable",
+      "trunk-bad",
+      "Bad Owner",
+      "https://github.com/a/b.git",
+    );
+    appendFileSync(join(repository, ".git", "config"), "!! not a config line\n");
+    const { snapshot } = readThroughSnapshot(repository);
+
+    expect(snapshot.repositories[repository]).not.toHaveProperty("ls_git_repo");
+    expect(snapshot.identifiers[repository]).toEqual({});
   });
 
   it("leaves packed refs too large to beat git to git", () => {
@@ -575,30 +696,27 @@ describe("snapshotRepositories", () => {
     );
     appendFileSync(join(repository, ".git", "packed-refs"), `${filler.join("\n")}\n`);
 
-    expect(
-      readThroughSnapshot(repository).commands.some((command) => command.includes("rev-parse")),
-    ).toBe(true);
+    const { snapshot, commands } = readThroughSnapshot(repository);
+
+    expect(commands.some((command) => command.includes("rev-parse"))).toBe(true);
+    expectGitsOwnAnswer(snapshot, repository);
   });
 
   it("keeps the repository of a worktree deleted before the upload", () => {
-    const home = makeRepo(
-      "worktree home",
-      "trunk-home",
-      "Home Owner",
-      "https://github.com/acme/home.git",
-    );
+    const home = makeRepo("worktree home", "trunk-home", "Owner", "https://github.com/acme/home");
     const tree = join(root, "short lived worktree");
     git(home, "worktree", "add", "-q", "-b", "short-lived", tree);
     const touched = file(join(tree, "seed.txt"), tree);
     const snapshot = snapshotRepositories(tree, [touched]);
     git(home, "worktree", "remove", tree);
+    const replay = createRepositoryAttributor({ ...options, snapshot });
 
-    expect(
-      createRepositoryAttributor({ ...options, snapshot }).turnMetadata(base, tree, [touched]),
-    ).toMatchObject({
-      ls_git_repo: "acme/home",
-      ls_git_branch: "short-lived",
-    });
+    for (const metadata of [
+      replay.turnMetadata(base, tree, [touched]),
+      replay.toolMetadata(base, touched),
+    ]) {
+      expect(metadata).toMatchObject({ ls_git_repo: "acme/home", ls_git_branch: "short-lived" });
+    }
   });
 
   it("reads at most ten tool repositories, leaving the rest to the uploader", () => {
@@ -613,7 +731,9 @@ describe("snapshotRepositories", () => {
       repositories.map((repository) => file(join(repository, "seed.txt"))),
     );
 
-    expect(Object.keys(snapshot.repositories)).toHaveLength(10);
+    expect(Object.keys(snapshot.repositories).toSorted()).toEqual(
+      [repositories[0]!, ...repositories.slice(3)].toSorted(),
+    );
   });
 
   it("still reads git for a path the snapshot never saw", () => {

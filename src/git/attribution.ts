@@ -22,7 +22,8 @@ export function createRepositoryAttributor(
   const githubLogin = createGitHubLoginFallback({ markerPath: options.githubLoginMarkerPath });
   return attributorOver(cachesFrom(options.snapshot), {
     repository: getRepositoryMetadata,
-    userName: (root) => getGitUserName(root, { githubLogin }),
+    userName: (root) => getGitUserName(root),
+    fallbackUserName: githubLogin,
   });
 }
 
@@ -34,7 +35,7 @@ export function snapshotRepositories(
   const attributor = attributorOver(caches, createFileReader());
   const origins = [...toolOrigins];
   attributor.turnMetadata(undefined, cwd, origins);
-  for (const origin of origins) {
+  for (const origin of origins.toReversed()) {
     if (caches.repositoryByRoot.size >= SNAPSHOT_MAX_REPOSITORIES) break;
     attributor.toolMetadata(undefined, origin);
   }
@@ -45,9 +46,7 @@ export function snapshotRepositories(
       ),
     ),
     repositories: Object.fromEntries(caches.repositoryByRoot),
-    identifiers: Object.fromEntries(
-      [...caches.identifierByRoot].filter(([, identifier]) => Object.keys(identifier).length > 0),
-    ),
+    identifiers: Object.fromEntries(caches.identifierByRoot),
   };
 }
 
@@ -78,14 +77,11 @@ function attributorOver(
   }
 
   function identifierForRoot(root: string): RepositoryAttribution {
-    const cached = identifierByRoot.get(root);
-    if (cached) return cached;
-    const userName = reader.userName(root);
-    const identifier: RepositoryAttribution = userName
-      ? { ls_attribution_identifier: userName }
-      : {};
-    identifierByRoot.set(root, identifier);
-    return identifier;
+    if (!identifierByRoot.has(root))
+      identifierByRoot.set(root, identifierOf(reader.userName(root)));
+    const identifier = identifierByRoot.get(root)!;
+    if (Object.keys(identifier).length > 0) return identifier;
+    return identifierOf(reader.fallbackUserName?.());
   }
 
   function repositoryForRoot(root: string): RepositoryAttribution {
@@ -165,6 +161,10 @@ function attributorOver(
   }
 
   return { toolMetadata, turnMetadata };
+}
+
+function identifierOf(userName: string | undefined): RepositoryAttribution {
+  return userName ? { ls_attribution_identifier: userName } : {};
 }
 
 function rootOfDirectory(directory: string): string | null | undefined {

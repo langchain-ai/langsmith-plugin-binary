@@ -45,7 +45,7 @@ export const GIT_COMMON_DIRECTORY_FILE = "commondir";
 export const GIT_PACKED_REFS_FILE = "packed-refs";
 export const GIT_CONFIG_FILE = "config";
 export const BRANCH_REF_PREFIX = "refs/heads/";
-export const SYMBOLIC_REF_PATTERN = /^ref:\s*(\S+)$/;
+export const SYMBOLIC_REF_PATTERN = /^ref: (\S+)/;
 export const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export const AMBIGUOUS_REF_AFFIXES: readonly (readonly [string, string])[] = [
   ["", ""],
@@ -70,6 +70,15 @@ export const GIT_CONFIG_LIST_ARGUMENTS = ["config", "--list", "--show-scope", "-
 export const LISTED_CONFIG_SEPARATOR = "\0";
 export const LISTED_CONFIG_VALUE_SEPARATOR = "\n";
 export const CONFIG_SCOPES = { local: "local", worktree: "worktree", command: "command" } as const;
+export const REPOSITORY_CONFIG_SCOPES = new Set<string>([
+  CONFIG_SCOPES.local,
+  CONFIG_SCOPES.worktree,
+]);
+export const PACKED_REF_SEPARATOR = " ";
+export const CONFIG_NAME_SEPARATOR = ".";
+export const CONFIG_SECTION_START = "[";
+export const CONFIG_ESCAPE = "\\";
+export const CONFIG_QUOTE = '"';
 export const CONDITIONAL_INCLUDE_SECTION = "includeif";
 export const PACKED_REFS_MAX_BYTES = 1_000_000;
 export const SNAPSHOT_MAX_REPOSITORIES = 10;

@@ -15,3 +15,11 @@ export function fileSize(path: string): number | undefined {
     return undefined;
   }
 }
+
+export function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}

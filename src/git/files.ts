@@ -1,18 +1,21 @@
-import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RepositoryAttribution } from "../metadata/models.js";
-import { fileSize, readText } from "../utils/files/read.js";
+import { fileSize, isFile, readText } from "../utils/files/read.js";
 import {
   AMBIGUOUS_REF_AFFIXES,
   BRANCH_REF_PREFIX,
   CONDITIONAL_INCLUDE_SECTION,
   CONFIG_COMMENT_STARTS,
+  CONFIG_ESCAPE,
   CONFIG_INCLUDE_SECTIONS,
   CONFIG_KEY_PATTERN,
   CONFIG_KEYS,
   CONFIG_LINE_BREAK,
+  CONFIG_NAME_SEPARATOR,
+  CONFIG_QUOTE,
   CONFIG_SCOPES,
   CONFIG_SECTION_PATTERN,
+  CONFIG_SECTION_START,
   GIT_COMMON_DIRECTORY_FILE,
   GIT_CONFIG_FILE,
   GIT_HEAD_FILE,
@@ -20,7 +23,9 @@ import {
   LISTED_CONFIG_SEPARATOR,
   LISTED_CONFIG_VALUE_SEPARATOR,
   OBJECT_ID_PATTERN,
+  PACKED_REF_SEPARATOR,
   PACKED_REFS_MAX_BYTES,
+  REPOSITORY_CONFIG_SCOPES,
   SYMBOLIC_REF_PATTERN,
 } from "./constants.js";
 import type {
@@ -45,6 +50,7 @@ import {
 
 export function createFileReader(): RepositoryReader {
   let shared: SharedGitConfig | undefined;
+  let listingFailed = false;
   const configByRoot = new Map<string, GitConfigEntry[] | undefined>();
 
   function configFor(root: string): GitConfigEntry[] | undefined {
@@ -53,9 +59,11 @@ export function createFileReader(): RepositoryReader {
   }
 
   function readConfig(root: string): GitConfigEntry[] | undefined {
+    if (listingFailed) return undefined;
     if (!shared) {
       const listed = listedConfig(root);
       if (listed) shared = sharedLayers(listed);
+      else listingFailed = true;
       return listed;
     }
     const directories = gitDirectoriesOf(root);
@@ -88,9 +96,7 @@ function userNameFromConfig(
 ): string | undefined {
   if (!config) return getGitUserName(root);
   const name = config.filter((entry) => matches(entry, CONFIG_KEYS.user)).at(-1);
-  if (!name) return undefined;
-  if (name.value === undefined) return getGitUserName(root);
-  return name.value.trim() || undefined;
+  return name?.value?.trim() || undefined;
 }
 
 function gitDirectoriesOf(root: string): GitDirectories | undefined {
@@ -129,8 +135,8 @@ function resolveRef(
 
 function refExists(directories: GitDirectories, packed: Map<string, string>, ref: string): boolean {
   return (
-    existsSync(join(directories.gitDirectory, ref)) ||
-    existsSync(join(directories.commonDirectory, ref)) ||
+    isFile(join(directories.gitDirectory, ref)) ||
+    isFile(join(directories.commonDirectory, ref)) ||
     packed.has(ref)
   );
 }
@@ -140,7 +146,7 @@ function packedRefs(directories: GitDirectories): Map<string, string> | undefine
   if ((fileSize(path) ?? 0) > PACKED_REFS_MAX_BYTES) return undefined;
   const refs = new Map<string, string>();
   for (const line of (readText(path) ?? "").split(CONFIG_LINE_BREAK)) {
-    const [objectId, ref] = line.split(" ");
+    const [objectId, ref] = line.split(PACKED_REF_SEPARATOR);
     if (objectId && ref && OBJECT_ID_PATTERN.test(objectId)) refs.set(ref, objectId);
   }
   return refs;
@@ -148,18 +154,13 @@ function packedRefs(directories: GitDirectories): Map<string, string> | undefine
 
 function remotesFromConfig(config: GitConfigEntry[]): GitRemote[] | undefined {
   if (config.some((entry) => matches(entry, CONFIG_KEYS.insteadOf))) return undefined;
-  const urlByRemote = new Map<string, string | undefined>();
+  const urlByRemote = new Map<string, string>();
   for (const entry of config) {
     if (!matches(entry, CONFIG_KEYS.remoteUrl) || entry.subsection === undefined) continue;
+    if (!entry.value?.trim()) return undefined;
     if (!urlByRemote.has(entry.subsection)) urlByRemote.set(entry.subsection, entry.value);
   }
-  const remotes: GitRemote[] = [];
-  for (const name of [...urlByRemote.keys()].toSorted()) {
-    const url = urlByRemote.get(name);
-    if (!url) return undefined;
-    remotes.push({ name, url });
-  }
-  return remotes;
+  return [...urlByRemote.keys()].toSorted().map((name) => ({ name, url: urlByRemote.get(name)! }));
 }
 
 function listedConfig(root: string): GitConfigEntry[] | undefined {
@@ -169,8 +170,8 @@ function listedConfig(root: string): GitConfigEntry[] | undefined {
   const entries: GitConfigEntry[] = [];
   for (let index = 0; index + 1 < fields.length; index += 2) {
     const [name = "", ...value] = fields[index + 1]!.split(LISTED_CONFIG_VALUE_SEPARATOR);
-    const firstDot = name.indexOf(".");
-    const lastDot = name.lastIndexOf(".");
+    const firstDot = name.indexOf(CONFIG_NAME_SEPARATOR);
+    const lastDot = name.lastIndexOf(CONFIG_NAME_SEPARATOR);
     entries.push({
       scope: fields[index]!,
       section: name.slice(0, firstDot),
@@ -183,11 +184,8 @@ function listedConfig(root: string): GitConfigEntry[] | undefined {
 }
 
 function sharedLayers(listed: GitConfigEntry[]): SharedGitConfig {
-  const repositoryScopes = new Set<string>([CONFIG_SCOPES.local, CONFIG_SCOPES.worktree]);
   return {
-    lower: listed.filter(
-      ({ scope }) => !repositoryScopes.has(scope!) && scope !== CONFIG_SCOPES.command,
-    ),
+    lower: listed.filter(({ scope }) => !REPOSITORY_CONFIG_SCOPES.has(scope!)),
     upper: listed.filter(({ scope }) => scope === CONFIG_SCOPES.command),
     conditional: listed.some(({ section }) => section === CONDITIONAL_INCLUDE_SECTION),
   };
@@ -208,7 +206,7 @@ function localConfig(directories: GitDirectories): GitConfigEntry[] | undefined 
 
 function parseConfig(text: string): GitConfigEntry[] | undefined {
   const entries: GitConfigEntry[] = [];
-  let section: string | undefined;
+  let section = "";
   let subsection: string | undefined;
   let continues = false;
   for (const rawLine of text.split(CONFIG_LINE_BREAK)) {
@@ -218,7 +216,7 @@ function parseConfig(text: string): GitConfigEntry[] | undefined {
     }
     const line = rawLine.trim();
     if (!line || CONFIG_COMMENT_STARTS.has(line[0]!)) continue;
-    if (line.startsWith("[")) {
+    if (line.startsWith(CONFIG_SECTION_START)) {
       const header = line.match(CONFIG_SECTION_PATTERN);
       if (!header) return undefined;
       section = header[1]!.toLowerCase();
@@ -226,7 +224,7 @@ function parseConfig(text: string): GitConfigEntry[] | undefined {
       continue;
     }
     const assignment = line.match(CONFIG_KEY_PATTERN);
-    if (!assignment || section === undefined) return undefined;
+    if (!assignment) return undefined;
     const scanned = assignment[2] === undefined ? { continues: false } : scanValue(assignment[2]);
     continues = scanned.continues;
     entries.push({
@@ -244,18 +242,18 @@ function scanValue(raw: string): GitConfigValue {
   let plain = true;
   for (let index = 0; index < raw.length; index++) {
     const character = raw[index]!;
-    if (character === "\\") {
+    if (character === CONFIG_ESCAPE) {
       plain = false;
       if (index === raw.length - 1) return { continues: true };
       index++;
-    } else if (character === '"') {
+    } else if (character === CONFIG_QUOTE) {
       plain = false;
       quoted = !quoted;
     } else if (!quoted && CONFIG_COMMENT_STARTS.has(character)) {
-      return plain ? { value: raw.slice(0, index).trim(), continues: false } : { continues: false };
+      return plain ? { value: raw.slice(0, index), continues: false } : { continues: false };
     }
   }
-  return plain ? { value: raw.trim(), continues: false } : { continues: false };
+  return plain ? { value: raw, continues: false } : { continues: false };
 }
 
 function matches(entry: GitConfigEntry, { section, key }: GitConfigKey): boolean {

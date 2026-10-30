@@ -99,4 +99,5 @@ export interface SharedGitConfig {
 export interface RepositoryReader {
   repository(root: string): RepositoryAttribution;
   userName(root: string): string | undefined;
+  fallbackUserName?: () => string | undefined;
 }
