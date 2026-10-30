@@ -10,8 +10,11 @@ export type {
   ManagedConfigFileOptions,
   MergedCommonConfig,
   PluginFieldOptions,
+  SetupOutcome,
+  SetupRequest,
 } from "./models.js";
 export { mergeCommonConfig, toSdkReplicas } from "./common-config.js";
 export { readCommonConfigFile, readCommonConfigFiles } from "./config-files.js";
 export { lockPluginFields, readManagedConfigFile } from "./managed-config.js";
 export { parseCommonConfig } from "./parse.js";
+export { describeSetup, parseSetupArguments, writeSetupConfig } from "./setup.js";
