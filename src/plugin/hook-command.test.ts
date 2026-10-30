@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { HOOK_ERROR_HANDLER_WARNING, HOOK_OPTIONS_INVALID_MESSAGE } from "./constants.js";
-import { dispatchHookCommand } from "./hook-command.js";
+import { commandReplyContext, dispatchHookCommand } from "./hook-command.js";
 import type { HookCommandOptions } from "./models.js";
 
 const log = vi.spyOn(console, "log");
@@ -89,4 +89,10 @@ it("rejects options without a hooks table before running anything", async () => 
   await expect(
     dispatchHookCommand(["Stop"], withoutHooks as unknown as HookCommandOptions),
   ).rejects.toThrow(HOOK_OPTIONS_INVALID_MESSAGE);
+});
+
+it("hands the model a command reply that starts with the marker hook readers skip", () => {
+  expect(commandReplyContext("Thread tracing muted.")).toBe(
+    "[LangSmith tracing command] The user ran a LangSmith tracing command and the plugin already did what they asked. Let them know what happened, based on the result below:\n\nThread tracing muted.",
+  );
 });

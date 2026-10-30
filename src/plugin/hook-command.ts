@@ -1,5 +1,7 @@
 import { describe } from "../utils/errors.js";
 import {
+  COMMAND_REPLY_INSTRUCTION,
+  COMMAND_REPLY_MARKER,
   HOOK_ERROR_HANDLER_WARNING,
   HOOK_HELP_FLAGS,
   HOOK_OPTIONS_INVALID_MESSAGE,
@@ -52,4 +54,8 @@ function reportHookError(name: string, error: unknown, options: HookCommandOptio
   } catch (handlerError) {
     console.warn(HOOK_ERROR_HANDLER_WARNING, describe(handlerError));
   }
+}
+
+export function commandReplyContext(reply: string): string {
+  return `${COMMAND_REPLY_MARKER} ${COMMAND_REPLY_INSTRUCTION}\n\n${reply}`;
 }

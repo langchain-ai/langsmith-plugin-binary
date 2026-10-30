@@ -98,3 +98,21 @@ export interface CommonConfigFiles {
   userRoot: CommonConfigResult;
   managed: CommonConfigResult;
 }
+
+export interface SetupRequest {
+  project?: string;
+  apiUrl?: string;
+}
+
+export interface SetupOutcome {
+  path: string;
+  requested: SetupRequest;
+  enabled: boolean;
+  project: string;
+  agentId?: string;
+  replicaCount?: number;
+  apiUrl: string;
+  muted: boolean;
+  signIn: "login" | "api-key" | "none";
+  credentialProblem?: string;
+}
