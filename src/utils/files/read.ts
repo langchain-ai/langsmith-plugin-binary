@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, type Stats } from "node:fs";
 
 export function readText(path: string): string | undefined {
   try {
@@ -8,18 +8,10 @@ export function readText(path: string): string | undefined {
   }
 }
 
-export function fileSize(path: string): number | undefined {
+export function fileStats(path: string): Stats | undefined {
   try {
-    return statSync(path).size;
+    return statSync(path);
   } catch {
     return undefined;
-  }
-}
-
-export function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
   }
 }

@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
 import type { RepositoryAttribution } from "../metadata/models.js";
-import { fileSize, isFile, readText } from "../utils/files/read.js";
+import { fileStats, readText } from "../utils/files/read.js";
 import {
   AMBIGUOUS_REF_AFFIXES,
   BRANCH_REF_PREFIX,
@@ -123,11 +123,7 @@ function gitInfoFromFiles(directories: GitDirectories): GitInfo | undefined {
   return commit ? { branch, commit } : undefined;
 }
 
-function resolveRef(
-  directories: GitDirectories,
-  packed: Map<string, string>,
-  ref: string,
-): string | undefined {
+function resolveRef(directories: GitDirectories, packed: Map<string, string>, ref: string) {
   const loose = readText(join(directories.commonDirectory, ref))?.trim();
   if (loose !== undefined) return OBJECT_ID_PATTERN.test(loose) ? loose : undefined;
   return packed.get(ref);
@@ -135,15 +131,15 @@ function resolveRef(
 
 function refExists(directories: GitDirectories, packed: Map<string, string>, ref: string): boolean {
   return (
-    isFile(join(directories.gitDirectory, ref)) ||
-    isFile(join(directories.commonDirectory, ref)) ||
+    fileStats(join(directories.gitDirectory, ref))?.isFile() ||
+    fileStats(join(directories.commonDirectory, ref))?.isFile() ||
     packed.has(ref)
   );
 }
 
 function packedRefs(directories: GitDirectories): Map<string, string> | undefined {
   const path = join(directories.commonDirectory, GIT_PACKED_REFS_FILE);
-  if ((fileSize(path) ?? 0) > PACKED_REFS_MAX_BYTES) return undefined;
+  if ((fileStats(path)?.size ?? 0) > PACKED_REFS_MAX_BYTES) return undefined;
   const refs = new Map<string, string>();
   for (const line of (readText(path) ?? "").split(CONFIG_LINE_BREAK)) {
     const [objectId, ref] = line.split(PACKED_REF_SEPARATOR);

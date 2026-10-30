@@ -166,9 +166,10 @@ function attributorOver(
 
 function rootsNear({ cwd, path }: ReconstructionToolOrigin): string[] {
   const directories = [cwd, path].map((near) => near && nearestExistingDirectory(near));
-  return directories.flatMap((directory) =>
-    directory ? [rootFromGitMarker(directory) ?? directory] : [],
-  );
+  return directories.flatMap((directory) => {
+    const root = directory && rootFromGitMarker(directory);
+    return root === null || !directory ? [] : [root ?? directory];
+  });
 }
 
 function identifierOf(userName: string | undefined): RepositoryAttribution {

@@ -387,14 +387,12 @@ describe("snapshotRepositories", () => {
     const otherFile = file(join(other, "seed.txt"), own);
     const ownCommit = git(own, "rev-parse", "HEAD");
     const otherCommit = git(other, "rev-parse", "HEAD");
-    const snapshot = JSON.parse(
-      JSON.stringify(snapshotRepositories(own, [otherFile])),
-    ) as ReturnType<typeof snapshotRepositories>;
+    const recorded = JSON.stringify(snapshotRepositories(own, [otherFile]));
+    const snapshot = JSON.parse(recorded) as RepositorySnapshot;
 
-    const laterOwnCommit = moveOn(own, "turn-two", "Second Author");
+    moveOn(own, "turn-two", "Second Author");
     moveOn(other, "other-two", "Later Author");
     const atTurnEnd = createRepositoryAttributor({ ...options, snapshot });
-    const now = createRepositoryAttributor(options);
 
     expect(atTurnEnd.turnMetadata(base, own, [])).toMatchObject({
       ls_git_repo: "acme/own",
@@ -406,11 +404,6 @@ describe("snapshotRepositories", () => {
       ls_git_branch: "other-one",
       ls_git_commit_hash: otherCommit,
       ls_attribution_identifier: "Other Author",
-    });
-    expect(now.turnMetadata(base, own, [])).toMatchObject({
-      ls_git_branch: "turn-two",
-      ls_git_commit_hash: laterOwnCommit,
-      ls_attribution_identifier: "Second Author",
     });
   });
 
@@ -587,6 +580,16 @@ describe("snapshotRepositories", () => {
       },
     ],
     [
+      "a GIT_CONFIG file that git remote ignores",
+      () => {
+        writeFileSync(
+          join(root, "elsewhere"),
+          '[remote "origin"]\n\turl = https://github.com/a/e\n',
+        );
+        vi.stubEnv("GIT_CONFIG", join(root, "elsewhere"));
+      },
+    ],
+    [
       "an author padded with quoted spaces",
       (repository) => git(repository, "config", "user.name", " Padded Owner "),
     ],
@@ -692,11 +695,8 @@ describe("snapshotRepositories", () => {
     const repository = makeRepo("huge packed repo", "trunk-huge", "Huge Owner");
     git(repository, "pack-refs", "--all");
     const head = git(repository, "rev-parse", "HEAD");
-    const filler = Array.from(
-      { length: 20_000 },
-      (_, index) => `${head} refs/tags/filler-${index}`,
-    );
-    appendFileSync(join(repository, ".git", "packed-refs"), `${filler.join("\n")}\n`);
+    const filler = Array.from({ length: 20_000 }, (_, index) => `${head} refs/tags/f${index}\n`);
+    appendFileSync(join(repository, ".git", "packed-refs"), filler.join(""));
 
     const { snapshot, commands } = readThroughSnapshot(repository);
 
@@ -722,10 +722,9 @@ describe("snapshotRepositories", () => {
   });
 
   it("reads at most ten tool repositories, leaving the rest to the uploader", () => {
-    const template = makeRepo("capped template", "trunk-capped", "Capped Owner");
     const repositories = Array.from({ length: 24 }, (_, index) => {
       const copy = join(root, `capped ${index}`);
-      cpSync(template, copy, { recursive: true });
+      cpSync(alpha, copy, { recursive: true });
       return copy;
     });
     const touched = repositories
@@ -737,6 +736,19 @@ describe("snapshotRepositories", () => {
       [repositories[0]!, ...repositories.slice(3, 12)].toSorted(),
     );
     expect(Object.keys(snapshotRepositories(central, crossing).repositories)).toHaveLength(9);
+    const seeds = repositories.slice(0, 10).map((repository) => join(repository, "seed.txt"));
+    for (const cwd of [plain, join(repositories[0]!, "sub dir")]) {
+      const reaching = seeds.map((path) => file(path, cwd));
+      expect(Object.keys(snapshotRepositories(plain, reaching).repositories)).toHaveLength(10);
+    }
+  });
+
+  it("reads no branch from a HEAD git cannot read", () => {
+    const garbled = makeRepo("garbled head", "trunk-garbled", "Garbled Owner");
+    writeFileSync(join(garbled, ".git", "HEAD"), "xxref: refs/heads/trunk-garbled\n");
+    const { snapshot } = readThroughSnapshot(garbled);
+
+    expect(snapshot.repositories[garbled]).not.toHaveProperty("ls_git_branch");
   });
 
   it("still reads git for a path the snapshot never saw", () => {

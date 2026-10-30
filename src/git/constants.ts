@@ -4,6 +4,7 @@ export const GIT_LOCATION_ENV_KEYS = [
   "GIT_COMMON_DIR",
   "GIT_INDEX_FILE",
   "GIT_CEILING_DIRECTORIES",
+  "GIT_CONFIG",
 ];
 export const NOT_A_REPOSITORY = /not a git repository \(or any of the parent directories\)/i;
 export const REMOTE_PATH_EDGE_SLASHES = /^\/+|\/+$/g;
@@ -45,7 +46,7 @@ export const GIT_COMMON_DIRECTORY_FILE = "commondir";
 export const GIT_PACKED_REFS_FILE = "packed-refs";
 export const GIT_CONFIG_FILE = "config";
 export const BRANCH_REF_PREFIX = "refs/heads/";
-export const SYMBOLIC_REF_PATTERN = /ref: (\S+)/;
+export const SYMBOLIC_REF_PATTERN = /^ref: (\S+)/;
 export const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export const AMBIGUOUS_REF_AFFIXES: readonly (readonly [string, string])[] = [
   ["", ""],
