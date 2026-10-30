@@ -336,6 +336,27 @@ describe("captureRepositoryAttribution", () => {
     }
   });
 
+  it("keeps the author the turn ended with after the name changes", () => {
+    const seed = captureRepositoryAttribution([alpha]);
+    git(alpha, "config", "user.name", "Renamed");
+    try {
+      const seeded = createRepositoryAttributor({ githubLoginMarkerPath: markerPath, seed });
+      expect(seeded.turnMetadata(base, alpha, [])).toMatchObject({
+        ls_attribution_identifier: "Alpha Owner",
+      });
+    } finally {
+      git(alpha, "config", "user.name", "Alpha Owner");
+    }
+  });
+
+  it("answers for a folder from the repository the seed says it is in", () => {
+    const captured = captureRepositoryAttribution([alpha]);
+    const seed = { ...captured, roots: { [plain]: alpha } };
+    const seeded = createRepositoryAttributor({ githubLoginMarkerPath: markerPath, seed });
+
+    expect(seeded.turnMetadata(base, plain, [])).toMatchObject({ ls_git_branch: "trunk-alpha" });
+  });
+
   it("never asks GitHub for an author and keeps at most three folders", () => {
     answerGitHubLogin("octocat");
     vi.stubEnv("GIT_CONFIG_GLOBAL", process.platform === "win32" ? "NUL" : "/dev/null");
