@@ -45,13 +45,13 @@ export interface RepositoryAttributorOptions {
 
 export interface RepositorySnapshot {
   roots: Record<string, string | null>;
-  attributions: Record<string, RepositoryAttribution>;
+  repositories: Record<string, RepositoryAttribution>;
   identifiers: Record<string, RepositoryAttribution>;
 }
 
 export interface RepositoryCaches {
   rootByDirectory: Map<string, string | null | undefined>;
-  attributionByRoot: Map<string, RepositoryAttribution>;
+  repositoryByRoot: Map<string, RepositoryAttribution>;
   identifierByRoot: Map<string, RepositoryAttribution>;
 }
 

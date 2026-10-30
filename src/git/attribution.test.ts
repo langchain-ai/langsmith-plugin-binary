@@ -345,7 +345,7 @@ describe("snapshotRepositories", () => {
     const ownCommit = git(own, "rev-parse", "HEAD");
     const otherCommit = git(other, "rev-parse", "HEAD");
     const snapshot = JSON.parse(
-      JSON.stringify(snapshotRepositories(options, own, [otherFile])),
+      JSON.stringify(snapshotRepositories(own, [otherFile])),
     ) as ReturnType<typeof snapshotRepositories>;
 
     const laterOwnCommit = moveOn(own, "turn-two", "Second Author");
@@ -373,7 +373,7 @@ describe("snapshotRepositories", () => {
 
   it("keeps a turn outside every repository there after its folder becomes one", () => {
     const folder = makeDir(root, "snapshot later repo");
-    const snapshot = snapshotRepositories(options, folder);
+    const snapshot = snapshotRepositories(folder);
     git(folder, "init", "-q");
 
     expect(
@@ -381,8 +381,25 @@ describe("snapshotRepositories", () => {
     ).toBe(base);
   });
 
+  it("never asks GitHub for the author, leaving that to the uploader", () => {
+    answerGitHubLogin("signed-in-user");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", join(root, "missing config"));
+
+    const snapshot = snapshotRepositories(nameless);
+    expect(gitCommands().filter((command) => command.startsWith(INSTALLED_GH))).toEqual([]);
+
+    const uploader = createRepositoryAttributor({
+      githubLoginMarkerPath: join(root, "uploader state", "login.json"),
+      snapshot,
+    });
+    expect(uploader.turnMetadata(base, nameless, [])).toMatchObject({
+      ls_git_branch: "trunk-nameless",
+      ls_attribution_identifier: "signed-in-user",
+    });
+  });
+
   it("still reads git for a path the snapshot never saw", () => {
-    const snapshot = snapshotRepositories(options, alpha);
+    const snapshot = snapshotRepositories(alpha);
 
     expect(
       createRepositoryAttributor({ ...options, snapshot }).toolMetadata(

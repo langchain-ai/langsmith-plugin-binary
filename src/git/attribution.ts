@@ -5,6 +5,7 @@ import type { ReconstructionToolOrigin } from "../tracing/reconstruction/models.
 import { nearestExistingDirectory } from "../utils/paths.js";
 import { createGitHubLoginFallback } from "./github-login.js";
 import type {
+  GitUserNameOptions,
   RepositoryAttributor,
   RepositoryAttributorOptions,
   RepositoryCaches,
@@ -16,16 +17,16 @@ import { getGitUserName, getRepoRoot, getRepositoryMetadata } from "./repository
 export function createRepositoryAttributor(
   options: RepositoryAttributorOptions,
 ): RepositoryAttributor {
-  return attributorOver(cachesFrom(options.snapshot), options);
+  const githubLogin = createGitHubLoginFallback({ markerPath: options.githubLoginMarkerPath });
+  return attributorOver(cachesFrom(options.snapshot), { githubLogin });
 }
 
 export function snapshotRepositories(
-  options: RepositoryAttributorOptions,
   cwd: string | undefined,
   toolOrigins: Iterable<ReconstructionToolOrigin> = [],
 ): RepositorySnapshot {
   const caches = cachesFrom(undefined);
-  const attributor = attributorOver(caches, options);
+  const attributor = attributorOver(caches, {});
   const origins = [...toolOrigins];
   attributor.turnMetadata(undefined, cwd, origins);
   for (const origin of origins) attributor.toolMetadata(undefined, origin);
@@ -35,25 +36,25 @@ export function snapshotRepositories(
         (entry): entry is [string, string | null] => entry[1] !== undefined,
       ),
     ),
-    attributions: Object.fromEntries(caches.attributionByRoot),
-    identifiers: Object.fromEntries(caches.identifierByRoot),
+    repositories: Object.fromEntries(caches.repositoryByRoot),
+    identifiers: Object.fromEntries(
+      [...caches.identifierByRoot].filter(([, identifier]) => Object.keys(identifier).length > 0),
+    ),
   };
 }
 
 function cachesFrom(snapshot: RepositorySnapshot | undefined): RepositoryCaches {
   return {
     rootByDirectory: new Map(Object.entries(snapshot?.roots ?? {})),
-    attributionByRoot: new Map(Object.entries(snapshot?.attributions ?? {})),
+    repositoryByRoot: new Map(Object.entries(snapshot?.repositories ?? {})),
     identifierByRoot: new Map(Object.entries(snapshot?.identifiers ?? {})),
   };
 }
 
 function attributorOver(
-  { rootByDirectory, attributionByRoot, identifierByRoot }: RepositoryCaches,
-  options: RepositoryAttributorOptions,
+  { rootByDirectory, repositoryByRoot, identifierByRoot }: RepositoryCaches,
+  userNameOptions: GitUserNameOptions,
 ): RepositoryAttributor {
-  const githubLogin = createGitHubLoginFallback({ markerPath: options.githubLoginMarkerPath });
-
   function rootForPath(path: string): string | null | undefined {
     const directory = nearestExistingDirectory(path);
     if (!directory) return undefined;
@@ -72,7 +73,7 @@ function attributorOver(
   function identifierForRoot(root: string): RepositoryAttribution {
     const cached = identifierByRoot.get(root);
     if (cached) return cached;
-    const userName = getGitUserName(root, { githubLogin });
+    const userName = getGitUserName(root, userNameOptions);
     const identifier: RepositoryAttribution = userName
       ? { ls_attribution_identifier: userName }
       : {};
@@ -80,15 +81,16 @@ function attributorOver(
     return identifier;
   }
 
-  function attributionForRoot(root: string): RepositoryAttribution {
-    const cached = attributionByRoot.get(root);
+  function repositoryForRoot(root: string): RepositoryAttribution {
+    const cached = repositoryByRoot.get(root);
     if (cached) return cached;
-    const attribution: RepositoryAttribution = {
-      ...identifierForRoot(root),
-      ...getRepositoryMetadata(root),
-    };
-    attributionByRoot.set(root, attribution);
-    return attribution;
+    const repository = getRepositoryMetadata(root);
+    repositoryByRoot.set(root, repository);
+    return repository;
+  }
+
+  function attributionForRoot(root: string): RepositoryAttribution {
+    return { ...identifierForRoot(root), ...repositoryForRoot(root) };
   }
 
   function scopedToPath(
