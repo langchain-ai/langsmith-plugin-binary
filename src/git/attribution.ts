@@ -4,16 +4,54 @@ import type { RepositoryAttribution } from "../metadata/models.js";
 import type { ReconstructionToolOrigin } from "../tracing/reconstruction/models.js";
 import { nearestExistingDirectory } from "../utils/paths.js";
 import { createGitHubLoginFallback } from "./github-login.js";
-import type { RepositoryAttributor, RepositoryAttributorOptions } from "./models.js";
+import type {
+  RepositoryAttributor,
+  RepositoryAttributorOptions,
+  RepositoryCaches,
+  RepositorySnapshot,
+} from "./models.js";
 import { rootFromGitMarker } from "./paths.js";
 import { getGitUserName, getRepoRoot, getRepositoryMetadata } from "./repository.js";
 
 export function createRepositoryAttributor(
   options: RepositoryAttributorOptions,
 ): RepositoryAttributor {
-  const rootByDirectory = new Map<string, string | null | undefined>();
-  const attributionByRoot = new Map<string, RepositoryAttribution>();
-  const identifierByRoot = new Map<string, RepositoryAttribution>();
+  return attributorOver(cachesFrom(options.snapshot), options);
+}
+
+export function snapshotRepositories(
+  options: RepositoryAttributorOptions,
+  cwd: string | undefined,
+  toolOrigins: Iterable<ReconstructionToolOrigin> = [],
+): RepositorySnapshot {
+  const caches = cachesFrom(undefined);
+  const attributor = attributorOver(caches, options);
+  const origins = [...toolOrigins];
+  attributor.turnMetadata(undefined, cwd, origins);
+  for (const origin of origins) attributor.toolMetadata(undefined, origin);
+  return {
+    roots: Object.fromEntries(
+      [...caches.rootByDirectory].filter(
+        (entry): entry is [string, string | null] => entry[1] !== undefined,
+      ),
+    ),
+    attributions: Object.fromEntries(caches.attributionByRoot),
+    identifiers: Object.fromEntries(caches.identifierByRoot),
+  };
+}
+
+function cachesFrom(snapshot: RepositorySnapshot | undefined): RepositoryCaches {
+  return {
+    rootByDirectory: new Map(Object.entries(snapshot?.roots ?? {})),
+    attributionByRoot: new Map(Object.entries(snapshot?.attributions ?? {})),
+    identifierByRoot: new Map(Object.entries(snapshot?.identifiers ?? {})),
+  };
+}
+
+function attributorOver(
+  { rootByDirectory, attributionByRoot, identifierByRoot }: RepositoryCaches,
+  options: RepositoryAttributorOptions,
+): RepositoryAttributor {
   const githubLogin = createGitHubLoginFallback({ markerPath: options.githubLoginMarkerPath });
 
   function rootForPath(path: string): string | null | undefined {

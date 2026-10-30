@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReconstructionToolOrigin } from "../tracing/reconstruction/models.js";
-import { createRepositoryAttributor } from "./attribution.js";
+import { createRepositoryAttributor, snapshotRepositories } from "./attribution.js";
 import { fakeTool } from "../test-support/login.js";
 import type { RepositoryAttributor } from "./models.js";
 
@@ -45,6 +45,13 @@ function makeDir(...segments: string[]): string {
   const path = join(...segments);
   mkdirSync(path, { recursive: true });
   return path;
+}
+
+function moveOn(repo: string, branch: string, user: string): string {
+  git(repo, "checkout", "-q", "-b", branch);
+  git(repo, "config", "user.name", user);
+  git(repo, "commit", "-q", "--allow-empty", "-m", branch);
+  return git(repo, "rev-parse", "HEAD");
 }
 
 function makeRepo(name: string, branch: string, user: string, remote?: string): string {
@@ -320,5 +327,68 @@ describe("turnMetadata", () => {
       ls_git_repo: "acme/alpha",
       ls_attribution_identifier: "Chosen",
     });
+  });
+});
+
+describe("snapshotRepositories", () => {
+  const options = { githubLoginMarkerPath: markerPath };
+
+  it("keeps the branch, commit and author a turn ended on after the repositories move on", () => {
+    const own = makeRepo(
+      "snapshot own repo",
+      "turn-one",
+      "First Author",
+      "git@github.com:acme/own.git",
+    );
+    const other = makeRepo("snapshot other repo", "other-one", "Other Author");
+    const otherFile = file(join(other, "seed.txt"), own);
+    const ownCommit = git(own, "rev-parse", "HEAD");
+    const otherCommit = git(other, "rev-parse", "HEAD");
+    const snapshot = JSON.parse(
+      JSON.stringify(snapshotRepositories(options, own, [otherFile])),
+    ) as ReturnType<typeof snapshotRepositories>;
+
+    const laterOwnCommit = moveOn(own, "turn-two", "Second Author");
+    moveOn(other, "other-two", "Later Author");
+    const atTurnEnd = createRepositoryAttributor({ ...options, snapshot });
+    const now = createRepositoryAttributor(options);
+
+    expect(atTurnEnd.turnMetadata(base, own, [])).toMatchObject({
+      ls_git_repo: "acme/own",
+      ls_git_branch: "turn-one",
+      ls_git_commit_hash: ownCommit,
+      ls_attribution_identifier: "First Author",
+    });
+    expect(atTurnEnd.toolMetadata(base, otherFile)).toMatchObject({
+      ls_git_branch: "other-one",
+      ls_git_commit_hash: otherCommit,
+      ls_attribution_identifier: "Other Author",
+    });
+    expect(now.turnMetadata(base, own, [])).toMatchObject({
+      ls_git_branch: "turn-two",
+      ls_git_commit_hash: laterOwnCommit,
+      ls_attribution_identifier: "Second Author",
+    });
+  });
+
+  it("keeps a turn outside every repository there after its folder becomes one", () => {
+    const folder = makeDir(root, "snapshot later repo");
+    const snapshot = snapshotRepositories(options, folder);
+    git(folder, "init", "-q");
+
+    expect(
+      createRepositoryAttributor({ ...options, snapshot }).turnMetadata(base, folder, []),
+    ).toBe(base);
+  });
+
+  it("still reads git for a path the snapshot never saw", () => {
+    const snapshot = snapshotRepositories(options, alpha);
+
+    expect(
+      createRepositoryAttributor({ ...options, snapshot }).toolMetadata(
+        base,
+        file(betaSeed, alpha),
+      ),
+    ).toEqual({ ...base, ...everythingBetaReveals });
   });
 });
