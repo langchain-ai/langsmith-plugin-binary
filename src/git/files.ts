@@ -185,7 +185,9 @@ function listedConfig(root: string): GitConfigEntry[] | undefined {
 
 function sharedLayers(listed: GitConfigEntry[]): SharedGitConfig {
   return {
-    lower: listed.filter(({ scope }) => !REPOSITORY_CONFIG_SCOPES.has(scope!)),
+    lower: listed.filter(
+      ({ scope }) => !REPOSITORY_CONFIG_SCOPES.has(scope!) && scope !== CONFIG_SCOPES.command,
+    ),
     upper: listed.filter(({ scope }) => scope === CONFIG_SCOPES.command),
     conditional: listed.some(({ section }) => section === CONDITIONAL_INCLUDE_SECTION),
   };

@@ -543,11 +543,13 @@ describe("snapshotRepositories", () => {
     ],
     ["a quoted author", (repository) => git(repository, "config", "user.name", "Quoted # Owner")],
     [
-      "an author set by the environment",
+      "an author and remote set by the environment",
       () => {
-        vi.stubEnv("GIT_CONFIG_COUNT", "1");
+        vi.stubEnv("GIT_CONFIG_COUNT", "2");
         vi.stubEnv("GIT_CONFIG_KEY_0", "user.name");
         vi.stubEnv("GIT_CONFIG_VALUE_0", "Environment Owner");
+        vi.stubEnv("GIT_CONFIG_KEY_1", "remote.origin.url");
+        vi.stubEnv("GIT_CONFIG_VALUE_1", "https://github.com/acme/environment.git");
       },
     ],
     [
@@ -721,19 +723,20 @@ describe("snapshotRepositories", () => {
 
   it("reads at most ten tool repositories, leaving the rest to the uploader", () => {
     const template = makeRepo("capped template", "trunk-capped", "Capped Owner");
-    const repositories = Array.from({ length: 12 }, (_, index) => {
+    const repositories = Array.from({ length: 24 }, (_, index) => {
       const copy = join(root, `capped ${index}`);
       cpSync(template, copy, { recursive: true });
       return copy;
     });
-    const snapshot = snapshotRepositories(
-      central,
-      repositories.map((repository) => file(join(repository, "seed.txt"))),
-    );
+    const touched = repositories
+      .slice(0, 12)
+      .map((repository) => file(join(repository, "seed.txt")));
+    const crossing = touched.map(({ path }, index) => file(path!, repositories[12 + index]));
 
-    expect(Object.keys(snapshot.repositories).toSorted()).toEqual(
-      [repositories[0]!, ...repositories.slice(3)].toSorted(),
+    expect(Object.keys(snapshotRepositories(central, touched).repositories).toSorted()).toEqual(
+      [repositories[0]!, ...repositories.slice(3, 12)].toSorted(),
     );
+    expect(Object.keys(snapshotRepositories(central, crossing).repositories)).toHaveLength(9);
   });
 
   it("still reads git for a path the snapshot never saw", () => {

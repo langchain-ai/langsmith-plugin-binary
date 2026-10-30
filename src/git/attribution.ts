@@ -36,7 +36,8 @@ export function snapshotRepositories(
   const origins = [...toolOrigins];
   attributor.turnMetadata(undefined, cwd, origins);
   for (const origin of origins.toReversed()) {
-    if (caches.repositoryByRoot.size >= SNAPSHOT_MAX_REPOSITORIES) break;
+    const reached = new Set([...caches.repositoryByRoot.keys(), ...rootsNear(origin)]);
+    if (reached.size > SNAPSHOT_MAX_REPOSITORIES) break;
     attributor.toolMetadata(undefined, origin);
   }
   return {
@@ -161,6 +162,13 @@ function attributorOver(
   }
 
   return { toolMetadata, turnMetadata };
+}
+
+function rootsNear({ cwd, path }: ReconstructionToolOrigin): string[] {
+  const directories = [cwd, path].map((near) => near && nearestExistingDirectory(near));
+  return directories.flatMap((directory) =>
+    directory ? [rootFromGitMarker(directory) ?? directory] : [],
+  );
 }
 
 function identifierOf(userName: string | undefined): RepositoryAttribution {
