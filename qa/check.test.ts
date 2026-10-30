@@ -114,6 +114,62 @@ describe("checkRuns", () => {
   });
 });
 
+describe("checkRuns against a recorded session", () => {
+  const recorded: Scenario = {
+    ...scenario,
+    turns: [
+      { prompt: "read notes", command: "", minTools: 1, maxTools: 1, reply: "it says hello" },
+      { prompt: "list files", command: "", minTools: 0, maxTools: 0, reply: "two files" },
+    ],
+  };
+
+  it("passes when tools and replies match the transcript", () => {
+    expect(checkRuns(recorded, healthyRuns())).toEqual([]);
+  });
+
+  it("catches a tool run uploaded twice", () => {
+    const runs = [
+      ...healthyRuns(),
+      run({ id: "k2", trace_id: "t1", parent_run_id: "r1", run_type: "tool" }),
+    ];
+    expect(checkRuns(recorded, runs)).toEqual(["turn 1 has 2 tool runs, expected at most 1"]);
+  });
+
+  it("accepts a turn with no reply when the transcript had none", () => {
+    const silent = {
+      ...recorded,
+      turns: [recorded.turns[0]!, { ...recorded.turns[1]!, reply: null }],
+    };
+    expect(checkRuns(silent, withChange("r2", { outputs: {} }))).toEqual([]);
+  });
+
+  it("accepts a prompt the plugin redacted past its opening", () => {
+    const secret = "read notes " + "x".repeat(80) + " key=abc";
+    const redacted = {
+      ...recorded,
+      turns: [{ ...recorded.turns[0]!, prompt: secret }, recorded.turns[1]!],
+    };
+    const runs = withChange("r1", {
+      inputs: { messages: ["read notes " + "x".repeat(80) + " key=[SECRET_DETECTED]"] },
+    });
+    expect(checkRuns(redacted, runs)).toEqual([]);
+  });
+
+  it("accepts a turn the model never answered", () => {
+    const imported = {
+      ...recorded,
+      turns: [recorded.turns[0]!, { ...recorded.turns[1]!, expectsModelCall: false }],
+    };
+    const runs = healthyRuns().filter((existing) => existing.id !== "l2");
+    expect(checkRuns(imported, runs)).toEqual([]);
+  });
+
+  it("catches a reply that differs from the transcript", () => {
+    const runs = withChange("r2", { outputs: { messages: ["three files"] } });
+    expect(checkRuns(recorded, runs)).toEqual(["turn 2 reply does not match the transcript"]);
+  });
+});
+
 describe("checkHooks", () => {
   it("passes when each hook fired once per turn", () => {
     expect(
