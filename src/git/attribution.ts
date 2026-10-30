@@ -3,18 +3,33 @@ import { REPOSITORY_METADATA_KEYS } from "../metadata/constants.js";
 import type { RepositoryAttribution } from "../metadata/models.js";
 import type { ReconstructionToolOrigin } from "../tracing/reconstruction/models.js";
 import { nearestExistingDirectory } from "../utils/paths.js";
+import { MAX_SEEDED_FOLDERS } from "./constants.js";
 import { createGitHubLoginFallback } from "./github-login.js";
-import type { RepositoryAttributor, RepositoryAttributorOptions } from "./models.js";
+import type {
+  RepositoryAttributionSeed,
+  RepositoryAttributor,
+  RepositoryAttributorOptions,
+} from "./models.js";
 import { rootFromGitMarker } from "./paths.js";
 import { getGitUserName, getRepoRoot, getRepositoryMetadata } from "./repository.js";
 
 export function createRepositoryAttributor(
   options: RepositoryAttributorOptions,
 ): RepositoryAttributor {
-  const rootByDirectory = new Map<string, string | null | undefined>();
+  const seed = options.seed;
+  const rootByDirectory = new Map<string, string | null | undefined>(
+    Object.entries(seed?.roots ?? {}),
+  );
   const attributionByRoot = new Map<string, RepositoryAttribution>();
-  const identifierByRoot = new Map<string, RepositoryAttribution>();
-  const githubLogin = createGitHubLoginFallback({ markerPath: options.githubLoginMarkerPath });
+  const metadataByRoot = new Map<string, RepositoryAttribution>(
+    Object.entries(seed?.metadata ?? {}),
+  );
+  const identifierByRoot = new Map<string, RepositoryAttribution>(
+    Object.entries(seed?.identifiers ?? {}),
+  );
+  const githubLogin = options.skipGitHubLogin
+    ? undefined
+    : createGitHubLoginFallback({ markerPath: options.githubLoginMarkerPath });
 
   function rootForPath(path: string): string | null | undefined {
     const directory = nearestExistingDirectory(path);
@@ -34,7 +49,7 @@ export function createRepositoryAttributor(
   function identifierForRoot(root: string): RepositoryAttribution {
     const cached = identifierByRoot.get(root);
     if (cached) return cached;
-    const userName = getGitUserName(root, { githubLogin });
+    const userName = getGitUserName(root, githubLogin && { githubLogin });
     const identifier: RepositoryAttribution = userName
       ? { ls_attribution_identifier: userName }
       : {};
@@ -47,7 +62,7 @@ export function createRepositoryAttributor(
     if (cached) return cached;
     const attribution: RepositoryAttribution = {
       ...identifierForRoot(root),
-      ...getRepositoryMetadata(root),
+      ...(metadataByRoot.get(root) ?? getRepositoryMetadata(root)),
     };
     attributionByRoot.set(root, attribution);
     return attribution;
@@ -117,7 +132,28 @@ export function createRepositoryAttributor(
     return base;
   }
 
-  return { toolMetadata, turnMetadata };
+  function capture(folders: Iterable<string>): RepositoryAttributionSeed {
+    const captured: RepositoryAttributionSeed = { roots: {}, metadata: {}, identifiers: {} };
+    for (const folder of [...new Set(folders)].slice(0, MAX_SEEDED_FOLDERS)) {
+      const directory = nearestExistingDirectory(folder);
+      const root = rootForPath(folder);
+      if (!directory || root === undefined) continue;
+      captured.roots[directory] = root;
+      if (root === null) continue;
+      captured.metadata[root] = metadataByRoot.get(root) ?? getRepositoryMetadata(root);
+      const identifier = identifierForRoot(root);
+      if (identifier.ls_attribution_identifier) captured.identifiers[root] = identifier;
+    }
+    return captured;
+  }
+
+  return { toolMetadata, turnMetadata, capture };
+}
+
+export function captureRepositoryAttribution(folders: Iterable<string>): RepositoryAttributionSeed {
+  return createRepositoryAttributor({ githubLoginMarkerPath: "", skipGitHubLogin: true }).capture(
+    folders,
+  );
 }
 
 function withoutPinnedKeys(

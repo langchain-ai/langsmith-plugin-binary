@@ -1,3 +1,4 @@
+import type { RepositoryAttribution } from "../metadata/models.js";
 import type { ReconstructionToolOrigin } from "../tracing/reconstruction/models.js";
 import type { GIT_MARKERS } from "./constants.js";
 
@@ -37,11 +38,20 @@ export interface GitHubLoginOptions {
 
 export type GitMarker = (typeof GIT_MARKERS)[keyof typeof GIT_MARKERS];
 
+export interface RepositoryAttributionSeed {
+  roots: Record<string, string | null>;
+  metadata: Record<string, RepositoryAttribution>;
+  identifiers: Record<string, RepositoryAttribution>;
+}
+
 export interface RepositoryAttributorOptions {
   githubLoginMarkerPath: string;
+  seed?: RepositoryAttributionSeed;
+  skipGitHubLogin?: boolean;
 }
 
 export interface RepositoryAttributor {
+  capture(folders: Iterable<string>): RepositoryAttributionSeed;
   toolMetadata(
     base: Record<string, unknown> | undefined,
     origin: ReconstructionToolOrigin,

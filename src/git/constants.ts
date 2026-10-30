@@ -40,3 +40,4 @@ export const GH_LOGIN_TIMEOUT_MS = 5_000;
 export const GH_LOGIN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 export const GH_LOGIN_NULL_OUTPUT = "null";
 export const GH_LOGIN_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
+export const MAX_SEEDED_FOLDERS = 3;
