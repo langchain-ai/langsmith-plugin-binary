@@ -44,6 +44,8 @@ const WORKFLOW = parse(
 };
 
 const PUBLISHING_GATE = "needs.plan.outputs.publishing == 'true'";
+const COMMITTING_GATE = `${PUBLISHING_GATE} && inputs.commit-binaries`;
+const BINARY_TEST = "${{ inputs.binary-test }}";
 const TAG_TEST = /startsWith\(\s*github\.ref\s*,\s*'([^']*)'\s*\)/;
 const APPLE_SECRET = /secrets\.(?:APPLE|CSC)_/;
 const MANIFEST = ".claude-plugin/plugin.json";
@@ -106,10 +108,8 @@ function handedOver(job: string, action: string): string[] {
     .map((step) => step.with?.name ?? "");
 }
 
-function stepsRunning(job: string, command: string): string[] {
-  return (WORKFLOW.jobs[job]?.steps ?? [])
-    .map((step) => step.run?.trim() ?? "")
-    .filter((run) => run.includes(command));
+function binaryTests(job: string): Step[] {
+  return (WORKFLOW.jobs[job]?.steps ?? []).filter((step) => step.env?.BINARY_TEST !== undefined);
 }
 
 function jobsWhere(holds: (job: Job, name: string) => boolean): string[] {
@@ -502,8 +502,7 @@ describe("the release path no pull request ever runs", () => {
 
   it("restores the executable bit in every job that runs a binary it downloaded", () => {
     const downloadsAndRuns = jobsWhere(
-      (_job, name) =>
-        handedOver(name, "download").length > 0 && stepsRunning(name, "test:binary").length > 0,
+      (_job, name) => handedOver(name, "download").length > 0 && binaryTests(name).length > 0,
     );
     const restoresTheBit = jobsWhere((job) =>
       (job.steps ?? []).some(
@@ -514,7 +513,21 @@ describe("the release path no pull request ever runs", () => {
   });
 
   it("puts the signed binary through the same test the unsigned one passed", () => {
-    expect(stepsRunning("sign", "test:binary")).toEqual(stepsRunning("build", "test:binary"));
+    expect(binaryTests("sign").map((step) => [step.env, step.run])).toEqual(
+      binaryTests("build").map((step) => [step.env, step.run]),
+    );
+  });
+
+  it("tests every build with the script the plugin names, so a second binary skips the first one's test", () => {
+    const inputs = WORKFLOW.on.workflow_call?.inputs ?? {};
+    expect(inputs["binary-test"]).toEqual(expect.objectContaining({ default: "test:binary" }));
+    const testing = ["build", "run-on-intel", "sign"].flatMap(binaryTests);
+    expect(testing).toHaveLength(3);
+    for (const step of testing) {
+      expect(step.env?.BINARY_TEST).toBe(BINARY_TEST);
+      expect(step.run?.trim()).toBe('pnpm "$BINARY_TEST"');
+    }
+    expect(JSON.stringify(WORKFLOW.jobs)).not.toContain("pnpm test:binary");
   });
 
   it("keeps the trigger the plugin repositories release through", () => {
@@ -647,7 +660,14 @@ describe("offering the binaries to the plugin's beta branch", () => {
   });
 
   it("offers the binaries on a stable release too, so a stable user is not left without one", () => {
-    expect(WORKFLOW.jobs.propose?.if).toBe("needs.plan.outputs.publishing == 'true'");
+    expect(WORKFLOW.jobs.propose?.if).toBe(COMMITTING_GATE);
+  });
+
+  it("commits the binaries unless the plugin says it downloads them from the release instead", () => {
+    const inputs = WORKFLOW.on.workflow_call?.inputs ?? {};
+    expect(inputs["commit-binaries"]).toEqual(
+      expect.objectContaining({ type: "boolean", default: true }),
+    );
   });
 
   it("lets no caller name a branch of its own", () => {

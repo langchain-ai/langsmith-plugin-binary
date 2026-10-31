@@ -127,6 +127,10 @@ Tagging the default branch still opens a separate pull request. You have no pull
 
 Pass `release-notes:` to add a line to every release.
 
+Pass `commit-binaries: false` when the plugin downloads its binary from the release, so the builds go on the release and nowhere else.
+
+Pass `binary-test:` with the package script that tests the binary when one repo builds more than one, since each binary needs its own test.
+
 ## Betas
 
 Cut a `beta-<minor>` branch off the default branch. Bump the version on that branch only. Never merge it back, so the default branch keeps its own version.

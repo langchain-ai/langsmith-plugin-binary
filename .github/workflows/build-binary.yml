@@ -17,6 +17,14 @@ on:
         description: The folder in the plugin's repository the signed binaries are committed to.
         type: string
         default: binary
+      commit-binaries:
+        description: Commit the signed binaries to the plugin's branch, rather than only attaching them to the release.
+        type: boolean
+        default: true
+      binary-test:
+        description: The plugin's package script that tests the built binary.
+        type: string
+        default: test:binary
       signing-environment:
         description: The deployment environment holding the Apple credentials.
         type: string
@@ -101,7 +109,7 @@ jobs:
 
       - name: Find the Branch This Tag Belongs To
         id: target
-        if: steps.gate.outputs.publishing == 'true'
+        if: steps.gate.outputs.publishing == 'true' && inputs.commit-binaries
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -184,7 +192,9 @@ jobs:
           CONFIG: ${{ inputs.config }}
         run: pnpm build:binary -- --config "$CONFIG" --arch=all
       - name: Test the Binary
-        run: pnpm test:binary
+        env:
+          BINARY_TEST: ${{ inputs.binary-test }}
+        run: pnpm "$BINARY_TEST"
       - name: Upload the Unsigned arm64 Binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -231,7 +241,9 @@ jobs:
           arch
           file "$BINARY"
       - name: Test the Binary
-        run: pnpm test:binary
+        env:
+          BINARY_TEST: ${{ inputs.binary-test }}
+        run: pnpm "$BINARY_TEST"
 
   sign:
     name: Sign and Notarize the ${{ matrix.arch }} Binary
@@ -280,7 +292,9 @@ jobs:
           CONFIG: ${{ inputs.config }}
         run: pnpm sign:binary -- --config "$CONFIG"
       - name: Test the Signed Binary
-        run: pnpm test:binary
+        env:
+          BINARY_TEST: ${{ inputs.binary-test }}
+        run: pnpm "$BINARY_TEST"
       - name: Upload the Signed Binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -348,7 +362,7 @@ jobs:
   propose:
     name: Land the Binaries on the Branch This Tag Belongs To
     needs: [plan, publish]
-    if: needs.plan.outputs.publishing == 'true'
+    if: needs.plan.outputs.publishing == 'true' && inputs.commit-binaries
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
