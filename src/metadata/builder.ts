@@ -19,6 +19,7 @@ export function buildCodingAgentMetadata(
   const identity: Record<string, unknown> = {
     ls_agent_purpose: CODING_AGENT_PURPOSE,
     ls_integration: options.integration,
+    ls_harness_name: options.integration,
     ls_agent_runtime: CODING_AGENT_V1_CONTRACT.runtimeNames[options.integration],
     ls_trace_schema_version: CODING_AGENT_SCHEMA_VERSION,
     ls_agent_type: options.agentType,
