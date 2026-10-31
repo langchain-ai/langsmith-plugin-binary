@@ -185,3 +185,8 @@ export type ScopeVerdict =
   | { kind: "ok" }
   | { kind: "mismatch" }
   | { kind: "failed"; error: unknown };
+
+export interface HookOutput {
+  name: string;
+  output: string;
+}

@@ -6,7 +6,11 @@ export const COMMON_BOOLEAN_SETTINGS = {
 } as const;
 
 export const COMMON_NOTICE_COOLDOWN_OFF = "off";
-export const COMMON_STRICT_BOOLEAN_FIELDS = ["redact", "strict_auth"] as const;
+export const COMMON_STRICT_BOOLEAN_FIELDS = [
+  "redact",
+  "strict_auth",
+  "capture_hook_outputs",
+] as const;
 
 export const COMMON_DEFAULT_API_URL = "https://api.smith.langchain.com";
 export const COMMON_USER_ONLY_FIELDS = ["profile"] as const;

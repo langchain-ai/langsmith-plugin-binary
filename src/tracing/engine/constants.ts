@@ -23,3 +23,4 @@ export const TRACING_ENGINE_RECOVERY_SETTLEMENT_CONFLICT_MESSAGE =
   "Recovery settlement capture conflicts with the current source state";
 export const TRACING_ENGINE_MISSING_SETTLEMENT_CAPTURE_MESSAGE =
   "A planned settlement capture is not saved yet";
+export const HOOK_OUTPUTS_KEY = "hooks";

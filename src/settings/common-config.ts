@@ -79,6 +79,7 @@ export function mergeCommonConfig(
   merged.redact = resolveField(precedence, "redact") ?? true;
   merged.redact_extra_rules = resolveField(precedence, "redact_extra_rules");
   merged.strict_auth = resolveField(precedence, "strict_auth");
+  merged.capture_hook_outputs = resolveField(precedence, "capture_hook_outputs");
   merged.notice_cooldown = resolveField(precedence, "notice_cooldown");
   if (precedence.some((source) => source.metadata !== undefined)) {
     // Spread defines own properties (including __proto__), unlike assignment into a target.
