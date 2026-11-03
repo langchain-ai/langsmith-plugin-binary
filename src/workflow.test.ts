@@ -961,9 +961,9 @@ describe("offering the binaries to the plugin's beta branch", () => {
     expect(readFileSync(join(work, "release", asset), "utf-8")).toBe(BUNDLED_BYTES);
   });
 
-  it("creates the release one pipeline at a time, so a second pipeline adds to it", () => {
+  it("creates the release one pipeline at a time across the repo, so a second pipeline adds to it", () => {
     expect(WORKFLOW.jobs.publish?.concurrency).toEqual({
-      group: "${{ github.workflow }}-${{ github.ref }}-release",
+      group: "plugin-binary-release-${{ github.ref }}",
       "cancel-in-progress": false,
     });
   });

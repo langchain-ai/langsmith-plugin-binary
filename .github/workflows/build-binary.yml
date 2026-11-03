@@ -313,7 +313,7 @@ jobs:
       && needs.sign.result == 'success'
       && (!inputs.bundle || needs.bundle.result == 'success') }}
     concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}-release
+      group: plugin-binary-release-${{ github.ref }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 20
