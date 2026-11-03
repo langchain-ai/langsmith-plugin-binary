@@ -48,6 +48,7 @@ const PROPOSE_GATE = `\${{ !cancelled() && ${PUBLISHING_GATE} && (needs.publish.
 const OUR_TEAM = "H253X88X9F";
 const BUNDLE_STEP = "Bundle Both Chips Into One Compressed Binary";
 const BUNDLED_BYTES = "signed universal bytes";
+const DOWNLOADED_MODE = 0o644;
 const SIBLING_FILE = "langsmith-claude.tar.xz";
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 const BINARY_TEST = "${{ inputs.binary-test }}";
@@ -572,6 +573,7 @@ function buildBothChips({ signIntel = true, exitCode = 0 } = {}, stage = "unsign
     if (arch === "arm64" || signIntel) {
       execFileSync("/usr/bin/codesign", ["--force", "--sign", "-", built]);
     }
+    chmodSync(built, DOWNLOADED_MODE);
   }
   return work;
 }
@@ -581,6 +583,7 @@ function proposeTheBinaries(
   directly = "false",
   bundle = "false",
   siblingLandedFirst = false,
+  leftovers: string[] = [],
 ): { origin: string; body: string; log: string } {
   const root = scratch("plugin-binary-propose-");
   const origin = join(root, "origin.git");
@@ -591,6 +594,7 @@ function proposeTheBinaries(
   git(root, "clone", origin, work);
   mkdirSync(join(work, CARRIED_DIRECTORY), { recursive: true });
   writeFileSync(join(work, CARRIED_DIRECTORY, ".gitkeep"), "");
+  for (const leftover of leftovers) writeFileSync(join(work, CARRIED_DIRECTORY, leftover), "old");
   git(work, "add", "-A");
   git(work, "-c", "user.name=Seed", "-c", "user.email=s@example.invalid", "commit", "-m", "Seed");
   git(work, "push", "origin", `HEAD:refs/heads/${BETA_BRANCH}`);
@@ -711,6 +715,29 @@ describe("offering the binaries to the plugin's beta branch", () => {
     const landed = git(origin, "ls-tree", "--name-only", BETA_BRANCH, `${CARRIED_DIRECTORY}/`);
     expect(landed).toContain(`${CARRIED_DIRECTORY}/${SIBLING_FILE}`);
     expect(landed).toContain(`${CARRIED_DIRECTORY}/${EXECUTABLE}-darwin-arm64`);
+  });
+
+  it("drops the other layout's binaries when a plugin switches between a bundle and one per chip", () => {
+    const perChip = [`${EXECUTABLE}-darwin-arm64`, `${EXECUTABLE}-darwin-x64`];
+    const bundled = `${EXECUTABLE}.tar.xz`;
+    const landed = (bundle: string, leftovers: string[]) =>
+      git(
+        proposeTheBinaries(CARRIED_DIRECTORY, "true", bundle, false, leftovers).origin,
+        "ls-tree",
+        "--name-only",
+        BETA_BRANCH,
+        `${CARRIED_DIRECTORY}/`,
+      )
+        .trim()
+        .split("\n");
+    expect(landed("true", perChip)).toEqual([
+      `${CARRIED_DIRECTORY}/.gitkeep`,
+      `${CARRIED_DIRECTORY}/${bundled}`,
+    ]);
+    expect(landed("false", [bundled])).toEqual([
+      `${CARRIED_DIRECTORY}/.gitkeep`,
+      ...perChip.map((name) => `${CARRIED_DIRECTORY}/${name}`),
+    ]);
   });
 
   it("takes the choice between the two from the plan, not from a guess of its own", () => {

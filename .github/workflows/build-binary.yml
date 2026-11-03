@@ -403,9 +403,9 @@ jobs:
               fi
             done
           fi
+          chmod +x "universal/$EXECUTABLE"
           tar -cJf "bundled/$EXECUTABLE.tar.xz" -C universal "$EXECUTABLE"
           tar -xJf "bundled/$EXECUTABLE.tar.xz" -C unpacked
-          chmod +x "unpacked/$EXECUTABLE"
           "unpacked/$EXECUTABLE" --version
       - name: Upload the Bundled Binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -472,6 +472,7 @@ jobs:
             fi
             CARRIED="$DIRECTORY/$EXECUTABLE.tar.xz"
             cp "$BUNDLED" "$CARRIED"
+            git rm -q --ignore-unmatch -- "$DIRECTORY/$EXECUTABLE-darwin-arm64" "$DIRECTORY/$EXECUTABLE-darwin-x64"
             EVIDENCE+=("- [x] both chips are $(wc -c < "$CARRIED" | tr -d ' ') bytes compressed, sha256 $(sha256sum "$CARRIED" | cut -d' ' -f1)")
           else
             for ARCH in arm64 x64; do
@@ -482,6 +483,7 @@ jobs:
               fi
               CARRIED="$DIRECTORY/$EXECUTABLE-darwin-$ARCH"
               cp "$SIGNED" "$CARRIED"
+              git rm -q --ignore-unmatch -- "$DIRECTORY/$EXECUTABLE.tar.xz"
               chmod +x "$CARRIED"
               EVIDENCE+=("- [x] $ARCH is $(wc -c < "$CARRIED" | tr -d ' ') bytes, sha256 $(sha256sum "$CARRIED" | cut -d' ' -f1)")
             done
