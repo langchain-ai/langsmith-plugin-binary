@@ -464,7 +464,7 @@ jobs:
 
           EVIDENCE=()
           if [ "${BUNDLE:-false}" = "true" ]; then
-            BRANCH="binary/$TAG-$EXECUTABLE"
+            BRANCH="binary/$TAG-bundled"
             REPLACED="the bundle"
             FINISHED="then compressed into one bundle for both chips"
             BUNDLED="signed/$EXECUTABLE.tar.xz"

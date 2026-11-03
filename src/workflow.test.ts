@@ -796,7 +796,7 @@ describe("offering the binaries to the plugin's beta branch", () => {
 
   it("lands the bundle on a branch of its own, so a second pipeline on the same tag keeps its binaries", () => {
     const { origin, body } = proposeTheBinaries(CARRIED_DIRECTORY, "false", "true");
-    const bundleBranch = `binary/${RELEASED_TAG}-${EXECUTABLE}`;
+    const bundleBranch = `binary/${RELEASED_TAG}-bundled`;
     const carried = `${CARRIED_DIRECTORY}/${EXECUTABLE}.tar.xz`;
     expect(git(origin, "show", `${bundleBranch}:${carried}`)).toBe(BUNDLED_BYTES);
     expect(
