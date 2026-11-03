@@ -45,7 +45,7 @@ const WORKFLOW = parse(
 };
 
 const PUBLISHING_GATE = "needs.plan.outputs.publishing == 'true'";
-const PROPOSE_GATE = `\${{ !cancelled() && ${PUBLISHING_GATE} && (needs.publish.result == 'success' || needs.bundle.result == 'success') }}`;
+const PROPOSE_GATE = `\${{ !cancelled() && ${PUBLISHING_GATE} && needs.build.result == 'success' && needs.run-on-intel.result == 'success' && needs.sign.result == 'success' && (inputs.bundle && needs.bundle.result == 'success' || !inputs.bundle && needs.publish.result == 'success') }}`;
 const OUR_TEAM = "H253X88X9F";
 const BUNDLE_STEP = "Bundle Both Chips Into One Compressed Binary";
 const BUNDLED_BYTES = "signed universal bytes";
