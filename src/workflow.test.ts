@@ -850,16 +850,6 @@ describe("offering the binaries to the plugin's beta branch", () => {
   });
 
   it.runIf(process.platform === "darwin")(
-    "refuses to bundle a release our team did not sign, since the plugin would refuse it",
-    () => {
-      const work = buildBothChips({}, "signed");
-      expect(() => runStep("bundle", BUNDLE_STEP, work, { EXECUTABLE, STAGE: "signed" })).toThrow(
-        /carries no team signature/,
-      );
-    },
-  );
-
-  it.runIf(process.platform === "darwin")(
     "refuses a bundle that will not run once unpacked",
     () => {
       const work = buildBothChips({ exitCode: 1 });
@@ -878,30 +868,34 @@ describe("offering the binaries to the plugin's beta branch", () => {
   });
 
   it.runIf(process.platform === "darwin")(
-    "refuses to bundle a release another team signed, since the plugin checks for its own",
+    "refuses to bundle a release anyone but our Apple team signed, since the plugin would refuse it",
     () => {
       const work = buildBothChips({}, "signed");
+      expect(() => runStep("bundle", BUNDLE_STEP, work, { EXECUTABLE, STAGE: "signed" })).toThrow(
+        /signed by team not set, not H253X88X9F/,
+      );
       const tools = join(work, "tools");
       mkdirSync(tools);
-      writeFileSync(
-        join(tools, "codesign"),
-        [
-          "#!/bin/sh",
-          'case "$1" in -dv) echo "TeamIdentifier=ZZZZ999999" >&2 ;; esac',
-          "exit 0",
-          "",
-        ].join("\n"),
-      );
-      chmodSync(join(tools, "codesign"), 0o755);
-      const withTeam = (team: string) => () =>
-        runStep("bundle", BUNDLE_STEP, work, {
-          EXECUTABLE,
-          STAGE: "signed",
-          TEAM_ID: team,
-          PATH: `${tools}:${process.env.PATH ?? ""}`,
-        });
-      expect(withTeam(OUR_TEAM)).toThrow(/signed by team ZZZZ999999, not H253X88X9F/);
-      expect(withTeam("ZZZZ999999")).not.toThrow();
+      const signedBy = (team: string) => {
+        writeFileSync(
+          join(tools, "codesign"),
+          [
+            "#!/bin/sh",
+            `case "$1" in -dv) echo "TeamIdentifier=${team}" >&2 ;; esac`,
+            "exit 0",
+            "",
+          ].join("\n"),
+        );
+        chmodSync(join(tools, "codesign"), 0o755);
+        return () =>
+          runStep("bundle", BUNDLE_STEP, work, {
+            EXECUTABLE,
+            STAGE: "signed",
+            PATH: `${tools}:${process.env.PATH ?? ""}`,
+          });
+      };
+      expect(signedBy("ZZZZ999999")).toThrow(/signed by team ZZZZ999999, not H253X88X9F/);
+      expect(signedBy(OUR_TEAM)).not.toThrow();
     },
   );
 

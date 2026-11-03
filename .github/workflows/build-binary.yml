@@ -25,10 +25,6 @@ on:
         description: Commit one compressed binary that runs on both chips, rather than one binary per chip.
         type: boolean
         default: false
-      apple-team-id:
-        description: The Apple team the plugin requires a bundle to be signed by.
-        type: string
-        default: ""
       signing-environment:
         description: The deployment environment holding the Apple credentials.
         type: string
@@ -379,9 +375,9 @@ jobs:
         env:
           EXECUTABLE: ${{ needs.plan.outputs.executable }}
           STAGE: ${{ needs.plan.outputs.publishing == 'true' && 'signed' || 'unsigned' }}
-          TEAM_ID: ${{ inputs.apple-team-id }}
         run: |
           set -euo pipefail
+          OUR_TEAM="H253X88X9F"
           mkdir -p universal bundled unpacked
           lipo -create \
             "built/$EXECUTABLE-darwin-arm64-$STAGE/$EXECUTABLE" \
@@ -391,14 +387,8 @@ jobs:
           if [ "$STAGE" = "signed" ]; then
             for ARCH in arm64 x86_64; do
               TEAM=$(codesign -dv --arch "$ARCH" "universal/$EXECUTABLE" 2>&1 | sed -n 's/^TeamIdentifier=//p')
-              case "$TEAM" in
-                "" | "not set")
-                  echo "The $ARCH build carries no team signature, so the plugin would refuse it. Nothing is bundled." >&2
-                  exit 1
-                  ;;
-              esac
-              if [ -n "$TEAM_ID" ] && [ "$TEAM" != "$TEAM_ID" ]; then
-                echo "The $ARCH build is signed by team $TEAM, not $TEAM_ID, so the plugin would refuse it. Nothing is bundled." >&2
+              if [ "$TEAM" != "$OUR_TEAM" ]; then
+                echo "The $ARCH build is signed by team ${TEAM:-none}, not $OUR_TEAM, so the plugin would refuse it. Nothing is bundled." >&2
                 exit 1
               fi
             done
