@@ -305,17 +305,32 @@ jobs:
 
   publish:
     name: Publish the Binaries to the Release
-    needs: [plan, build, run-on-intel, sign]
-    if: needs.plan.outputs.publishing == 'true' && !inputs.bundle
+    needs: [plan, build, run-on-intel, sign, bundle]
+    if: >-
+      ${{ !cancelled() && needs.plan.outputs.publishing == 'true'
+      && needs.build.result == 'success'
+      && needs.run-on-intel.result == 'success'
+      && needs.sign.result == 'success'
+      && (!inputs.bundle || needs.bundle.result == 'success') }}
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-release
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write
     steps:
       - name: Download the Signed Binaries
+        if: ${{ !inputs.bundle }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: ${{ needs.plan.outputs.executable }}-darwin-*-signed
+          path: signed
+      - name: Download the Bundled Binary
+        if: inputs.bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.plan.outputs.executable }}-darwin-universal-signed
           path: signed
       - name: Attach the Binaries to the Release
         env:
@@ -325,21 +340,34 @@ jobs:
           EXECUTABLE: ${{ needs.plan.outputs.executable }}
           PRERELEASE: ${{ needs.plan.outputs.prerelease }}
           EXTRA_NOTES: ${{ inputs.release-notes }}
+          BUNDLE: ${{ inputs.bundle }}
         run: |
           set -euo pipefail
           mkdir -p release
           ASSETS=()
-          for ARCH in arm64 x64; do
-            NAME="$EXECUTABLE-darwin-$ARCH-$TAG"
-            SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
-            if [ ! -f "$SIGNED" ]; then
-              echo "The $ARCH signing job uploaded no binary. Nothing is published." >&2
+          if [ "${BUNDLE:-false}" = "true" ]; then
+            NAME="$EXECUTABLE-darwin-universal-$TAG.tar.xz"
+            BUNDLED="signed/$EXECUTABLE.tar.xz"
+            if [ ! -f "$BUNDLED" ]; then
+              echo "The bundle job uploaded no binary. Nothing is published." >&2
               exit 1
             fi
-            mv "$SIGNED" "release/$NAME"
+            mv "$BUNDLED" "release/$NAME"
             (cd release && sha256sum "$NAME" > "$NAME.sha256")
             ASSETS+=("release/$NAME" "release/$NAME.sha256")
-          done
+          else
+            for ARCH in arm64 x64; do
+              NAME="$EXECUTABLE-darwin-$ARCH-$TAG"
+              SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
+              if [ ! -f "$SIGNED" ]; then
+                echo "The $ARCH signing job uploaded no binary. Nothing is published." >&2
+                exit 1
+              fi
+              mv "$SIGNED" "release/$NAME"
+              (cd release && sha256sum "$NAME" > "$NAME.sha256")
+              ASSETS+=("release/$NAME" "release/$NAME.sha256")
+            done
+          fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
@@ -412,13 +440,8 @@ jobs:
 
   propose:
     name: Land the Binaries on the Branch This Tag Belongs To
-    needs: [plan, build, run-on-intel, sign, publish, bundle]
-    if: >-
-      ${{ !cancelled() && needs.plan.outputs.publishing == 'true'
-      && needs.build.result == 'success'
-      && needs.run-on-intel.result == 'success'
-      && needs.sign.result == 'success'
-      && (inputs.bundle && needs.bundle.result == 'success' || !inputs.bundle && needs.publish.result == 'success') }}
+    needs: [plan, publish]
+    if: needs.plan.outputs.publishing == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

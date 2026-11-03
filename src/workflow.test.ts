@@ -34,6 +34,7 @@ interface Job {
   if?: string;
   env?: Record<string, string>;
   environment?: string;
+  concurrency?: { group: string; "cancel-in-progress": boolean };
 }
 
 const WORKFLOW = parse(
@@ -45,7 +46,7 @@ const WORKFLOW = parse(
 };
 
 const PUBLISHING_GATE = "needs.plan.outputs.publishing == 'true'";
-const PROPOSE_GATE = `\${{ !cancelled() && ${PUBLISHING_GATE} && needs.build.result == 'success' && needs.run-on-intel.result == 'success' && needs.sign.result == 'success' && (inputs.bundle && needs.bundle.result == 'success' || !inputs.bundle && needs.publish.result == 'success') }}`;
+const PROPOSE_GATE = PUBLISHING_GATE;
 const OUR_TEAM = "H253X88X9F";
 const BUNDLE_STEP = "Bundle Both Chips Into One Compressed Binary";
 const BUNDLED_BYTES = "signed universal bytes";
@@ -422,7 +423,9 @@ describe("the names the pipeline publishes under", () => {
       userAgent: "langsmith-codex",
       releasesApiOverrideEnvVar: "LANGSMITH_CODEX_RELEASES_API",
     });
-    const naming = publish.split("\n").find((line) => line.includes('NAME="$EXECUTABLE'));
+    const naming = publish
+      .split("\n")
+      .find((line) => line.includes('NAME="$EXECUTABLE-darwin-$ARCH'));
     const named = execFileSync("/bin/bash", ["-c", `${naming}; printf '%s' "$NAME"`], {
       encoding: "utf-8",
       env: { PATH: process.env.PATH ?? "", EXECUTABLE, ARCH: "arm64", TAG: "0.6.0" },
@@ -470,8 +473,19 @@ describe("keeping the signed and unsigned binaries apart", () => {
     expect(stepNamed("sign", SIGN_STEP).if).toBeUndefined();
   });
 
-  it("only publishes once the Intel run and both signings have passed", () => {
-    expect(WORKFLOW.jobs.publish?.needs).toEqual(["plan", "build", "run-on-intel", "sign"]);
+  it("only publishes once the Intel run, both signings and any bundle have passed", () => {
+    expect(WORKFLOW.jobs.publish?.needs).toEqual([
+      "plan",
+      "build",
+      "run-on-intel",
+      "sign",
+      "bundle",
+    ]);
+    const gate = WORKFLOW.jobs.publish?.if ?? "";
+    for (const job of ["build", "run-on-intel", "sign"]) {
+      expect(gate).toContain(`needs.${job}.result == 'success'`);
+    }
+    expect(gate).toContain("(!inputs.bundle || needs.bundle.result == 'success')");
   });
 
   it("signs on a machine matching each chip", () => {
@@ -818,7 +832,9 @@ describe("offering the binaries to the plugin's beta branch", () => {
     expect(stepNamed("propose", "Download the Bundled Binary").with?.name).toBe(
       "${{ needs.plan.outputs.executable }}-darwin-universal-signed",
     );
-    expect(WORKFLOW.jobs.propose?.needs).toContain("bundle");
+    expect(stepNamed("publish", "Download the Bundled Binary").with?.name).toBe(
+      "${{ needs.plan.outputs.executable }}-darwin-universal-signed",
+    );
     expect(WORKFLOW.jobs.bundle?.env?.STAGE).toBe(
       "${{ needs.plan.outputs.publishing == 'true' && 'signed' || 'unsigned' }}",
     );
@@ -904,8 +920,52 @@ describe("offering the binaries to the plugin's beta branch", () => {
     expect(stepNamed("propose", "Download the Bundled Binary").if).toBe("inputs.bundle");
   });
 
-  it("attaches nothing to the release for a bundle, so two pipelines never race to create it", () => {
-    expect(WORKFLOW.jobs.publish?.if).toBe(`${PUBLISHING_GATE} && !inputs.bundle`);
+  it("attaches the bundle to the release with a checksum beside it", () => {
+    const work = scratch("plugin-binary-publish-");
+    mkdirSync(join(work, "signed"));
+    writeFileSync(join(work, "signed", `${EXECUTABLE}.tar.xz`), BUNDLED_BYTES);
+    const tools = join(work, "tools");
+    mkdirSync(tools);
+    writeFileSync(
+      join(tools, "gh"),
+      [
+        "#!/bin/sh",
+        'echo "$@" >> "$GH_LOG"',
+        '[ "$1 $2" = "release view" ] && exit 1',
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(join(tools, "gh"), 0o755);
+    const log = join(work, "gh-calls.txt");
+    execFileSync(
+      "/bin/bash",
+      ["-e", "-c", script("publish", "Attach the Binaries to the Release")],
+      {
+        cwd: work,
+        env: {
+          PATH: `${tools}:${process.env.PATH ?? ""}`,
+          GH_LOG: log,
+          EXECUTABLE,
+          TAG: RELEASED_TAG,
+          PRERELEASE: "true",
+          EXTRA_NOTES: "",
+          BUNDLE: "true",
+        },
+      },
+    );
+    const asset = `${EXECUTABLE}-darwin-universal-${RELEASED_TAG}.tar.xz`;
+    expect(readFileSync(log, "utf-8")).toContain(
+      `release create ${RELEASED_TAG} release/${asset} release/${asset}.sha256`,
+    );
+    expect(readFileSync(join(work, "release", asset), "utf-8")).toBe(BUNDLED_BYTES);
+  });
+
+  it("creates the release one pipeline at a time, so a second pipeline adds to it", () => {
+    expect(WORKFLOW.jobs.publish?.concurrency).toEqual({
+      group: "${{ github.workflow }}-${{ github.ref }}-release",
+      "cancel-in-progress": false,
+    });
   });
 
   it("decides once what counts as a beta, so the release and the binaries cannot disagree", () => {
