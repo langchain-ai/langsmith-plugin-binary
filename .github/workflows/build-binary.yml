@@ -362,19 +362,24 @@ jobs:
   bundle:
     name: Bundle Both Chips Into One Compressed Binary
     needs: [plan, build, run-on-intel, sign]
-    if: ${{ !cancelled() && inputs.bundle && needs.build.result == 'success' && needs.run-on-intel.result == 'success' && (needs.sign.result == 'success' || needs.plan.outputs.publishing != 'true') }}
+    if: >-
+      ${{ !cancelled() && inputs.bundle
+      && needs.build.result == 'success'
+      && needs.run-on-intel.result == 'success'
+      && (needs.sign.result == 'success' || needs.plan.outputs.publishing != 'true') }}
     runs-on: macos-26
     timeout-minutes: 20
+    env:
+      STAGE: ${{ needs.plan.outputs.publishing == 'true' && 'signed' || 'unsigned' }}
     steps:
       - name: Download the Binaries to Bundle
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: ${{ needs.plan.outputs.executable }}-darwin-*-${{ needs.plan.outputs.publishing == 'true' && 'signed' || 'unsigned' }}
+          pattern: ${{ needs.plan.outputs.executable }}-darwin-*-${{ env.STAGE }}
           path: built
       - name: Bundle Both Chips Into One Compressed Binary
         env:
           EXECUTABLE: ${{ needs.plan.outputs.executable }}
-          STAGE: ${{ needs.plan.outputs.publishing == 'true' && 'signed' || 'unsigned' }}
         run: |
           set -euo pipefail
           OUR_TEAM="H253X88X9F"
@@ -400,7 +405,7 @@ jobs:
       - name: Upload the Bundled Binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ needs.plan.outputs.executable }}-darwin-universal-${{ needs.plan.outputs.publishing == 'true' && 'signed' || 'unsigned' }}
+          name: ${{ needs.plan.outputs.executable }}-darwin-universal-${{ env.STAGE }}
           path: bundled/${{ needs.plan.outputs.executable }}.tar.xz
           if-no-files-found: error
           retention-days: 7
@@ -408,7 +413,9 @@ jobs:
   propose:
     name: Land the Binaries on the Branch This Tag Belongs To
     needs: [plan, publish, bundle]
-    if: ${{ !cancelled() && needs.plan.outputs.publishing == 'true' && (needs.publish.result == 'success' || needs.bundle.result == 'success') }}
+    if: >-
+      ${{ !cancelled() && needs.plan.outputs.publishing == 'true'
+      && (needs.publish.result == 'success' || needs.bundle.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -455,6 +462,8 @@ jobs:
           EVIDENCE=()
           if [ "${BUNDLE:-false}" = "true" ]; then
             BRANCH="binary/$TAG-$EXECUTABLE"
+            REPLACED="the bundle"
+            FINISHED="then compressed into one bundle for both chips"
             BUNDLED="signed/$EXECUTABLE.tar.xz"
             if [ ! -f "$BUNDLED" ]; then
               echo "The bundle job uploaded no binary. Nothing lands on $BASE." >&2
@@ -465,6 +474,10 @@ jobs:
             git rm -q --ignore-unmatch -- "$DIRECTORY/$EXECUTABLE-darwin-arm64" "$DIRECTORY/$EXECUTABLE-darwin-x64"
             EVIDENCE+=("- [x] both chips are $(wc -c < "$CARRIED" | tr -d ' ') bytes compressed, sha256 $(sha256sum "$CARRIED" | cut -d' ' -f1)")
           else
+            RELEASE=$(gh release view "$TAG" --json url --jq .url 2>/dev/null || true)
+            REPLACED="the pair"
+            FINISHED="then attached to ${RELEASE:-the $TAG release}"
+            git rm -q --ignore-unmatch -- "$DIRECTORY/$EXECUTABLE.tar.xz"
             for ARCH in arm64 x64; do
               SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
               if [ ! -f "$SIGNED" ]; then
@@ -473,7 +486,6 @@ jobs:
               fi
               CARRIED="$DIRECTORY/$EXECUTABLE-darwin-$ARCH"
               cp "$SIGNED" "$CARRIED"
-              git rm -q --ignore-unmatch -- "$DIRECTORY/$EXECUTABLE.tar.xz"
               chmod +x "$CARRIED"
               EVIDENCE+=("- [x] $ARCH is $(wc -c < "$CARRIED" | tr -d ' ') bytes, sha256 $(sha256sum "$CARRIED" | cut -d' ' -f1)")
             done
@@ -497,14 +509,6 @@ jobs:
 
           git push --force origin "HEAD:refs/heads/$BRANCH"
 
-          RELEASE=$(gh release view "$TAG" --json url --jq .url 2>/dev/null || true)
-          if [ -z "$RELEASE" ]; then RELEASE="the $TAG release"; fi
-          REPLACED="the pair"
-          FINISHED="then attached to $RELEASE"
-          if [ "${BUNDLE:-false}" = "true" ]; then
-            REPLACED="the bundle"
-            FINISHED="then compressed into one bundle for both chips"
-          fi
           {
             echo "# What"
             echo

@@ -32,6 +32,7 @@ interface Job {
   strategy?: { matrix?: { include?: { arch: string; runner: string }[] } };
   needs?: string[];
   if?: string;
+  env?: Record<string, string>;
   environment?: string;
 }
 
@@ -818,7 +819,7 @@ describe("offering the binaries to the plugin's beta branch", () => {
       "${{ needs.plan.outputs.executable }}-darwin-universal-signed",
     );
     expect(WORKFLOW.jobs.propose?.needs).toContain("bundle");
-    expect(stepNamed("bundle", BUNDLE_STEP).env?.STAGE).toBe(
+    expect(WORKFLOW.jobs.bundle?.env?.STAGE).toBe(
       "${{ needs.plan.outputs.publishing == 'true' && 'signed' || 'unsigned' }}",
     );
   });
