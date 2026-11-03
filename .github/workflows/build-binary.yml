@@ -453,6 +453,7 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.target-branch }}
       - name: Download the Signed Binaries
+        if: ${{ !inputs.bundle }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: ${{ needs.plan.outputs.executable }}-darwin-*-signed
@@ -486,10 +487,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           EVIDENCE=()
+          RELEASE=$(gh release view "$TAG" --json url --jq .url 2>/dev/null || true)
           if [ "${BUNDLE:-false}" = "true" ]; then
             BRANCH="binary/$TAG-bundled"
             REPLACED="the bundle"
-            FINISHED="then compressed into one bundle for both chips"
             BUNDLED="signed/$EXECUTABLE.tar.xz"
             if [ ! -f "$BUNDLED" ]; then
               echo "The bundle job uploaded no binary. Nothing lands on $BASE." >&2
@@ -500,9 +501,7 @@ jobs:
             git rm -q --ignore-unmatch -- "$DIRECTORY/$EXECUTABLE-darwin-arm64" "$DIRECTORY/$EXECUTABLE-darwin-x64"
             EVIDENCE+=("- [x] both chips are $(wc -c < "$CARRIED" | tr -d ' ') bytes compressed, sha256 $(sha256sum "$CARRIED" | cut -d' ' -f1)")
           else
-            RELEASE=$(gh release view "$TAG" --json url --jq .url 2>/dev/null || true)
             REPLACED="the pair"
-            FINISHED="then attached to ${RELEASE:-the $TAG release}"
             git rm -q --ignore-unmatch -- "$DIRECTORY/$EXECUTABLE.tar.xz"
             for ARCH in arm64 x64; do
               SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
@@ -548,7 +547,7 @@ jobs:
             echo
             echo "# Test Plan"
             echo
-            echo "- [x] Built from tag $TAG, run on a real Intel Mac, signed and notarized by Apple, $FINISHED"
+            echo "- [x] Built from tag $TAG, run on a real Intel Mac, signed and notarized by Apple, then attached to ${RELEASE:-the $TAG release}"
             printf '%s\n' "${EVIDENCE[@]}"
           } > "$BODY"
 

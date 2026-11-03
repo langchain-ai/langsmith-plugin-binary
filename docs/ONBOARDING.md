@@ -129,7 +129,7 @@ Pass `release-notes:` to add a line to every release.
 
 Pass `binary-test:` when one repo builds more than one binary, so each runs its own test.
 
-Pass `bundle: true` to commit one compressed binary for both chips instead of one per chip. It runs beside the repo's other pipeline, and both attach their builds to the same release.
+Pass `bundle: true` to commit one compressed binary for both chips instead of one per chip.
 
 ## Betas
 
