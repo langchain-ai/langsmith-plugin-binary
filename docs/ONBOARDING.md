@@ -127,13 +127,9 @@ Tagging the default branch still opens a separate pull request. You have no pull
 
 Pass `release-notes:` to add a line to every release.
 
-Pass `binary-test:` with the package script that tests the binary when one repo builds more than one, since each binary needs its own test.
+Pass `binary-test:` when one repo builds more than one binary, so each runs its own test.
 
-Pass `bundle: true` to commit one compressed file that runs on both chips, named `<executable>.tar.xz`, instead of one binary per chip. When it opens its own pull request, the branch is `binary/<tag>-<executable>`, so it never replaces another pipeline's binaries for the same tag.
-
-A bundle is never attached to the release, since the plugin carries it, and the pipeline refuses one that LangChain's Apple team didn't sign.
-
-A bundle pipeline runs side by side with the repository's other pipeline on the same tag, and whichever lands its binaries second rebases onto the first one's commit. Pipelines that don't bundle still take turns.
+Pass `bundle: true` to commit one compressed binary for both chips instead of one per chip. It runs beside the repo's other pipeline and never touches the release.
 
 ## Betas
 
