@@ -133,7 +133,7 @@ Pass `bundle: true` to commit one compressed file that runs on both chips, named
 
 A bundle is never attached to the release, since the plugin carries it. Pass `apple-team-id:` with the team the plugin checks for, and the pipeline refuses a bundle signed by any other team.
 
-Two pipelines in one repository can run side by side, each with its own `config:`. The second one to land its binaries rebases onto the first one's commit.
+A bundle pipeline runs side by side with the repository's other pipeline on the same tag, and whichever lands its binaries second rebases onto the first one's commit. Pipelines that don't bundle still take turns.
 
 ## Betas
 

@@ -436,8 +436,10 @@ describe("the names the pipeline publishes under", () => {
     expect(publish).toContain("Nothing is published.");
   });
 
-  it("keeps two pipelines in one repository from queueing behind each other", () => {
-    expect(WORKFLOW.concurrency.group).toContain("${{ inputs.config }}");
+  it("lets only a bundle pipeline skip the queue, so pipelines that don't bundle still take turns", () => {
+    expect(WORKFLOW.concurrency.group).toBe(
+      "${{ github.workflow }}-${{ github.ref }}${{ inputs.bundle && format('-{0}', inputs.config) || '' }}",
+    );
   });
 });
 
