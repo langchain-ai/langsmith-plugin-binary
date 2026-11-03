@@ -127,6 +127,14 @@ Tagging the default branch still opens a separate pull request. You have no pull
 
 Pass `release-notes:` to add a line to every release.
 
+Pass `binary-test:` with the package script that tests the binary when one repo builds more than one, since each binary needs its own test.
+
+Pass `bundle: true` to commit one compressed file that runs on both chips, named `<executable>.tar.xz`, instead of one binary per chip. When it opens its own pull request, the branch is `binary/<tag>-<executable>`, so it never replaces another pipeline's binaries for the same tag.
+
+A bundle is never attached to the release, since the plugin carries it. Pass `apple-team-id:` with the team the plugin checks for, and the pipeline refuses a bundle signed by any other team.
+
+Two pipelines in one repository can run side by side, each with its own `config:`. The second one to land its binaries rebases onto the first one's commit.
+
 ## Betas
 
 Cut a `beta-<minor>` branch off the default branch. Bump the version on that branch only. Never merge it back, so the default branch keeps its own version.

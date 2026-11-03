@@ -39,11 +39,18 @@ const WORKFLOW = parse(
   readFileSync(new URL("../.github/workflows/build-binary.yml", import.meta.url), "utf-8"),
 ) as {
   on: Record<string, { inputs?: Record<string, unknown> }>;
-  concurrency: { "cancel-in-progress": string };
+  concurrency: { group: string; "cancel-in-progress": string };
   jobs: Record<string, Job>;
 };
 
 const PUBLISHING_GATE = "needs.plan.outputs.publishing == 'true'";
+const PROPOSE_GATE = `\${{ !cancelled() && ${PUBLISHING_GATE} && (needs.publish.result == 'success' || needs.bundle.result == 'success') }}`;
+const OUR_TEAM = "H253X88X9F";
+const BUNDLE_STEP = "Bundle Both Chips Into One Compressed Binary";
+const BUNDLED_BYTES = "signed universal bytes";
+const SIBLING_FILE = "langsmith-claude.tar.xz";
+const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
+const BINARY_TEST = "${{ inputs.binary-test }}";
 const TAG_TEST = /startsWith\(\s*github\.ref\s*,\s*'([^']*)'\s*\)/;
 const APPLE_SECRET = /secrets\.(?:APPLE|CSC)_/;
 const MANIFEST = ".claude-plugin/plugin.json";
@@ -106,10 +113,8 @@ function handedOver(job: string, action: string): string[] {
     .map((step) => step.with?.name ?? "");
 }
 
-function stepsRunning(job: string, command: string): string[] {
-  return (WORKFLOW.jobs[job]?.steps ?? [])
-    .map((step) => step.run?.trim() ?? "")
-    .filter((run) => run.includes(command));
+function binaryTests(job: string): Step[] {
+  return (WORKFLOW.jobs[job]?.steps ?? []).filter((step) => step.env?.BINARY_TEST !== undefined);
 }
 
 function jobsWhere(holds: (job: Job, name: string) => boolean): string[] {
@@ -430,6 +435,10 @@ describe("the names the pipeline publishes under", () => {
   it("refuses to publish when a signing job produced nothing", () => {
     expect(publish).toContain("Nothing is published.");
   });
+
+  it("keeps two pipelines in one repository from queueing behind each other", () => {
+    expect(WORKFLOW.concurrency.group).toContain("${{ inputs.config }}");
+  });
 });
 
 describe("keeping the signed and unsigned binaries apart", () => {
@@ -502,8 +511,7 @@ describe("the release path no pull request ever runs", () => {
 
   it("restores the executable bit in every job that runs a binary it downloaded", () => {
     const downloadsAndRuns = jobsWhere(
-      (_job, name) =>
-        handedOver(name, "download").length > 0 && stepsRunning(name, "test:binary").length > 0,
+      (_job, name) => handedOver(name, "download").length > 0 && binaryTests(name).length > 0,
     );
     const restoresTheBit = jobsWhere((job) =>
       (job.steps ?? []).some(
@@ -514,7 +522,21 @@ describe("the release path no pull request ever runs", () => {
   });
 
   it("puts the signed binary through the same test the unsigned one passed", () => {
-    expect(stepsRunning("sign", "test:binary")).toEqual(stepsRunning("build", "test:binary"));
+    expect(binaryTests("sign").map((step) => [step.env, step.run])).toEqual(
+      binaryTests("build").map((step) => [step.env, step.run]),
+    );
+  });
+
+  it("tests every build with the script the plugin names, so a second binary skips the first one's test", () => {
+    const inputs = WORKFLOW.on.workflow_call?.inputs ?? {};
+    expect(inputs["binary-test"]).toEqual(expect.objectContaining({ default: "test:binary" }));
+    const testing = ["build", "run-on-intel", "sign"].flatMap(binaryTests);
+    expect(testing).toHaveLength(3);
+    for (const step of testing) {
+      expect(step.env?.BINARY_TEST).toBe(BINARY_TEST);
+      expect(step.run?.trim()).toBe('pnpm "$BINARY_TEST"');
+    }
+    expect(JSON.stringify(WORKFLOW.jobs)).not.toContain("pnpm test:binary");
   });
 
   it("keeps the trigger the plugin repositories release through", () => {
@@ -531,9 +553,32 @@ function git(cwd: string, ...args: string[]): string {
   });
 }
 
+function buildBothChips({ signIntel = true, exitCode = 0 } = {}, stage = "unsigned"): string {
+  const work = scratch("plugin-binary-bundle-");
+  const source = join(work, "version.c");
+  writeFileSync(
+    source,
+    `#include <stdio.h>\nint main(void) { puts("1.2.3"); return ${exitCode}; }\n`,
+  );
+  for (const [arch, clangArch] of [
+    ["arm64", "arm64"],
+    ["x64", "x86_64"],
+  ] as const) {
+    const built = join(work, "built", `${EXECUTABLE}-darwin-${arch}-${stage}`, EXECUTABLE);
+    mkdirSync(dirname(built), { recursive: true });
+    execFileSync("/usr/bin/clang", ["-arch", clangArch, source, "-o", built]);
+    if (arch === "arm64" || signIntel) {
+      execFileSync("/usr/bin/codesign", ["--force", "--sign", "-", built]);
+    }
+  }
+  return work;
+}
+
 function proposeTheBinaries(
   directory = CARRIED_DIRECTORY,
   directly = "false",
+  bundle = "false",
+  siblingLandedFirst = false,
 ): { origin: string; body: string; log: string } {
   const root = scratch("plugin-binary-propose-");
   const origin = join(root, "origin.git");
@@ -547,12 +592,30 @@ function proposeTheBinaries(
   git(work, "add", "-A");
   git(work, "-c", "user.name=Seed", "-c", "user.email=s@example.invalid", "commit", "-m", "Seed");
   git(work, "push", "origin", `HEAD:refs/heads/${BETA_BRANCH}`);
+  if (siblingLandedFirst) {
+    const sibling = join(root, "sibling");
+    git(root, "clone", origin, sibling);
+    writeFileSync(join(sibling, CARRIED_DIRECTORY, SIBLING_FILE), "the other pipeline's binary");
+    git(sibling, "add", "-A");
+    git(
+      sibling,
+      "-c",
+      "user.name=Sibling",
+      "-c",
+      "user.email=b@example.invalid",
+      "commit",
+      "-m",
+      "Sibling",
+    );
+    git(sibling, "push", "origin", `HEAD:refs/heads/${BETA_BRANCH}`);
+  }
 
   for (const [arch, bytes] of Object.entries(SIGNED_BYTES)) {
     const uploaded = join(work, "signed", `${EXECUTABLE}-darwin-${arch}-signed`);
     mkdirSync(uploaded, { recursive: true });
     writeFileSync(join(uploaded, EXECUTABLE), bytes);
   }
+  writeFileSync(join(work, "signed", `${EXECUTABLE}.tar.xz`), BUNDLED_BYTES);
   mkdirSync(path);
   writeFileSync(
     join(path, "gh"),
@@ -583,6 +646,7 @@ function proposeTheBinaries(
       GH_REPO: "langchain-ai/example-plugins",
       BASE: BETA_BRANCH,
       DIRECTLY: directly,
+      BUNDLE: bundle,
       DIRECTORY: directory,
       EXECUTABLE,
       TAG: RELEASED_TAG,
@@ -640,6 +704,13 @@ describe("offering the binaries to the plugin's beta branch", () => {
     expect(log).not.toContain("pr create");
   });
 
+  it("lands beside a sibling pipeline that committed to the same branch first", () => {
+    const { origin } = proposeTheBinaries(CARRIED_DIRECTORY, "true", "false", true);
+    const landed = git(origin, "ls-tree", "--name-only", BETA_BRANCH, `${CARRIED_DIRECTORY}/`);
+    expect(landed).toContain(`${CARRIED_DIRECTORY}/${SIBLING_FILE}`);
+    expect(landed).toContain(`${CARRIED_DIRECTORY}/${EXECUTABLE}-darwin-arm64`);
+  });
+
   it("takes the choice between the two from the plan, not from a guess of its own", () => {
     expect(stepNamed("propose", PROPOSE_STEP).env?.DIRECTLY).toBe(
       "${{ needs.plan.outputs.commit-directly }}",
@@ -647,7 +718,7 @@ describe("offering the binaries to the plugin's beta branch", () => {
   });
 
   it("offers the binaries on a stable release too, so a stable user is not left without one", () => {
-    expect(WORKFLOW.jobs.propose?.if).toBe("needs.plan.outputs.publishing == 'true'");
+    expect(WORKFLOW.jobs.propose?.if).toBe(PROPOSE_GATE);
   });
 
   it("lets no caller name a branch of its own", () => {
@@ -657,6 +728,8 @@ describe("offering the binaries to the plugin's beta branch", () => {
   it("names the tag and checksums the bytes, so a swapped binary cannot pass as the signed one", () => {
     const { body } = proposeTheBinaries();
     expect(body).toContain(`Built from tag ${RELEASED_TAG}`);
+    expect(body).toContain("Replaces the pair the previous beta left behind");
+    expect(body).toContain("then attached to https://example.invalid/releases/tag");
     for (const [arch, bytes] of Object.entries(SIGNED_BYTES)) {
       const digest = createHash("sha256").update(bytes).digest("hex");
       expect(body).toContain(
@@ -678,8 +751,9 @@ describe("offering the binaries to the plugin's beta branch", () => {
 
   it("works the branch out on exactly the runs that offer it, so nothing lands on the default branch", () => {
     expect(stepNamed("plan", BETA_STEP).if).toBe(
-      (WORKFLOW.jobs.propose?.if ?? "").replaceAll("needs.plan.outputs", "steps.gate.outputs"),
+      PUBLISHING_GATE.replaceAll("needs.plan.outputs", "steps.gate.outputs"),
     );
+    expect(WORKFLOW.jobs.propose?.if).toContain(PUBLISHING_GATE);
   });
 
   it("offers nothing that has not been through signing", () => {
@@ -688,6 +762,126 @@ describe("offering the binaries to the plugin's beta branch", () => {
 
   it("waits for the release, so a repository it cannot write to costs nobody the release", () => {
     expect(WORKFLOW.jobs.propose?.needs).toContain("publish");
+  });
+
+  it("lands the bundle on a branch of its own, so a second pipeline on the same tag keeps its binaries", () => {
+    const { origin, body } = proposeTheBinaries(CARRIED_DIRECTORY, "false", "true");
+    const bundleBranch = `binary/${RELEASED_TAG}-${EXECUTABLE}`;
+    const carried = `${CARRIED_DIRECTORY}/${EXECUTABLE}.tar.xz`;
+    expect(git(origin, "show", `${bundleBranch}:${carried}`)).toBe(BUNDLED_BYTES);
+    expect(
+      git(origin, "ls-tree", "--name-only", bundleBranch, `${CARRIED_DIRECTORY}/`)
+        .trim()
+        .split("\n"),
+    ).toEqual([`${CARRIED_DIRECTORY}/.gitkeep`, carried]);
+    expect(git(origin, "branch", "--list", branch).trim()).toBe("");
+    const digest = createHash("sha256").update(BUNDLED_BYTES).digest("hex");
+    expect(body).toContain(
+      `- [x] both chips are ${Buffer.byteLength(BUNDLED_BYTES)} bytes compressed, sha256 ${digest}`,
+    );
+    expect(body).toContain("Replaces the bundle the previous beta left behind");
+    expect(body).toContain("then compressed into one bundle for both chips");
+    expect(body).not.toContain("attached to");
+  });
+
+  it("lands only a bundle built from signed binaries, and only once it exists", () => {
+    expect(stepNamed("propose", "Download the Bundled Binary").with?.name).toBe(
+      "${{ needs.plan.outputs.executable }}-darwin-universal-signed",
+    );
+    expect(WORKFLOW.jobs.propose?.needs).toContain("bundle");
+    expect(stepNamed("bundle", BUNDLE_STEP).env?.STAGE).toBe(
+      "${{ needs.plan.outputs.publishing == 'true' && 'signed' || 'unsigned' }}",
+    );
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "bundles both chips into one compressed file that still runs once unpacked",
+    () => {
+      const work = buildBothChips();
+      runStep("bundle", BUNDLE_STEP, work, { EXECUTABLE, STAGE: "unsigned" });
+      const bundled = join(work, "bundled", `${EXECUTABLE}.tar.xz`);
+      expect(readFileSync(bundled).subarray(0, XZ_MAGIC.length)).toEqual(XZ_MAGIC);
+      const unpacked = join(scratch(), "unpacked");
+      mkdirSync(unpacked);
+      execFileSync("/usr/bin/tar", ["-xJf", bundled, "-C", unpacked]);
+      const binary = join(unpacked, EXECUTABLE);
+      expect(
+        execFileSync("/usr/bin/lipo", ["-archs", binary], { encoding: "utf-8" })
+          .trim()
+          .split(" ")
+          .toSorted(),
+      ).toEqual(["arm64", "x86_64"]);
+      expect(execFileSync(binary, { encoding: "utf-8" }).trim()).toBe("1.2.3");
+    },
+  );
+
+  it.runIf(process.platform === "darwin")("refuses to bundle a chip nothing signed", () => {
+    const work = buildBothChips({ signIntel: false });
+    expect(() => runStep("bundle", BUNDLE_STEP, work, { EXECUTABLE, STAGE: "unsigned" })).toThrow();
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "refuses to bundle a release our team did not sign, since the plugin would refuse it",
+    () => {
+      const work = buildBothChips({}, "signed");
+      expect(() => runStep("bundle", BUNDLE_STEP, work, { EXECUTABLE, STAGE: "signed" })).toThrow(
+        /carries no team signature/,
+      );
+    },
+  );
+
+  it.runIf(process.platform === "darwin")(
+    "refuses a bundle that will not run once unpacked",
+    () => {
+      const work = buildBothChips({ exitCode: 1 });
+      expect(() =>
+        runStep("bundle", BUNDLE_STEP, work, { EXECUTABLE, STAGE: "unsigned" }),
+      ).toThrow();
+    },
+  );
+
+  it("bundles a release only from builds that finished signing and ran on Intel", () => {
+    const gate = WORKFLOW.jobs.bundle?.if ?? "";
+    expect(gate).toContain(
+      "(needs.sign.result == 'success' || needs.plan.outputs.publishing != 'true')",
+    );
+    expect(gate).toContain("needs.run-on-intel.result == 'success'");
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "refuses to bundle a release another team signed, since the plugin checks for its own",
+    () => {
+      const work = buildBothChips({}, "signed");
+      const tools = join(work, "tools");
+      mkdirSync(tools);
+      writeFileSync(
+        join(tools, "codesign"),
+        [
+          "#!/bin/sh",
+          'case "$1" in -dv) echo "TeamIdentifier=ZZZZ999999" >&2 ;; esac',
+          "exit 0",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(join(tools, "codesign"), 0o755);
+      const withTeam = (team: string) => () =>
+        runStep("bundle", BUNDLE_STEP, work, {
+          EXECUTABLE,
+          STAGE: "signed",
+          TEAM_ID: team,
+          PATH: `${tools}:${process.env.PATH ?? ""}`,
+        });
+      expect(withTeam(OUR_TEAM)).toThrow(/signed by team ZZZZ999999, not H253X88X9F/);
+      expect(withTeam("ZZZZ999999")).not.toThrow();
+    },
+  );
+
+  it("downloads a bundle only for plugins that bundle, so every other plugin still lands its binaries", () => {
+    expect(stepNamed("propose", "Download the Bundled Binary").if).toBe("inputs.bundle");
+  });
+
+  it("attaches nothing to the release for a bundle, so two pipelines never race to create it", () => {
+    expect(WORKFLOW.jobs.publish?.if).toBe(`${PUBLISHING_GATE} && !inputs.bundle`);
   });
 
   it("decides once what counts as a beta, so the release and the binaries cannot disagree", () => {
