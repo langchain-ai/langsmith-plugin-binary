@@ -17,6 +17,14 @@ on:
         description: The folder in the plugin's repository the signed binaries are committed to.
         type: string
         default: binary
+      binary-test:
+        description: The plugin's package script that tests the built binary.
+        type: string
+        default: test:binary
+      bundle:
+        description: Commit one compressed binary that runs on both chips, rather than one binary per chip.
+        type: boolean
+        default: false
       signing-environment:
         description: The deployment environment holding the Apple credentials.
         type: string
@@ -38,7 +46,7 @@ on:
         required: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}${{ inputs.bundle && format('-{0}', inputs.config) || '' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
@@ -184,7 +192,9 @@ jobs:
           CONFIG: ${{ inputs.config }}
         run: pnpm build:binary -- --config "$CONFIG" --arch=all
       - name: Test the Binary
-        run: pnpm test:binary
+        env:
+          BINARY_TEST: ${{ inputs.binary-test }}
+        run: pnpm "$BINARY_TEST"
       - name: Upload the Unsigned arm64 Binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -231,7 +241,9 @@ jobs:
           arch
           file "$BINARY"
       - name: Test the Binary
-        run: pnpm test:binary
+        env:
+          BINARY_TEST: ${{ inputs.binary-test }}
+        run: pnpm "$BINARY_TEST"
 
   sign:
     name: Sign and Notarize the ${{ matrix.arch }} Binary
@@ -280,7 +292,9 @@ jobs:
           CONFIG: ${{ inputs.config }}
         run: pnpm sign:binary -- --config "$CONFIG"
       - name: Test the Signed Binary
-        run: pnpm test:binary
+        env:
+          BINARY_TEST: ${{ inputs.binary-test }}
+        run: pnpm "$BINARY_TEST"
       - name: Upload the Signed Binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -291,17 +305,32 @@ jobs:
 
   publish:
     name: Publish the Binaries to the Release
-    needs: [plan, build, run-on-intel, sign]
-    if: needs.plan.outputs.publishing == 'true'
+    needs: [plan, build, run-on-intel, sign, bundle]
+    if: >-
+      ${{ !cancelled() && needs.plan.outputs.publishing == 'true'
+      && needs.build.result == 'success'
+      && needs.run-on-intel.result == 'success'
+      && needs.sign.result == 'success'
+      && (!inputs.bundle || needs.bundle.result == 'success') }}
+    concurrency:
+      group: plugin-binary-release-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write
     steps:
       - name: Download the Signed Binaries
+        if: ${{ !inputs.bundle }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: ${{ needs.plan.outputs.executable }}-darwin-*-signed
+          path: signed
+      - name: Download the Bundled Binary
+        if: inputs.bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.plan.outputs.executable }}-darwin-universal-signed
           path: signed
       - name: Attach the Binaries to the Release
         env:
@@ -311,21 +340,34 @@ jobs:
           EXECUTABLE: ${{ needs.plan.outputs.executable }}
           PRERELEASE: ${{ needs.plan.outputs.prerelease }}
           EXTRA_NOTES: ${{ inputs.release-notes }}
+          BUNDLE: ${{ inputs.bundle }}
         run: |
           set -euo pipefail
           mkdir -p release
           ASSETS=()
-          for ARCH in arm64 x64; do
-            NAME="$EXECUTABLE-darwin-$ARCH-$TAG"
-            SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
-            if [ ! -f "$SIGNED" ]; then
-              echo "The $ARCH signing job uploaded no binary. Nothing is published." >&2
+          if [ "${BUNDLE:-false}" = "true" ]; then
+            NAME="$EXECUTABLE-darwin-universal-$TAG.tar.xz"
+            BUNDLED="signed/$EXECUTABLE.tar.xz"
+            if [ ! -f "$BUNDLED" ]; then
+              echo "The bundle job uploaded no binary. Nothing is published." >&2
               exit 1
             fi
-            mv "$SIGNED" "release/$NAME"
+            mv "$BUNDLED" "release/$NAME"
             (cd release && sha256sum "$NAME" > "$NAME.sha256")
             ASSETS+=("release/$NAME" "release/$NAME.sha256")
-          done
+          else
+            for ARCH in arm64 x64; do
+              NAME="$EXECUTABLE-darwin-$ARCH-$TAG"
+              SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
+              if [ ! -f "$SIGNED" ]; then
+                echo "The $ARCH signing job uploaded no binary. Nothing is published." >&2
+                exit 1
+              fi
+              mv "$SIGNED" "release/$NAME"
+              (cd release && sha256sum "$NAME" > "$NAME.sha256")
+              ASSETS+=("release/$NAME" "release/$NAME.sha256")
+            done
+          fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
@@ -345,6 +387,57 @@ jobs:
             --generate-notes \
             --notes-file release/notes.md
 
+  bundle:
+    name: Bundle Both Chips Into One Compressed Binary
+    needs: [plan, build, run-on-intel, sign]
+    if: >-
+      ${{ !cancelled() && inputs.bundle
+      && needs.build.result == 'success'
+      && needs.run-on-intel.result == 'success'
+      && (needs.sign.result == 'success' || needs.plan.outputs.publishing != 'true') }}
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      STAGE: ${{ needs.plan.outputs.publishing == 'true' && 'signed' || 'unsigned' }}
+    steps:
+      - name: Download the Binaries to Bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ${{ needs.plan.outputs.executable }}-darwin-*-${{ env.STAGE }}
+          path: built
+      - name: Bundle Both Chips Into One Compressed Binary
+        env:
+          EXECUTABLE: ${{ needs.plan.outputs.executable }}
+        run: |
+          set -euo pipefail
+          OUR_TEAM="H253X88X9F"
+          mkdir -p universal bundled unpacked
+          lipo -create \
+            "built/$EXECUTABLE-darwin-arm64-$STAGE/$EXECUTABLE" \
+            "built/$EXECUTABLE-darwin-x64-$STAGE/$EXECUTABLE" \
+            -output "universal/$EXECUTABLE"
+          codesign --verify --strict "universal/$EXECUTABLE"
+          if [ "$STAGE" = "signed" ]; then
+            for ARCH in arm64 x86_64; do
+              TEAM=$(codesign -dv --arch "$ARCH" "universal/$EXECUTABLE" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+              if [ "$TEAM" != "$OUR_TEAM" ]; then
+                echo "The $ARCH build is signed by team ${TEAM:-none}, not $OUR_TEAM, so the plugin would refuse it. Nothing is bundled." >&2
+                exit 1
+              fi
+            done
+          fi
+          chmod +x "universal/$EXECUTABLE"
+          tar -cJf "bundled/$EXECUTABLE.tar.xz" -C universal "$EXECUTABLE"
+          tar -xJf "bundled/$EXECUTABLE.tar.xz" -C unpacked
+          "unpacked/$EXECUTABLE" --version
+      - name: Upload the Bundled Binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ needs.plan.outputs.executable }}-darwin-universal-${{ env.STAGE }}
+          path: bundled/${{ needs.plan.outputs.executable }}.tar.xz
+          if-no-files-found: error
+          retention-days: 7
+
   propose:
     name: Land the Binaries on the Branch This Tag Belongs To
     needs: [plan, publish]
@@ -360,9 +453,16 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.target-branch }}
       - name: Download the Signed Binaries
+        if: ${{ !inputs.bundle }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: ${{ needs.plan.outputs.executable }}-darwin-*-signed
+          path: signed
+      - name: Download the Bundled Binary
+        if: inputs.bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.plan.outputs.executable }}-darwin-universal-signed
           path: signed
       - name: Land the Binaries on the Branch This Tag Belongs To
         env:
@@ -373,6 +473,7 @@ jobs:
           DIRECTORY: ${{ inputs.binary-directory }}
           EXECUTABLE: ${{ needs.plan.outputs.executable }}
           TAG: ${{ github.ref_name }}
+          BUNDLE: ${{ inputs.bundle }}
         run: |
           set -euo pipefail
           if [ ! -d "$DIRECTORY" ]; then
@@ -386,17 +487,34 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           EVIDENCE=()
-          for ARCH in arm64 x64; do
-            SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
-            if [ ! -f "$SIGNED" ]; then
-              echo "The $ARCH signing job uploaded no binary. Nothing lands on $BASE." >&2
+          RELEASE=$(gh release view "$TAG" --json url --jq .url 2>/dev/null || true)
+          if [ "${BUNDLE:-false}" = "true" ]; then
+            BRANCH="binary/$TAG-bundled"
+            REPLACED="the bundle"
+            BUNDLED="signed/$EXECUTABLE.tar.xz"
+            if [ ! -f "$BUNDLED" ]; then
+              echo "The bundle job uploaded no binary. Nothing lands on $BASE." >&2
               exit 1
             fi
-            CARRIED="$DIRECTORY/$EXECUTABLE-darwin-$ARCH"
-            cp "$SIGNED" "$CARRIED"
-            chmod +x "$CARRIED"
-            EVIDENCE+=("- [x] $ARCH is $(wc -c < "$CARRIED" | tr -d ' ') bytes, sha256 $(sha256sum "$CARRIED" | cut -d' ' -f1)")
-          done
+            CARRIED="$DIRECTORY/$EXECUTABLE.tar.xz"
+            cp "$BUNDLED" "$CARRIED"
+            git rm -q --ignore-unmatch -- "$DIRECTORY/$EXECUTABLE-darwin-arm64" "$DIRECTORY/$EXECUTABLE-darwin-x64"
+            EVIDENCE+=("- [x] both chips are $(wc -c < "$CARRIED" | tr -d ' ') bytes compressed, sha256 $(sha256sum "$CARRIED" | cut -d' ' -f1)")
+          else
+            REPLACED="the pair"
+            git rm -q --ignore-unmatch -- "$DIRECTORY/$EXECUTABLE.tar.xz"
+            for ARCH in arm64 x64; do
+              SIGNED="signed/$EXECUTABLE-darwin-$ARCH-signed/$EXECUTABLE"
+              if [ ! -f "$SIGNED" ]; then
+                echo "The $ARCH signing job uploaded no binary. Nothing lands on $BASE." >&2
+                exit 1
+              fi
+              CARRIED="$DIRECTORY/$EXECUTABLE-darwin-$ARCH"
+              cp "$SIGNED" "$CARRIED"
+              chmod +x "$CARRIED"
+              EVIDENCE+=("- [x] $ARCH is $(wc -c < "$CARRIED" | tr -d ' ') bytes, sha256 $(sha256sum "$CARRIED" | cut -d' ' -f1)")
+            done
+          fi
 
           git add -- "$DIRECTORY"
           if git diff --cached --quiet; then
@@ -406,20 +524,21 @@ jobs:
           git commit -m "chore(binary): Add the Signed Binaries for $TAG"
 
           if [ "${DIRECTLY:-false}" = "true" ]; then
-            git push origin "HEAD:refs/heads/$BASE"
+            if ! git push origin "HEAD:refs/heads/$BASE"; then
+              git pull --rebase origin "$BASE"
+              git push origin "HEAD:refs/heads/$BASE"
+            fi
             echo "$BASE now carries the $TAG binaries beside its version bump, so one merge ships both."
             exit 0
           fi
 
           git push --force origin "HEAD:refs/heads/$BRANCH"
 
-          RELEASE=$(gh release view "$TAG" --json url --jq .url 2>/dev/null || true)
-          if [ -z "$RELEASE" ]; then RELEASE="the $TAG release"; fi
           {
             echo "# What"
             echo
             echo "- Adds the macOS builds this beta ships with"
-            echo "- Replaces the pair the previous beta left behind"
+            echo "- Replaces $REPLACED the previous beta left behind"
             echo
             echo "# Why"
             echo
@@ -428,7 +547,7 @@ jobs:
             echo
             echo "# Test Plan"
             echo
-            echo "- [x] Built from tag $TAG, run on a real Intel Mac, signed and notarized by Apple, then attached to $RELEASE"
+            echo "- [x] Built from tag $TAG, run on a real Intel Mac, signed and notarized by Apple, then attached to ${RELEASE:-the $TAG release}"
             printf '%s\n' "${EVIDENCE[@]}"
           } > "$BODY"
 

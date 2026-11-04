@@ -127,6 +127,10 @@ Tagging the default branch still opens a separate pull request. You have no pull
 
 Pass `release-notes:` to add a line to every release.
 
+Pass `binary-test:` when one repo builds more than one binary, so each runs its own test.
+
+Pass `bundle: true` to commit one compressed binary for both chips instead of one per chip.
+
 ## Betas
 
 Cut a `beta-<minor>` branch off the default branch. Bump the version on that branch only. Never merge it back, so the default branch keeps its own version.
