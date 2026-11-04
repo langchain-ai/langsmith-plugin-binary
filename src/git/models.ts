@@ -47,7 +47,6 @@ export interface RepositoryAttributionSeed {
 export interface RepositoryAttributorOptions {
   githubLoginMarkerPath: string;
   seed?: RepositoryAttributionSeed;
-  skipGitHubLogin?: boolean;
 }
 
 export interface RepositoryAttributor {

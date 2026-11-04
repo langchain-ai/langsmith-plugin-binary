@@ -374,6 +374,13 @@ describe("captureRepositoryAttribution", () => {
     expect(Object.keys(seed.metadata).toSorted()).toEqual([alpha, beta].toSorted());
   });
 
+  it("reads each repository once however many of its folders the turn touched", () => {
+    captureRepositoryAttribution([alpha, nested, makeDir(alpha, "third dir")]);
+
+    const branchReads = gitCommands().filter((command) => command.includes("--abbrev-ref"));
+    expect(branchReads).toHaveLength(1);
+  });
+
   it("leaves an author missing at turn end to the GitHub login, never a name set later", () => {
     vi.stubEnv("GIT_CONFIG_GLOBAL", process.platform === "win32" ? "NUL" : "/dev/null");
     const seed = captureRepositoryAttribution([nameless]);
