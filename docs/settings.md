@@ -45,6 +45,8 @@ Setting some fields in the managed file also fixes related fields so users can't
 - Setting `project` also applies to traces still waiting to upload
 - Setting `project` without `agent_id` makes the plugin ignore any `agent_id` a user sets, so traces still go to that project
 
+Set `profile` in the managed file to make every user trace with the same CLI account (e.g. your production one). Until a user signs in to that account, their tracing pauses and a notice shows them the exact `langsmith auth login --profile <name>` command to run.
+
 A plugin's own settings, such as Cursor's `attachments`, can go in the managed file when that plugin supports it. Otherwise the plugin logs a warning and ignores them.
 
 ## Set it up on macOS
@@ -89,7 +91,7 @@ The login's own server and workspace are used unless a setting names an endpoint
 
 A CLI sign-in acts as you so your workspace role needs permission to write traces. You may get a 403 if you switched from a tracing API key (`lsv2_tr_...`) to the CLI sign-in since tracing keys can always write traces whatever your role is. If that happens ask your admin to give you a role that can write traces such as Workspace Editor and check that no [ABAC deny policy](https://docs.langchain.com/langsmith/abac) on the project blocks it.
 
-If you have more than one CLI profile, set `profile` to the one the plugin should use. You sign in to a profile with `langsmith auth login --profile <name>`.
+If you sign in to the LangSmith CLI with more than one account, such as one for production and one for a dev environment, set `profile` to the one tracing should use. Otherwise the plugins use whichever account the CLI is currently signed in with. To add an account, run `langsmith auth login --profile <name>`.
 
 When the login expires, uploads are dropped just like with a rejected API key until you sign in again. A rejected API key gets a notice to replace it until an upload with a key works again.
 
