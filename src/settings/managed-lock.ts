@@ -11,6 +11,7 @@ import { object } from "./utils/records.js";
 
 export function lockedValues(common: CommonConfig): CommonConfig {
   const lock = { ...common };
+  if (lock.profile === "") delete lock.profile;
   if (lock.api_key !== undefined || lock.replicas !== undefined)
     lock.api_url ??= COMMON_DEFAULT_API_URL;
   if (lock.api_url !== undefined || lock.project !== undefined) lock.replicas ??= [];

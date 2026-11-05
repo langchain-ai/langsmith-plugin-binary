@@ -197,6 +197,10 @@ describe.skipIf(!posix)("managed config lock", () => {
     });
     expect(merged).toMatchObject({ profile: "company", workspace_id: "managed-workspace" });
     expect(merged.locked).toEqual(expect.arrayContaining(["profile", "workspace_id"]));
+    const empty = readManagedConfigFile({ path: managedFile({ profile: "" }), ownerUid: uid });
+    const unlocked = mergeCommonConfig({ managed: empty, env: { profile: "personal" } });
+    expect(unlocked.profile).toBe("personal");
+    expect(unlocked.locked).not.toContain("profile");
   });
 
   it("locks every field the file sets, merging only the metadata keys it leaves open", () => {
