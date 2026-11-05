@@ -13,6 +13,7 @@ export const COMMON_STRICT_BOOLEAN_FIELDS = [
 ] as const;
 
 export const COMMON_DEFAULT_API_URL = "https://api.smith.langchain.com";
+export const COMMON_NO_API_KEY = "";
 
 export const COMMON_CONFIG_FILE_NAME = "langsmith.json";
 export const COMMON_CONFIG_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);

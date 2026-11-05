@@ -193,10 +193,15 @@ describe.skipIf(!posix)("managed config lock", () => {
     const merged = mergeCommonConfig({
       managed: readManagedConfigFile({ path, ownerUid: uid }),
       env: { profile: "personal" },
-      user: { workspace_id: "user-workspace" },
+      user: { workspace_id: "user-workspace", api_key: "user-key" },
     });
-    expect(merged).toMatchObject({ profile: "company", workspace_id: "managed-workspace" });
-    expect(merged.locked).toEqual(expect.arrayContaining(["profile", "workspace_id"]));
+    expect(merged).toMatchObject({
+      profile: "company",
+      workspace_id: "managed-workspace",
+      api_key: "",
+    });
+    expect(merged.api_url).toBeUndefined();
+    expect(merged.diagnostics).toContainEqual(expect.stringContaining("api_key from user"));
     const empty = readManagedConfigFile({ path: managedFile({ profile: "" }), ownerUid: uid });
     const unlocked = mergeCommonConfig({ managed: empty, env: { profile: "personal" } });
     expect(unlocked.profile).toBe("personal");

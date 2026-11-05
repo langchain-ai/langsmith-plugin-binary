@@ -40,6 +40,7 @@ Setting some fields in the managed file also fixes related fields so users can't
 
 - Setting `api_key` or `replicas` also fixes `api_url` to the file's value or the default server
 - Setting `api_url` (where traces go) or `project` also fixes `replicas` (extra copies) to the file's list or none
+- Setting `profile` makes the plugin ignore any `api_key` a user sets, so traces upload with that login
 - Setting `redact_extra_rules` keeps redaction on
 - Setting `project` also applies to traces still waiting to upload
 - Setting `project` without `agent_id` makes the plugin ignore any `agent_id` a user sets, so traces still go to that project
