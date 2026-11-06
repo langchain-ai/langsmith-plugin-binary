@@ -112,3 +112,16 @@ export function loginReplicaRefusal(
   );
   return usable ? undefined : refusedLoginReplicas(configured, apiUrl);
 }
+
+export function uploadingReplicaCount(
+  replicas: readonly LoginReplica[] | undefined,
+  credential: UploadCredential,
+): number {
+  if (credential.kind === "api-key") return replicas?.length ?? 0;
+  return (replicas ?? []).filter(
+    (replica) =>
+      sdkSetting(replica.apiKey) !== undefined ||
+      (credential.kind === "login" &&
+        refusedLoginReplicas([replica], credential.apiUrl) === undefined),
+  ).length;
+}
