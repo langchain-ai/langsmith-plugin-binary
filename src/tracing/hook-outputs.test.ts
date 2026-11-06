@@ -10,6 +10,7 @@ it("lists hook outputs under one key and adds nothing when no hook ran", () => {
   expect(
     hookOutputs([
       { name: "UserPromptSubmit", output: "Run the linter" },
+      { name: "UserPromptSubmit", output: "[LangSmith tracing command] Thread tracing muted." },
       sessionStart,
       missingOutput,
       null as unknown as HookOutput,
