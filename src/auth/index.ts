@@ -2,6 +2,7 @@ export {
   loginReplicaRefusal,
   refusedLoginReplicas,
   resolveUploadCredential,
+  uploadingReplicaCount,
 } from "./credential.js";
 export { readLoginNotice } from "./expiry.js";
 export { loginCommand } from "./profile.js";

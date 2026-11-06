@@ -1,3 +1,4 @@
+import type { PROMPT_SUBMIT_EVENT } from "./constants.js";
 import type { CaptureStore } from "../storage/capture/models.js";
 import type { CodingAgentIntegration } from "../metadata/models.js";
 import type {
@@ -63,4 +64,32 @@ export interface NoticeOptions {
   cooldown?: number | "off" | undefined;
   storageRoot: string;
   persistentOnly?: boolean;
+}
+
+export interface PromptCommand<Name extends string = string> {
+  name: Name;
+  text: string;
+  takesArguments: boolean;
+}
+
+export interface MatchedPromptCommand<Name extends string = string> {
+  name: Name;
+  argumentText: string;
+}
+
+export type PromptCommandHandler<Context> = (
+  argumentText: string,
+  context: Context,
+) => string | Promise<string>;
+
+export interface PromptCommandNotices {
+  systemMessages?: readonly string[];
+  blockReason?: string;
+}
+
+export interface PromptCommandResponse {
+  decision?: "block";
+  reason?: string;
+  systemMessage?: string;
+  hookSpecificOutput?: { hookEventName: typeof PROMPT_SUBMIT_EVENT; additionalContext: string };
 }

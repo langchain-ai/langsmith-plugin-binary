@@ -40,9 +40,12 @@ Setting some fields in the managed file also fixes related fields so users can't
 
 - Setting `api_key` or `replicas` also fixes `api_url` to the file's value or the default server
 - Setting `api_url` (where traces go) or `project` also fixes `replicas` (extra copies) to the file's list or none
+- Setting `profile` makes the plugin ignore any `api_key` a user sets, so traces upload with that login
 - Setting `redact_extra_rules` keeps redaction on
 - Setting `project` also applies to traces still waiting to upload
 - Setting `project` without `agent_id` makes the plugin ignore any `agent_id` a user sets, so traces still go to that project
+
+Set `profile` in the managed file to make every user trace with the same CLI account (e.g. your production one). Until a user signs in to that account, their tracing pauses and a notice shows them the exact `langsmith auth login --profile <name>` command to run.
 
 A plugin's own settings, such as Cursor's `attachments`, can go in the managed file when that plugin supports it. Otherwise the plugin logs a warning and ignores them.
 
@@ -52,8 +55,8 @@ Save the settings to enforce as `managed.json`:
 
 ```json
 {
-  "api_url": "https://langsmith.example.com",
-  "project": "engineering",
+  "api_url": "https://api.smith.langchain.com",
+  "agent_id": "coding-agent",
   "redact_extra_rules": [{ "pattern": "ACME-SECRET-[0-9]+", "replace": "[redacted]" }]
 }
 ```
@@ -74,7 +77,7 @@ On Linux use `root:root` and `chattr +i` instead of `chflags schg`.
 
 ## Choose where traces go
 
-Set `agent_id` to send traces to an agent or `project` to send them to a project. Either one works on its own, and `agent_id` wins if you set both.
+In an [agent-based workspace](https://docs.langchain.com/langsmith/migrate-to-agent-based-workspaces) set `agent_id` to send traces to an agent. In a project-based workspace use the legacy `project` setting instead, and `agent_id` wins if you set both.
 
 An agent ID uses lowercase letters, numbers and hyphens and starts with a letter. If `agent_id` doesn't match that the plugin stops uploading and shows a notice saying why, but your prompts still go through. A replica that doesn't name its own project goes to the same agent as long as it uses the same login, server and workspace.
 
@@ -86,7 +89,9 @@ The login's own server and workspace are used unless a setting names an endpoint
 
 `workspace_id` picks the workspace traces go to when you sign in with the CLI. Your login needs access to that workspace, otherwise uploads fail and the plugin shows a notice without blocking prompts unless strict auth is on. API keys already belong to one workspace so they ignore this setting.
 
-If you have more than one CLI profile, set `profile` to the one the plugin should use. You sign in to a profile with `langsmith auth login --profile <name>`.
+A CLI sign-in acts as you so your workspace role needs permission to write traces. You may get a 403 if you switched from a tracing API key (`lsv2_tr_...`) to the CLI sign-in since tracing keys can always write traces whatever your role is. If that happens ask your admin to give you a role that can write traces such as Workspace Editor and check that no [ABAC deny policy](https://docs.langchain.com/langsmith/abac) on the project blocks it.
+
+If you sign in to the LangSmith CLI with more than one account, such as one for production and one for a dev environment, set `profile` to the one tracing should use. Otherwise the plugins use whichever account the CLI is currently signed in with. To add an account, run `langsmith auth login --profile <name>`.
 
 When the login expires, uploads are dropped just like with a rejected API key until you sign in again. A rejected API key gets a notice to replace it until an upload with a key works again.
 

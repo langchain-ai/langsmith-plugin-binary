@@ -44,3 +44,10 @@ export const NOTICE_MINUTE_MS = 60_000;
 export const NOTICE_OFF = "off";
 export const NOTICE_STATE_FILE = "notices.json";
 export const NOTICE_KEY_SEPARATOR = "\n";
+export const COMMAND_REPLY_MARKER = "[LangSmith tracing command]";
+export const COMMAND_REPLY_INSTRUCTION =
+  "The user ran a LangSmith tracing command and the plugin already did what they asked. Let them know what happened, based on the result below:";
+export const PROMPT_SUBMIT_EVENT = "UserPromptSubmit";
+export const COMMAND_ARGUMENT_START = /^\s/u;
+export const COMMAND_REPLY_NOTICE_SEPARATOR = "\n\n";
+export const SYSTEM_MESSAGE_SEPARATOR = "\n";

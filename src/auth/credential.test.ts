@@ -1,7 +1,12 @@
 import { writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { writeLoginConfig } from "../test-support/login.js";
-import { loginCommand, loginReplicaRefusal, resolveUploadCredential } from "./index.js";
+import {
+  loginCommand,
+  loginReplicaRefusal,
+  resolveUploadCredential,
+  uploadingReplicaCount,
+} from "./index.js";
 
 const LOGIN_URL = "https://login.example/api/v1";
 const CONFIGURED_WORKSPACE = "0f6aa4d5-4686-425f-bc12-288b4079e73e";
@@ -209,5 +214,24 @@ describe("upload credential", () => {
     );
     const quoted = [{ apiKey: "''", apiUrl: "https://self-hosted.example" }];
     expect(loginReplicaRefusal(quoted, LOGIN_URL)).toContain("self-hosted.example");
+  });
+
+  it("counts only the replicas that can upload with the credential in use", () => {
+    const replicas = [
+      {},
+      { apiUrl: LOGIN_URL },
+      { apiUrl: "https://self-hosted.example" },
+      { apiUrl: "https://self-hosted.example", apiKey: "k" },
+    ];
+    const login = {
+      kind: "login",
+      login: { configPath: "", profile: "default" },
+      apiUrl: LOGIN_URL,
+    } as const;
+    const apiKey = { kind: "api-key", apiKey: "k", apiUrl: LOGIN_URL } as const;
+    expect(uploadingReplicaCount(replicas, apiKey)).toBe(4);
+    expect(uploadingReplicaCount(replicas, login)).toBe(3);
+    expect(uploadingReplicaCount(replicas, { kind: "none", reason: "none" })).toBe(1);
+    expect(uploadingReplicaCount(undefined, login)).toBe(0);
   });
 });
