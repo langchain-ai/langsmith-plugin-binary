@@ -123,6 +123,11 @@ function jobsWhere(holds: (job: Job, name: string) => boolean): string[] {
   return Object.keys(WORKFLOW.jobs).filter((name) => holds(WORKFLOW.jobs[name] ?? {}, name));
 }
 
+function ancestors(name: string): string[] {
+  const needs = [WORKFLOW.jobs[name]?.needs ?? []].flat();
+  return [...new Set(needs.flatMap((need) => [need, ...ancestors(need)]))];
+}
+
 function tagPrefix(expression: string): string {
   const found = TAG_TEST.exec(expression);
   if (found === null) throw new Error(`${expression} never tests github.ref against a tag`);
@@ -769,7 +774,7 @@ describe("offering the binaries to the plugin's beta branch", () => {
   });
 
   it("offers the binaries on a stable release too, so a stable user is not left without one", () => {
-    expect(WORKFLOW.jobs.propose?.if).toBe("needs.plan.outputs.publishing == 'true'");
+    expect(WORKFLOW.jobs.propose?.if).not.toContain("prerelease");
   });
 
   it("lets no caller name a branch of its own", () => {
@@ -802,7 +807,7 @@ describe("offering the binaries to the plugin's beta branch", () => {
 
   it("works the branch out on exactly the runs that offer it, so nothing lands on the default branch", () => {
     expect(stepNamed("plan", BETA_STEP).if).toBe(
-      (WORKFLOW.jobs.propose?.if ?? "").replaceAll("needs.plan.outputs", "steps.gate.outputs"),
+      PUBLISHING_GATE.replaceAll("needs.plan.outputs", "steps.gate.outputs"),
     );
   });
 
@@ -812,6 +817,18 @@ describe("offering the binaries to the plugin's beta branch", () => {
 
   it("waits for the release, so a repository it cannot write to costs nobody the release", () => {
     expect(WORKFLOW.jobs.propose?.needs).toContain("publish");
+    expect(WORKFLOW.jobs.propose?.if).toContain("needs.publish.result == 'success'");
+  });
+
+  it("runs every job below one that can be skipped, since GitHub otherwise skips the whole chain", () => {
+    const skippable = jobsWhere((job) => job.if !== undefined);
+    expect(
+      jobsWhere(
+        (job, name) =>
+          ancestors(name).some((ancestor) => skippable.includes(ancestor)) &&
+          !(job.if ?? "").includes("!cancelled()"),
+      ),
+    ).toEqual([]);
   });
 
   it("lands the bundle on a branch of its own, so a second pipeline on the same tag keeps its binaries", () => {

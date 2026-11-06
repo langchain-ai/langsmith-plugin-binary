@@ -441,7 +441,9 @@ jobs:
   propose:
     name: Land the Binaries on the Branch This Tag Belongs To
     needs: [plan, publish]
-    if: needs.plan.outputs.publishing == 'true'
+    if: >-
+      ${{ !cancelled() && needs.plan.outputs.publishing == 'true'
+      && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
