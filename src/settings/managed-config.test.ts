@@ -188,17 +188,24 @@ describe.skipIf(!posix)("managed config lock", () => {
     expect(mergeCommonConfig({ managed: agent, user: { agent_id: "mine" } }).agent_id).toBe("corp");
   });
 
-  it("locks the workspace an admin sets but leaves the login profile to each user", () => {
+  it("locks the login profile and workspace an admin sets", () => {
     const path = managedFile({ profile: "company", workspace_id: "managed-workspace" });
     const merged = mergeCommonConfig({
       managed: readManagedConfigFile({ path, ownerUid: uid }),
       env: { profile: "personal" },
-      user: { workspace_id: "user-workspace" },
+      user: { workspace_id: "user-workspace", api_key: "user-key" },
     });
-    expect(merged).toMatchObject({ profile: "personal", workspace_id: "managed-workspace" });
-    expect(merged.locked).toContain("workspace_id");
-    expect(merged.locked).not.toContain("profile");
-    expect(merged.diagnostics).toContainEqual(expect.stringContaining("sets profile"));
+    expect(merged).toMatchObject({
+      profile: "company",
+      workspace_id: "managed-workspace",
+      api_key: "",
+    });
+    expect(merged.api_url).toBeUndefined();
+    expect(merged.diagnostics).toContainEqual(expect.stringContaining("api_key from user"));
+    const empty = readManagedConfigFile({ path: managedFile({ profile: "" }), ownerUid: uid });
+    const unlocked = mergeCommonConfig({ managed: empty, env: { profile: "personal" } });
+    expect(unlocked.profile).toBe("personal");
+    expect(unlocked.locked).not.toContain("profile");
   });
 
   it("locks every field the file sets, merging only the metadata keys it leaves open", () => {

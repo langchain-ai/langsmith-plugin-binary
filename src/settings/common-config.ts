@@ -1,11 +1,6 @@
 import { COMMON_BOOLEAN_SETTINGS } from "./constants.js";
 import { readManagedConfigFile } from "./managed-config.js";
-import {
-  lockedFields,
-  lockedValues,
-  overrideDiagnostics,
-  userOnlyDiagnostics,
-} from "./managed-lock.js";
+import { lockedFields, lockedValues, overrideDiagnostics } from "./managed-lock.js";
 import type {
   CommonConfig,
   CommonConfigSources,
@@ -54,11 +49,7 @@ export function mergeCommonConfig(
     defaulted: (Object.keys(defaults) as LockableField[]).filter(
       (field) => resolveField([lock, env, ...files], field) === undefined,
     ),
-    diagnostics: [
-      ...managed.diagnostics,
-      ...userOnlyDiagnostics(managed.common),
-      ...overrideDiagnostics(sources, lock),
-    ],
+    diagnostics: [...managed.diagnostics, ...overrideDiagnostics(sources, lock)],
   };
   for (const field of ["enabled", "defaultMuted"] as const) {
     merged[field] = resolveField(switches, field) ?? COMMON_BOOLEAN_SETTINGS[field].default;
