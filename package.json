@@ -104,10 +104,11 @@
     "lint": "npm run lint:format && npm run lint:oxlint && npm run lint:types",
     "lint:format": "oxfmt --check",
     "lint:oxlint": "oxlint",
-    "lint:types": "tsc --noEmit -p tsconfig/tsconfig.check.json && tsc --noEmit -p tsconfig/tsconfig.settings-check.json",
+    "lint:types": "tsc --noEmit -p tsconfig/tsconfig.check.json && tsc --noEmit -p tsconfig/tsconfig.settings-check.json && tsc --noEmit -p tsconfig/tsconfig.qa.json",
     "test": "vitest run"
   },
   "devDependencies": {
+    "@lydell/node-pty": "1.2.0-beta.15",
     "@types/node": "^26.6.4",
     "langsmith": "0.11.4",
     "oxfmt": "^0.73.0",

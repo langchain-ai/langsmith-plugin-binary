@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.check.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "allowImportingTsExtensions": true
+  },
+  "include": ["../qa/**/*.ts"],
+  "exclude": []
+}

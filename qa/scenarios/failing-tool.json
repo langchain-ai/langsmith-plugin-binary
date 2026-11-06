@@ -1,0 +1,12 @@
+{
+  "name": "failing-tool",
+  "files": {},
+  "turns": [
+    {
+      "prompt": "Run the shell command cat missing-file.txt and tell me the exact error.",
+      "minTools": 1,
+      "toolOutputContains": "No such file"
+    }
+  ],
+  "hooksPerTurn": { "claude": ["UserPromptSubmit", "Stop"], "codex": ["UserPromptSubmit", "Stop"] }
+}
