@@ -57,6 +57,10 @@ export const CODING_AGENT_V1_CONTRACT: CodingAgentV1Contract = {
       ...CODING_AGENT_ALWAYS_FIELD_OPTIONS,
       allowedValues: CODING_AGENT_SCHEMA_INTEGRATIONS,
     }),
+    structural("ls_harness_name", {
+      ...CODING_AGENT_ALWAYS_FIELD_OPTIONS,
+      allowedValues: CODING_AGENT_SCHEMA_INTEGRATIONS,
+    }),
     structural("ls_agent_runtime", {
       ...CODING_AGENT_ALWAYS_FIELD_OPTIONS,
       allowedValues: Object.values(CODING_AGENT_RUNTIME_NAMES),

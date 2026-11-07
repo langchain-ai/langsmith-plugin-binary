@@ -106,6 +106,22 @@ describe("coding-agent-v1 metadata contract", () => {
     expect(metadata.ls_integration_version).not.toBe(metadata.ls_agent_runtime_version);
   });
 
+  it.each(["claude-code", "cursor", "openai-codex"] as const)(
+    "names the %s harness on full and muted runs",
+    (integration) => {
+      const metadata = buildCodingAgentMetadata({
+        integration,
+        threadId: "session",
+        agentType: "root",
+        runType: "root",
+      });
+      expect(metadata.ls_harness_name).toBe(integration);
+      expect(metadataForMode(metadata, integration, "metadata")).toMatchObject({
+        ls_harness_name: integration,
+      });
+    },
+  );
+
   it.each(["claude-code", "cursor"] as const)(
     "preserves %s custom-base precedence from the current adapters",
     (integration) => {
