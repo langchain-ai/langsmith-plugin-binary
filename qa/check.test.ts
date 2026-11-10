@@ -77,8 +77,25 @@ describe("checkRuns", () => {
 
   it("catches a turn that lost its final reply", () => {
     expect(
-      checkRuns(scenario, withChange("r1", { outputs: { messages: [{ content: "" }] } })),
+      checkRuns(
+        scenario,
+        withChange("r1", { outputs: { messages: [{ content: "" }], error: "tool finished" } }),
+      ),
     ).toEqual(["turn 1 is missing the final reply"]);
+  });
+
+  it("matches a prompt and tool output that contain quotes", () => {
+    const quoted: Scenario = {
+      ...scenario,
+      turns: [
+        { prompt: 'read "notes"', minTools: 1, toolOutputContains: 'say "hello"' },
+        scenario.turns[1]!,
+      ],
+    };
+    const runs = withChange("r1", { inputs: { messages: ['read "notes"'] } }).map((existing) =>
+      existing.id === "k1" ? { ...existing, outputs: { stdout: 'say "hello"' } } : existing,
+    );
+    expect(checkRuns(quoted, runs)).toEqual([]);
   });
 
   it("catches a turn with no model call", () => {

@@ -53,6 +53,7 @@ console.log(
   `running ${options.scenario.name} on ${options.agent} into ${options.project} (work folder ${options.workDir})`,
 );
 const { launch, eventsFile, secretFiles } = preparers[options.agent](options);
+const startedAt = new Date().toISOString();
 const prompts = options.scenario.turns.map((turn) => turn.prompt);
 const failures = await driveTerminal(launch, prompts, eventsFile).finally(() => {
   for (const file of secretFiles) rmSync(file, { force: true });
@@ -62,6 +63,7 @@ const runs = await waitForRuns(
   options.tracingApiKey,
   options.project,
   options.scenario.turns.length,
+  startedAt,
 );
 failures.push(...checkRuns(options.scenario, runs));
 

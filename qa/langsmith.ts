@@ -12,7 +12,7 @@ async function request<T>(apiKey: string, path: string, body?: unknown): Promise
   return (await response.json()) as T;
 }
 
-async function listRuns(apiKey: string, project: string): Promise<TracedRun[]> {
+async function listRuns(apiKey: string, project: string, since: string): Promise<TracedRun[]> {
   const sessions = await request<{ id: string }[]>(
     apiKey,
     `/api/v1/sessions?name=${encodeURIComponent(project)}`,
@@ -21,6 +21,7 @@ async function listRuns(apiKey: string, project: string): Promise<TracedRun[]> {
   if (session === undefined) return [];
   const result = await request<{ runs: TracedRun[] }>(apiKey, "/api/v1/runs/query", {
     session: [session.id],
+    start_time: since,
     limit: RUN_QUERY_LIMIT,
     select: [
       "id",
@@ -41,15 +42,16 @@ export async function waitForRuns(
   apiKey: string,
   project: string,
   expectedRoots: number,
+  since: string,
 ): Promise<TracedRun[]> {
   const deadline = Date.now() + UPLOAD_TIMEOUT_MS;
   let runs: TracedRun[] = [];
   while (Date.now() < deadline) {
-    runs = await listRuns(apiKey, project).catch(() => runs);
+    runs = await listRuns(apiKey, project, since).catch(() => runs);
     const roots = runs.filter((run) => run.parent_run_id === null);
     await sleep(UPLOAD_POLL_MS);
     if (roots.length >= expectedRoots && roots.every((run) => run.end_time !== null))
-      return listRuns(apiKey, project);
+      return listRuns(apiKey, project, since).catch(() => runs);
   }
   return runs;
 }

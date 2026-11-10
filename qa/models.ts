@@ -45,6 +45,10 @@ export interface TracedRun {
   outputs: unknown;
 }
 
+export interface RootOutputs {
+  messages?: unknown;
+}
+
 export interface Workspace {
   home: string;
   project: string;

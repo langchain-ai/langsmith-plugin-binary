@@ -1,4 +1,5 @@
-import type { AgentName, Scenario, TracedRun } from "./models.ts";
+import type { AgentName, RootOutputs, Scenario, TracedRun } from "./models.ts";
+import { containsText } from "./utils/text.ts";
 
 function descendantsOf(root: TracedRun, runs: TracedRun[]): TracedRun[] {
   return runs.filter((run) => run.trace_id === root.trace_id && run.id !== root.id);
@@ -34,9 +35,10 @@ export function checkRuns(scenario: Scenario, runs: TracedRun[]): string[] {
     const label = `turn ${index + 1}`;
     const children = descendantsOf(root, runs);
     const tools = children.filter((run) => run.run_type === "tool");
-    if (!JSON.stringify(root.inputs).includes(turn.prompt))
+    if (!containsText(JSON.stringify(root.inputs) ?? "", turn.prompt))
       failures.push(`${label} is missing the user prompt`);
-    if (!hasText(root.outputs)) failures.push(`${label} is missing the final reply`);
+    if (!hasText((root.outputs as RootOutputs | null)?.messages))
+      failures.push(`${label} is missing the final reply`);
     if (!children.some((run) => run.run_type === "llm"))
       failures.push(`${label} has no model call`);
     if (tools.length < turn.minTools)
@@ -44,7 +46,7 @@ export function checkRuns(scenario: Scenario, runs: TracedRun[]): string[] {
     const expectedOutput = turn.toolOutputContains;
     if (
       expectedOutput !== undefined &&
-      !tools.some((tool) => JSON.stringify(tool.outputs).includes(expectedOutput))
+      !tools.some((tool) => containsText(JSON.stringify(tool.outputs) ?? "", expectedOutput))
     ) {
       failures.push(`${label} has no tool output containing "${expectedOutput}"`);
     }
