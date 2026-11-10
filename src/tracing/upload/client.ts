@@ -3,6 +3,7 @@ import { LOGIN_EXPIRED_STATUS, LOGIN_NO_ACCESS_STATUS } from "../../auth/expiry-
 import {
   UPLOAD_AUTHORIZATION_HEADER,
   UPLOAD_BEARER_PATTERN,
+  UPLOAD_MANAGED_HEADERS,
   UPLOAD_REQUEST_TIMEOUT_MS,
   UPLOAD_SDK_MAX_RETRIES,
 } from "./constants.js";
@@ -32,6 +33,7 @@ export function createUploadClient(options: UploadClientOptions): Client {
     debug: false,
     omitTracedRuntimeInfo: true,
     tracingMode: "langsmith",
+    headers: UPLOAD_MANAGED_HEADERS,
     ...(anonymizer === undefined ? {} : { anonymizer, hideMetadata: anonymizer }),
     ...(redactedFields?.includes("inputs") ? { hideInputs: false } : {}),
     ...(redactedFields?.includes("outputs") ? { hideOutputs: false } : {}),
