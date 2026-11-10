@@ -90,6 +90,7 @@ export interface StoredCapture extends CaptureInput {
   version: number;
   capturedAtMs: number;
   delivery?: CaptureDelivery;
+  contentDigest?: string;
 }
 
 export interface EnumeratedCapture {
@@ -157,6 +158,10 @@ export interface CaptureStore {
     turnId: string,
   ): Promise<EnumeratedCapture[]>;
   enumerateSessions(integration: string): Promise<EnumeratedCaptureSession[]>;
+  forEachSession(
+    integration: string,
+    visit: (session: EnumeratedCaptureSession) => Promise<void>,
+  ): Promise<void>;
   recordRetry(scope: CaptureScope, destination: string, retry: CaptureRetry): Promise<void>;
   recordOutcome(input: OutcomeInput): Promise<OutcomeWriteResult>;
   readOutcome(scope: CaptureScope, destination: string): Promise<OutcomeReadResult>;

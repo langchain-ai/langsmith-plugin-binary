@@ -41,7 +41,7 @@ export async function removeExpiredCaptures(options: ExpiredCaptureOptions): Pro
   let pastCeiling = 0;
   let otherSetting = 0;
   let held = 0;
-  for (const { captures } of await options.store.enumerateSessions(options.integration)) {
+  await options.store.forEachSession(options.integration, async ({ captures }) => {
     const spans = liveTurnSpans(captures);
     const expiring = captures.flatMap((capture) => {
       const reason = expiryOf(capture, spans, options);
@@ -60,7 +60,7 @@ export async function removeExpiredCaptures(options: ExpiredCaptureOptions): Pro
       )
         otherSetting += 1;
     }
-  }
+  });
   await options.store.removeStaleMarkers(options.integration, options.now - options.maxAgeMs);
   if (dropped > 0)
     console.warn(

@@ -82,6 +82,7 @@ import {
 import { scopeOf } from "./scope.js";
 import { compareCaptureOrder } from "./order.js";
 import { captureContentDigest } from "./utils/digest.js";
+import { withoutSentContent } from "./settled.js";
 import {
   forgetTurnMarkers,
   readDroppedRunIds,
@@ -120,6 +121,8 @@ export function createCaptureStore(
       );
     },
     enumerateSessions: (integration) => enumerateIntegrationSessions(storageRoot, integration),
+    forEachSession: (integration, visit) =>
+      visitIntegrationSessions(storageRoot, integration, visit),
     recordRetry: (scope, destination, retry) =>
       recordRetryState(storageRoot, scope, destination, retry),
     recordOutcome: (input) => recordDeliveryOutcome(storageRoot, input),
@@ -230,19 +233,29 @@ async function enumerateIntegrationSessions(
   root: CaptureStorageRoot,
   integration: string,
 ): Promise<EnumeratedCaptureSession[]> {
-  validateIntegration(integration);
   const sessions: EnumeratedCaptureSession[] = [];
+  await visitIntegrationSessions(root, integration, async (session) => {
+    sessions.push(session);
+  });
+  return sessions.toSorted((left, right) =>
+    left.sessionId === right.sessionId ? 0 : left.sessionId < right.sessionId ? -1 : 1,
+  );
+}
+
+async function visitIntegrationSessions(
+  root: CaptureStorageRoot,
+  integration: string,
+  visit: (session: EnumeratedCaptureSession) => Promise<void>,
+): Promise<void> {
+  validateIntegration(integration);
   for (const directory of (await listPrivateDirectory(
     captureRoot(root),
     sessionsDirectory(root, integration),
   )) ?? []) {
     if (!directory.isDirectory() || !CAPTURE_HASH.test(directory.name)) continue;
     const captures = await enumerateTurns(root, integration, directory.name, () => true);
-    if (captures.length > 0) sessions.push({ sessionId: captures[0]!.record.sessionId, captures });
+    if (captures.length > 0) await visit({ sessionId: captures[0]!.record.sessionId, captures });
   }
-  return sessions.toSorted((left, right) =>
-    left.sessionId === right.sessionId ? 0 : left.sessionId < right.sessionId ? -1 : 1,
-  );
 }
 
 async function recordRetryState(
@@ -301,13 +314,11 @@ async function recordDeliveryOutcome(
         ...(input.reason === undefined ? {} : { reason: input.reason }),
         recordedAt: new Date().toISOString(),
       };
-      await saveDelivery(
-        root,
-        path,
-        record,
-        { ...delivery, outcomes: { ...delivery.outcomes, [input.destination]: outcome } },
-        lock,
-      );
+      const settled = {
+        ...delivery,
+        outcomes: { ...delivery.outcomes, [input.destination]: outcome },
+      };
+      await saveDelivery(root, path, withoutSentContent(record, settled), settled, lock);
       return { status: "recorded", receipt: receiptOf(input, outcome) };
     });
   } catch (error) {

@@ -18,6 +18,7 @@ export const TRACING_ENGINE_RECOVERY_ACCOUNT_FINGERPRINT_DOES_NOT_MATCH_ACTIVE_S
 export const TRACING_ENGINE_SESSION_RECOVERY_OPTIONS_MUST_BE_OBJECT_MESSAGE =
   "Session recovery options must be an object";
 export const TRACING_ENGINE_RECOVERY_MAX_FOREIGN_SESSIONS = 25;
+export const TRACING_ENGINE_RECOVERY_LOCK = "recovery.lock";
 export const TRACING_ENGINE_STORAGE_ROOT_REQUIRED_MESSAGE = "A storage folder is required";
 export const TRACING_ENGINE_RECOVERY_SETTLEMENT_CONFLICT_MESSAGE =
   "Recovery settlement capture conflicts with the current source state";
