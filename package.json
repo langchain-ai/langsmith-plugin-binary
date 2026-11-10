@@ -109,7 +109,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
-    "langsmith": "0.11.6",
+    "langsmith": "0.11.8",
     "oxfmt": "^0.76.0",
     "oxlint": "^1.87.0",
     "typescript": "^7.0.2",
