@@ -32,6 +32,7 @@ import {
   BACKGROUND_WORKER_MARKER_VERSION,
   BACKGROUND_WORKER_MAX_ATTEMPTS_MUST_BE_POSITIVE_INTEGER_MESSAGE,
   BACKGROUND_WORKER_OWNER_WAIT_MS,
+  BACKGROUND_WORKER_PASS_GAP_MS,
   BACKGROUND_WORKER_RETRY_ATTEMPT_ALREADY_EXISTS_MESSAGE,
   BACKGROUND_WORKER_RETRY_DELAY_MUST_BE_NON_NEGATIVE_MESSAGE,
   BACKGROUND_WORKER_STARTUP_WAIT_MUST_BE_POSITIVE_INTEGER_MESSAGE,
@@ -186,6 +187,7 @@ async function runOwnedPasses(
     if (pass.retryPending && retryPolicy.retryDelayMs > 0) await delay(retryPolicy.retryDelayMs);
     if (!(await hasPendingWork(storageRoot, directory, scope)))
       return totals.retryExhausted ? "retry-exhausted" : totals.processed ? "completed" : "idle";
+    await delay(BACKGROUND_WORKER_PASS_GAP_MS);
   }
 }
 

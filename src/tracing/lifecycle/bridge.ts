@@ -61,6 +61,7 @@ import {
   LIFECYCLE_STORED_RUN_CONTEXT_IS_REQUIRED_MESSAGE,
   LIFECYCLE_STORED_RUN_DATA_IS_REQUIRED_MESSAGE,
   LIFECYCLE_STORED_RUN_ID_DOES_NOT_MATCH_ITS_CAPTURE_MESSAGE,
+  LIFECYCLE_SWEEP_INTERVAL_MS,
   LIFECYCLE_SWEEP_WARNING,
   LIFECYCLE_UPLOAD_ACCOUNT_CHANGED_MESSAGE,
 } from "./constants.js";
@@ -108,6 +109,7 @@ function createBridgeContext(options: LifecycleBridgeOptions): LifecycleBridgeCo
     writer,
     policy,
     wake: options.wake,
+    lastSweptAtMs: undefined,
   };
 }
 
@@ -294,6 +296,14 @@ async function sweepWithWarning<T>(fallback: T, sweep: () => Promise<T>): Promis
   }
 }
 
+function claimSweep(context: LifecycleBridgeContext, now: number): boolean {
+  const lastSweptAtMs = context.lastSweptAtMs;
+  if (lastSweptAtMs !== undefined && now - lastSweptAtMs < LIFECYCLE_SWEEP_INTERVAL_MS)
+    return false;
+  context.lastSweptAtMs = now;
+  return true;
+}
+
 function sweepExpiredCaptures(context: LifecycleBridgeContext, now: number): Promise<number> {
   return sweepWithWarning(0, () =>
     removeExpiredCaptures({
@@ -432,8 +442,11 @@ async function drainWhileLocked(
   const { captureStore, integration, sessionId, writer } = context;
   const attempted = new Set<string>();
   const now = input.now ?? Date.now();
-  const expired = await sweepExpiredCaptures(context, now);
-  await sweepStaleFiles(context, now);
+  let expired = 0;
+  if (claimSweep(context, now)) {
+    expired = await sweepExpiredCaptures(context, now);
+    await sweepStaleFiles(context, now);
+  }
   const first = await drainOnce(context, attempted);
   if (first.status === "busy") return busyDrainResult();
   const { captures, work } = await settleSessionTurns(context);

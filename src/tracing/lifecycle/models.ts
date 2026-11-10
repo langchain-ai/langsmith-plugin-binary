@@ -147,6 +147,7 @@ export interface LifecycleBridgeContext {
   writer: LangSmithUploadWriter;
   policy: DeliveryPolicy;
   wake: LifecycleBridgeOptions["wake"];
+  lastSweptAtMs: number | undefined;
 }
 
 export interface LifecycleCaptureRequest {

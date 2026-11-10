@@ -195,6 +195,23 @@ it("bounds failures across wakes and keeps the lock through retry delays", async
   expect(stateNames(root, BACKGROUND_WORKER_ATTEMPT_NAME)).toEqual([]);
 });
 
+it("waits before running another pass when more work arrived during a pass", async () => {
+  const root = temporaryRoot();
+  const competitor = worker(root, { launchWorker: () => 1 });
+  const passStarts: number[] = [];
+  const batching = worker(root, {
+    drainPending: async () => {
+      passStarts.push(Date.now());
+      if (passStarts.length === 1) await competitor.wake();
+      return "idle" as const;
+    },
+  });
+  await batching.wake().catch(() => {});
+  await batching.run();
+  expect(passStarts).toHaveLength(2);
+  expect(passStarts[1]! - passStarts[0]!).toBeGreaterThanOrEqual(4_000);
+});
+
 it("rechecks the account around every task and keeps sessions apart", async () => {
   const root = temporaryRoot();
   const mutableScope = { ...scope };
