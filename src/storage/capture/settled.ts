@@ -13,7 +13,8 @@ export function withoutSentContent(
   if (!isPlainRecord(payload) || payload.operation !== "post" || !isPlainRecord(payload.run))
     return record;
   const { inputs, outputs, ...run } = payload.run;
-  const keepsInputs = record.runId === record.turnId;
+  const evidence = isPlainRecord(record.turnEvidence) ? record.turnEvidence : {};
+  const keepsInputs = record.runId === evidence.rootRunId;
   if (outputs === undefined && keepsInputs) return record;
   return {
     ...record,

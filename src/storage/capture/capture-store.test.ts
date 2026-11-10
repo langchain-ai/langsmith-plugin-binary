@@ -44,7 +44,7 @@ function sentPost(eventId: string, run: Record<string, unknown>): CaptureInput {
   return {
     ...captureInput(eventId),
     runId: run.id as string,
-    turnId: "root-run",
+    turnEvidence: { childRunIds: [], closed: false, rootRunId: "root-run" },
     destinationRoutes: { "project-a": { projectName: "a" }, "project-b": { projectName: "b" } },
     normalizedPayload: {
       operation: "post",
