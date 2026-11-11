@@ -64,3 +64,14 @@ it.each(['""', '""""', `"''"`, "' '", "   "])(
     );
   },
 );
+
+it("asks LangSmith to tag every upload with the sender's teams", async () => {
+  headers.length = 0;
+  const writer = createLangSmithUploadWriter({
+    redact: true,
+    destinations: [{ apiKey: "synthetic-key", apiUrl: endpoint, projectName: "p" }],
+  });
+  await writer.send(submission, writer.destinations[0]!.id);
+  expect(headers.length).toBeGreaterThan(0);
+  for (const request of headers) expect(request["x-langsmith-team-tags"]).toBe("true");
+});

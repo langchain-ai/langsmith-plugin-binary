@@ -77,6 +77,7 @@ export const UPLOAD_DOTTED_ORDER_ROOT_ID = /^\d{8}T\d+Z([0-9a-f-]{36})/i;
 export const UPLOAD_SDK_API_KEY_FIELD = "apiKey";
 export const UPLOAD_SDK_API_URL_FIELD = "apiUrl";
 export const UPLOAD_AUTHORIZATION_HEADER = "Authorization";
+export const UPLOAD_MANAGED_HEADERS = { "X-LangSmith-Team-Tags": "true" };
 export const UPLOAD_BEARER_PATTERN = /^Bearer /u;
 export const UPLOAD_LOGIN_UNUSABLE_MESSAGE =
   "The LangSmith SDK would not send this destination's uploads with the CLI login on its own server, so nothing is uploaded to it";
