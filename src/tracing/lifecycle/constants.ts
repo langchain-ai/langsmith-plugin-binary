@@ -10,6 +10,7 @@ export const LIFECYCLE_ATTRIBUTION_READY_FIELD = "attributionReady";
 export const LIFECYCLE_ENGINE_FOLDERS: readonly string[] = [CAPTURE_SESSIONS_DIRECTORY];
 export const LIFECYCLE_SETTLEMENT_LOCK_PREFIX = "settlement-";
 export const LIFECYCLE_TURN_CLOSURE_STATES = ["open", "provisional", "authoritative"] as const;
+export const LIFECYCLE_SWEEP_INTERVAL_MS = 60_000;
 export const LIFECYCLE_SWEEP_WARNING = "Could not clean up old trace files:";
 export const LIFECYCLE_CHILD_TURN_GRACE_MS = 60 * 60 * 1000;
 export const LIFECYCLE_UPLOAD_ACCOUNT_CHANGED_MESSAGE = "Upload account changed";

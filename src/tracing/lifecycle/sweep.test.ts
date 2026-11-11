@@ -68,11 +68,13 @@ function strayFile() {
     "sessions",
     "wake-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.active.11111111-0000-4000-8000-000000000000.json",
   );
-  mkdirSync(join(root, "sessions"));
+  mkdirSync(join(root, "sessions"), { recursive: true });
   writeFileSync(stray, "{}");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   utimesSync(stray, old, old);
 }
+
+const strayLeft = () => filesUnder(root).some((file) => file.includes(".active.11111111"));
 
 const saveOld = () =>
   lifecycle().capture({
@@ -82,6 +84,17 @@ const saveOld = () =>
     turnEvidence: turnEvidence("open", []),
     sourceAgeStartedAtMs: Date.now() - 25 * 60 * 60 * 1000,
   });
+
+it("clears old leftover files at most once a minute", async () => {
+  const bridge = lifecycle();
+  const now = Date.now();
+  await bridge.drain({ now });
+  strayFile();
+  await bridge.drain({ now: now + 59_000 });
+  expect(strayLeft()).toBe(true);
+  await bridge.drain({ now: now + 60_000 });
+  expect(strayLeft()).toBe(false);
+});
 
 it("still clears old leftover files when the expiry sweep fails", async () => {
   strayFile();

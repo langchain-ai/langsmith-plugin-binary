@@ -1,4 +1,6 @@
 import type { CaptureWriteResult } from "../../storage/capture/models.js";
+import { tryAcquireFileLock } from "../../storage/index.js";
+import { removeEmptyLockFolders } from "../../storage/lock-folders.js";
 import { createBackgroundWorker } from "../background-worker/index.js";
 import { matchesScope } from "../background-worker/utils/scope.js";
 import type { BackgroundWorker, BackgroundWorkerScope } from "../background-worker/models.js";
@@ -10,7 +12,7 @@ import type { ReconstructionJobInput } from "../reconstruction/models.js";
 import { describe } from "../../utils/errors.js";
 import { lifecyclePassResult, reconstructionPassResult } from "./pass-results.js";
 import { snapshotEngineOptions, snapshotSessionOptions } from "./options.js";
-import { recoverTracingSessions } from "./recovery.js";
+import { recoverTracingSessions, recoveryLockPath } from "./recovery.js";
 import { runBackgroundRecovery } from "./background-recovery.js";
 import { TRACING_ENGINE_BACKGROUND_RECOVERY_REPORT_ERROR } from "./constants.js";
 import { drainThroughBackoff } from "./retry-wait.js";
@@ -136,13 +138,21 @@ async function reportBackgroundRecovery(
   context: TracingEngineSessionContext,
   backgroundRecovery: NonNullable<TracingEngineSessionOptions["backgroundRecovery"]>,
 ): Promise<void> {
-  const { session, scope } = context;
+  const { config, session, scope } = context;
+  const lockPath = recoveryLockPath(config.storageRoot);
   let recoveryResult: TracingEngineBackgroundRecoveryResult;
   const checkScope = () => matchesScope(() => session.resolveScope(scope), scope);
   try {
-    recoveryResult = (await checkScope())
-      ? await runBackgroundRecovery(recoveryRuntime(context), backgroundRecovery, checkScope)
-      : { status: "scope-mismatch" };
+    const lock = await tryAcquireFileLock(lockPath);
+    if (!lock) return;
+    try {
+      recoveryResult = (await checkScope())
+        ? await runBackgroundRecovery(recoveryRuntime(context), backgroundRecovery, checkScope)
+        : { status: "scope-mismatch" };
+    } finally {
+      await lock.release();
+      await removeEmptyLockFolders(lockPath, config.storageRoot);
+    }
   } catch (error) {
     recoveryResult = { status: "failed", message: describe(error), retryable: true };
   }

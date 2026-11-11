@@ -1,9 +1,10 @@
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createCaptureStore } from "../../storage/capture/index.js";
+import { tryAcquireFileLock } from "../../storage/index.js";
 import { childEnvironment, moduleUrl, temporaryRoot } from "../../test-support/tracing/delivery.js";
 import {
   CHILD_ID,
@@ -19,6 +20,7 @@ import { CaptureWakeError } from "../index.js";
 import { createLangSmithUploadWriter } from "../upload/index.js";
 import { TRACING_ENGINE_STORAGE_ROOT_REQUIRED_MESSAGE } from "./constants.js";
 import { createTracingEngine } from "./engine.js";
+import { recoveryLockPath } from "./recovery.js";
 import type {
   TracingEngineOptions,
   TracingEngineScope,
@@ -282,4 +284,51 @@ it("reports background recovery after a drain without failing the drain", async 
   await expect(changed.drain()).resolves.toBe("idle");
   expect(reports[2]).toEqual({ status: "scope-mismatch" });
   error.mockRestore();
+});
+
+it("runs background recovery in one worker at a time", async () => {
+  const root = temporaryRoot();
+  const reports: unknown[] = [];
+  const lockFreeDuringScopeChecks: boolean[] = [];
+  const lockPath = recoveryLockPath(root);
+  const worker = () =>
+    session(root, {
+      resolveScope: async (expected) => {
+        const probe = await tryAcquireFileLock(lockPath);
+        lockFreeDuringScopeChecks.push(probe !== undefined);
+        await probe?.release();
+        return expected;
+      },
+      backgroundRecovery: {
+        onReport: (report) => {
+          reports.push(report);
+        },
+        optionsForSession: () => Promise.reject(new Error("unused")),
+      },
+    });
+  const running = await tryAcquireFileLock(lockPath);
+  await expect(worker().drain()).resolves.toBe("idle");
+  expect(reports).toEqual([]);
+  await running!.release();
+  await expect(worker().drain()).resolves.toBe("idle");
+  expect(reports).toMatchObject([{ status: "completed" }]);
+  expect(lockFreeDuringScopeChecks.at(-1)).toBe(false);
+  expect(readdirSync(root).filter((name) => name.startsWith(basename(lockPath)))).toEqual([]);
+});
+
+it("reports a recovery lock it cannot take without failing the drain", async () => {
+  const root = temporaryRoot();
+  const reports: unknown[] = [];
+  const lockPath = recoveryLockPath(root);
+  writeFileSync(`${lockPath}.claims`, "");
+  const worker = session(root, {
+    backgroundRecovery: {
+      onReport: (report) => {
+        reports.push(report);
+      },
+      optionsForSession: () => Promise.reject(new Error("unused")),
+    },
+  });
+  await expect(worker.drain()).resolves.toBe("idle");
+  expect(reports).toMatchObject([{ status: "failed", retryable: true }]);
 });

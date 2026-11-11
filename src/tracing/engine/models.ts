@@ -132,10 +132,11 @@ export type RetryWaitResult = { status: "busy" } | ({ status: "drained" } & Retr
 
 export interface TracingEngineRecoveryIndex {
   lifecycleStore: CaptureStore;
+  reconstructionStore: CaptureStore;
   writer: LangSmithUploadWriter;
   destinationIds: string[];
-  lifecycleBySession: ReadonlyMap<string, EnumeratedCapture[]>;
-  reconstructionBySession: ReadonlyMap<string, EnumeratedCapture[]>;
+  lifecycleSessionIds: ReadonlySet<string>;
+  reconstructionSessionIds: ReadonlySet<string>;
   savedScopes: ReadonlySet<string>;
   waitingForOtherSetting: number;
 }

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { CAPTURE_JOBS_DIRECTORY } from "../../storage/capture/constants.js";
 import { isWaitingForRetry } from "../../storage/capture/retry-state.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
@@ -17,6 +18,7 @@ import {
   TRACING_ENGINE_BACKGROUND_RECOVERY_MINIMUM_AGE_ERROR,
   TRACING_ENGINE_FOREIGN_SESSION_MIN_AGE_MS,
   TRACING_ENGINE_RECOVERY_ACCOUNT_FINGERPRINT_DOES_NOT_MATCH_ACTIVE_SESSION_MESSAGE,
+  TRACING_ENGINE_RECOVERY_LOCK,
   TRACING_ENGINE_RECOVERY_MAX_FOREIGN_SESSIONS,
   TRACING_ENGINE_RECOVERY_TIME_MUST_BE_VALID_TIMESTAMP_MESSAGE,
   TRACING_ENGINE_SESSION_RECOVERY_OPTIONS_CALLBACK_IS_REQUIRED_MESSAGE,
@@ -39,6 +41,10 @@ import type {
 } from "./models.js";
 import { scopeKey } from "../../storage/capture/scope.js";
 
+export function recoveryLockPath(storageRoot: string): string {
+  return join(storageRoot, TRACING_ENGINE_RECOVERY_LOCK);
+}
+
 function validateRecoveryRequest(request: TracingEngineRecoveryOptions) {
   const now = request.now ?? Date.now();
   if (!Number.isSafeInteger(now) || !Number.isFinite(new Date(now).getTime()))
@@ -57,10 +63,20 @@ async function loadRecoveryIndex(
 ): Promise<TracingEngineRecoveryIndex> {
   const lifecycleStore = createCaptureStore(runtime.storageRoot);
   const reconstructionStore = createCaptureStore(runtime.storageRoot, CAPTURE_JOBS_DIRECTORY);
-  const [lifecycleSessions, reconstructionSessions] = await Promise.all([
-    lifecycleStore.enumerateSessions(runtime.integration),
-    reconstructionStore.enumerateSessions(runtime.integration),
-  ]);
+  const lifecycleSessionIds = new Set<string>();
+  const reconstructionSessionIds = new Set<string>();
+  const savedScopes = new Set<string>();
+  let waitingForOtherSetting = 0;
+  await lifecycleStore.forEachSession(runtime.integration, async ({ sessionId, captures }) => {
+    lifecycleSessionIds.add(sessionId);
+    for (const { record } of captures) {
+      savedScopes.add(scopeKey(record));
+      if (isWaitingForOtherSetting(record, runtime.accountFingerprint)) waitingForOtherSetting += 1;
+    }
+  });
+  await reconstructionStore.forEachSession(runtime.integration, async ({ sessionId }) => {
+    reconstructionSessionIds.add(sessionId);
+  });
   const writer = createLangSmithUploadWriter(runtime.writer);
   if (writer.accountFingerprint !== runtime.accountFingerprint)
     throw new Error(
@@ -68,20 +84,13 @@ async function loadRecoveryIndex(
     );
   return {
     lifecycleStore,
+    reconstructionStore,
     writer,
     destinationIds: writer.destinations.map((destination) => destination.id),
-    lifecycleBySession: new Map(
-      lifecycleSessions.map((entry) => [entry.sessionId, entry.captures]),
-    ),
-    reconstructionBySession: new Map(
-      reconstructionSessions.map((entry) => [entry.sessionId, entry.captures]),
-    ),
-    savedScopes: new Set(
-      lifecycleSessions.flatMap(({ captures }) => captures.map(({ record }) => scopeKey(record))),
-    ),
-    waitingForOtherSetting: lifecycleSessions
-      .flatMap(({ captures }) => captures)
-      .filter(({ record }) => isWaitingForOtherSetting(record, runtime.accountFingerprint)).length,
+    lifecycleSessionIds,
+    reconstructionSessionIds,
+    savedScopes,
+    waitingForOtherSetting,
   };
 }
 
@@ -110,8 +119,15 @@ async function assessSession(
     (entries ?? []).filter(
       ({ record }) => record.destinationFingerprint === runtime.accountFingerprint,
     );
-  const lifecycle = ownEntries(index.lifecycleBySession.get(sessionId));
-  const reconstruction = ownEntries(index.reconstructionBySession.get(sessionId));
+  const lifecycleCaptures = index.lifecycleSessionIds.has(sessionId)
+    ? await index.lifecycleStore.enumerate(runtime.integration, sessionId)
+    : [];
+  const lifecycle = ownEntries(lifecycleCaptures);
+  const reconstruction = ownEntries(
+    index.reconstructionSessionIds.has(sessionId)
+      ? await index.reconstructionStore.enumerate(runtime.integration, sessionId)
+      : [],
+  );
   const pendingLifecycle = lifecycle.filter(
     ({ record }) =>
       index.destinationIds.some((id) => isDue(record, id, now)) &&
@@ -130,7 +146,7 @@ async function assessSession(
     (pendingLifecycle.length === 0 &&
       lifecycle.length > 0 &&
       (await hasUnsettledRecoverySettlement({
-        captures: index.lifecycleBySession.get(sessionId) ?? [],
+        captures: lifecycleCaptures,
         integration: runtime.integration,
         sessionId,
         destinationFingerprint: runtime.accountFingerprint,
@@ -197,8 +213,8 @@ async function planRecoverySteps(
 ): Promise<(() => Promise<RecoveryStep>)[]> {
   const { runtime, index, request, now, minimumForeignAgeMs, wakeForeign } = plan;
   const sessionIds = new Set([
-    ...index.lifecycleBySession.keys(),
-    ...index.reconstructionBySession.keys(),
+    ...index.lifecycleSessionIds,
+    ...index.reconstructionSessionIds,
     runtime.currentSessionId,
   ]);
   const steps: (() => Promise<RecoveryStep>)[] = [];

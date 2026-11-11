@@ -40,6 +40,19 @@ function captureInput(eventId = "native-event-1"): CaptureInput {
   };
 }
 
+function sentPost(eventId: string, run: Record<string, unknown>): CaptureInput {
+  return {
+    ...captureInput(eventId),
+    runId: run.id as string,
+    turnEvidence: { childRunIds: [], closed: false, rootRunId: "root-run" },
+    destinationRoutes: { "project-a": { projectName: "a" }, "project-b": { projectName: "b" } },
+    normalizedPayload: {
+      operation: "post",
+      run: { ...run, inputs: { command: "cat big.log" }, outputs: { stdout: "x".repeat(1000) } },
+    },
+  };
+}
+
 function createDirectoryLink(target: string, path: string): void {
   symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
 }
@@ -452,6 +465,41 @@ describe("immutable capture storage", () => {
       status: "recorded",
       receipt: { outcome: "dropped", reason: "expired" },
     });
+  });
+
+  it("drops a sent run's inputs and outputs once every destination has it, keeping the turn's prompt", async () => {
+    const store = createCaptureStore(temporaryRoot());
+    const child = sentPost("child", { id: "child-run", name: "Bash", parent_run_id: "root-run" });
+    const root = sentPost("root", { id: "root-run", name: "Turn", parent_run_id: "agent-run" });
+    for (const input of [child, root]) {
+      await store.capture(input);
+      await store.recordOutcome({ ...input, destination: "project-a", outcome: "delivered" });
+    }
+    await expect(store.read(child)).resolves.toMatchObject({
+      normalizedPayload: { run: { inputs: { command: "cat big.log" } } },
+    });
+    for (const input of [child, root])
+      await store.recordOutcome({ ...input, destination: "project-b", outcome: "dropped" });
+    await expect(store.read(child)).resolves.toMatchObject({
+      normalizedPayload: {
+        operation: "post",
+        run: { id: "child-run", name: "Bash", parent_run_id: "root-run", inputs: {} },
+      },
+    });
+    expect((await store.read(child))!.normalizedPayload).not.toHaveProperty("run.outputs");
+    expect((await store.read(root))!.normalizedPayload).toEqual({
+      operation: "post",
+      run: {
+        id: "root-run",
+        name: "Turn",
+        parent_run_id: "agent-run",
+        inputs: { command: "cat big.log" },
+      },
+    });
+    await expect(store.capture(child)).resolves.toMatchObject({ status: "duplicate" });
+    await expect(
+      store.capture({ ...child, normalizedPayload: { operation: "post", run: { id: "other" } } }),
+    ).resolves.toEqual({ status: "conflict" });
   });
 
   it("rejects a delivery state that was damaged on disk", async () => {
