@@ -110,7 +110,7 @@
   "devDependencies": {
     "@types/node": "^26.6.4",
     "langsmith": "0.11.8",
-    "oxfmt": "^0.76.0",
+    "oxfmt": "^0.77.0",
     "oxlint": "^1.87.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
