@@ -125,13 +125,37 @@ jobs:
             node qa/headless.ts --agent ${{ matrix.agent }} --plugin "plugin-under-test/${{ matrix.plugin }}" --scenario "$scenario" || failed=1
           done
           exit $failed
-      - name: Replay Recorded Sessions
+      - name: Measure the Plugin While Replaying Recorded Sessions
         run: |
+          set -o pipefail
+          usage_root=/sys/fs/cgroup/plugin-qa
+          sudo mkdir "$usage_root"
+          sudo chown -R "$(id -u):$(id -g)" "$usage_root"
+          mkdir "$usage_root/runner"
+          echo $$ | sudo tee "$usage_root/runner/cgroup.procs" > /dev/null
+          echo "+cpu +memory" > "$usage_root/cgroup.subtree_control"
+          sessions=()
+          for path in ${{ matrix.sessions }}; do sessions+=(--sessions "$path"); done
           failed=0
-          for sessions in ${{ matrix.sessions }}; do
-            node qa/replay.ts --agent ${{ matrix.agent }} --plugin "plugin-under-test/${{ matrix.plugin }}" --sessions "$sessions" || failed=1
-          done
+          node qa/replay.ts --agent ${{ matrix.agent }} --plugin "plugin-under-test/${{ matrix.plugin }}" "${sessions[@]}" --cgroup "$usage_root" | tee "$RUNNER_TEMP/replay.log" || failed=1
+          {
+            echo "### Plugin CPU and memory on ${{ matrix.agent }}"
+            sed -n 's/^percentiles /All /p' "$RUNNER_TEMP/replay.log"
+            grep '^usage ' "$RUNNER_TEMP/replay.log" | sed 's/^usage /- /'
+          } >> "$GITHUB_STEP_SUMMARY"
           exit $failed
+      - name: Profile the Plugin While Replaying Recorded Sessions
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          sessions=()
+          for path in ${{ matrix.sessions }}; do sessions+=(--sessions "$path"); done
+          node qa/replay.ts --agent ${{ matrix.agent }} --plugin "plugin-under-test/${{ matrix.plugin }}" "${sessions[@]}" --profile-dir "$RUNNER_TEMP/plugin-profiles"
+      - name: Upload the Plugin Profiles
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-profiles-${{ matrix.agent }}
+          path: ${{ runner.temp }}/plugin-profiles
 
   test-on-macos:
     if: ${{ !inputs.windows_only }}

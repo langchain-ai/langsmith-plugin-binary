@@ -16,6 +16,7 @@ import { codexTracingEnvironment } from "./agents/codex.ts";
 import { checkRuns } from "./check.ts";
 import {
   BUNDLED_BINARY_WARNING,
+  BYTES_PER_MEGABYTE,
   FAKE_API_KEY,
   PROMPT_EVENT,
   STOP_EVENT,
@@ -26,7 +27,9 @@ import { startFakeServer, waitForQuietUploads } from "./fake/server.ts";
 import { uploadsSettled } from "./langsmith.ts";
 import type {
   AgentName,
+  EngineUsage,
   FakeServer,
+  ReplayOptions,
   ReplayPlan,
   ReplayPlanner,
   Scenario,
@@ -37,6 +40,7 @@ import type {
 import { claudePlan } from "./replay/claude-plan.ts";
 import { codexPlan } from "./replay/codex-plan.ts";
 import { pluginHookCommands, runHookCommand } from "./replay/hooks.ts";
+import { closeUsageGroup, commandInGroup, createUsageGroup, usageSummary } from "./replay/usage.ts";
 import { baseEnvironment } from "./workspace.ts";
 
 const planners: Record<AgentName, ReplayPlanner> = {
@@ -73,13 +77,20 @@ function skipReason(plan: ReplayPlan): string | undefined {
   return finished ? undefined : "ends mid-turn";
 }
 
+function profilingEnvironment(profileDir: string): Record<string, string> {
+  return {
+    NODE_OPTIONS: `--cpu-prof --cpu-prof-dir="${profileDir}" --heap-prof --heap-prof-dir="${profileDir}"`,
+  };
+}
+
 async function replaySession(
-  agent: AgentName,
-  pluginDir: string,
+  options: ReplayOptions,
   file: string,
   rawLines: string[],
   plan: ReplayPlan,
+  usageGroup: string | undefined,
 ): Promise<string[]> {
+  const { agent, pluginDir } = options;
   const scenario: Scenario = {
     name: basename(file),
     files: {},
@@ -101,6 +112,7 @@ async function replaySession(
   const env = {
     ...baseEnvironment(join(workDir, "home")),
     ...tracingEnvironments[agent](settings),
+    ...(options.profileDir === undefined ? {} : profilingEnvironment(options.profileDir)),
   };
   const commands = pluginHookCommands(pluginDir);
 
@@ -117,7 +129,8 @@ async function replaySession(
     written = Math.max(written, event.transcriptLines);
     const payload = JSON.stringify({ ...event.payload, transcript_path: transcript, cwd: project });
     for (const command of commands.get(String(event.payload.hook_event_name)) ?? []) {
-      const exitCode = await runHookCommand(command, payload, project, env);
+      const measured = usageGroup === undefined ? command : commandInGroup(usageGroup, command);
+      const exitCode = await runHookCommand(measured, payload, project, env);
       if (exitCode !== 0)
         console.warn(`${event.payload.hook_event_name} hook exited with ${exitCode}`);
     }
@@ -131,16 +144,29 @@ async function replaySession(
 }
 
 const { values } = parseArgs({
-  options: { agent: { type: "string" }, plugin: { type: "string" }, sessions: { type: "string" } },
+  options: {
+    agent: { type: "string" },
+    plugin: { type: "string" },
+    sessions: { type: "string", multiple: true },
+    cgroup: { type: "string" },
+    "profile-dir": { type: "string" },
+  },
 });
 const agent = values.agent;
 if (process.platform !== "linux") console.warn(BUNDLED_BINARY_WARNING);
 if (agent !== "claude" && agent !== "codex") throw new Error("--agent must be claude or codex");
-if (!values.plugin || !values.sessions) throw new Error("--plugin and --sessions are required");
+if (!values.plugin || !values.sessions?.length)
+  throw new Error("--plugin and --sessions are required");
+const options: ReplayOptions = {
+  agent,
+  pluginDir: resolve(values.plugin),
+  profileDir: values["profile-dir"] === undefined ? undefined : resolve(values["profile-dir"]),
+};
 
 let failed = 0;
 let replayed = 0;
-const files = transcriptFiles(resolve(values.sessions));
+const usages: EngineUsage[] = [];
+const files = values.sessions.flatMap((sessions) => transcriptFiles(resolve(sessions)));
 for (const file of files) {
   const rawLines = readFileSync(file, "utf8")
     .split("\n")
@@ -151,8 +177,21 @@ for (const file of files) {
     console.log(`SKIP ${basename(file)} (${reason})`);
     continue;
   }
-  const failures = await replaySession(agent, resolve(values.plugin), file, rawLines, plan);
+  const usageGroup =
+    values.cgroup === undefined
+      ? undefined
+      : createUsageGroup(values.cgroup, `session-${replayed}`);
+  const failures = await replaySession(options, file, rawLines, plan, usageGroup);
   replayed += 1;
+  if (usageGroup !== undefined) {
+    const usage = await closeUsageGroup(usageGroup);
+    usages.push(usage);
+    const megabytes = (usage.peakMemoryBytes / BYTES_PER_MEGABYTE).toFixed(1);
+    console.log(`usage ${basename(file)}: ${usage.cpuMs} ms CPU, ${megabytes} MB peak memory`);
+    if (usage.cpuMs === 0) failures.push("no plugin process was measured");
+    if (!usage.exitedOnItsOwn)
+      failures.push("a plugin process was still running after the session");
+  }
   if (failures.length > 0) failed += 1;
   console.log(
     failures.length === 0
@@ -160,5 +199,6 @@ for (const file of files) {
       : `FAIL ${basename(file)}\n- ${failures.join("\n- ")}`,
   );
 }
+if (usages.length > 0) console.log(`percentiles ${usageSummary(usages)}`);
 console.log(`${failed} of ${replayed} replayed sessions failed`);
 if (failed > 0 || replayed === 0) process.exit(1);
