@@ -80,7 +80,7 @@ jobs:
           - agent: claude
             repository: langchain-ai/langsmith-claude-code-plugins
             plugin: plugins/langsmith-tracing
-            sessions: $TMPDIR/plugin-qa-headless-claude-*/claude-config/projects
+            sessions: ../plugins-base-ci-home/tmp/plugin-qa-headless-claude-*/claude-config/projects
           - agent: codex
             repository: langchain-ai/langsmith-codex-plugins
             plugin: plugins/tracing

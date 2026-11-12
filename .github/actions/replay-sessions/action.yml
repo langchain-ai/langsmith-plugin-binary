@@ -8,7 +8,7 @@ inputs:
     description: The built plugin folder, relative to the workspace.
     required: true
   sessions:
-    description: Space-separated session files or folders, shell globs allowed.
+    description: Session files or folders, one per line, shell globs allowed.
     required: true
   profile:
     description: Also replay once more to save CPU and heap profiles as an artifact.
@@ -18,6 +18,8 @@ runs:
   steps:
     - name: Measure the Plugin While Replaying Recorded Sessions
       shell: bash
+      env:
+        SESSIONS: ${{ inputs.sessions }}
       run: |
         set -o pipefail
         usage_root=/sys/fs/cgroup/plugin-qa
@@ -27,7 +29,9 @@ runs:
         echo $$ | sudo tee "$usage_root/runner/cgroup.procs" > /dev/null
         echo "+cpu +memory" > "$usage_root/cgroup.subtree_control"
         sessions=()
-        for path in ${{ inputs.sessions }}; do sessions+=(--sessions "$path"); done
+        IFS=$'\n'
+        for path in $SESSIONS; do sessions+=(--sessions "$path"); done
+        unset IFS
         failed=0
         node qa/replay.ts --agent ${{ inputs.agent }} --plugin "${{ inputs.plugin }}" "${sessions[@]}" --cgroup "$usage_root" | tee "$RUNNER_TEMP/replay.log" || failed=1
         {
@@ -39,9 +43,13 @@ runs:
     - name: Profile the Plugin While Replaying Recorded Sessions
       if: inputs.profile == 'true'
       shell: bash
+      env:
+        SESSIONS: ${{ inputs.sessions }}
       run: |
         sessions=()
-        for path in ${{ inputs.sessions }}; do sessions+=(--sessions "$path"); done
+        IFS=$'\n'
+        for path in $SESSIONS; do sessions+=(--sessions "$path"); done
+        unset IFS
         node qa/replay.ts --agent ${{ inputs.agent }} --plugin "${{ inputs.plugin }}" "${sessions[@]}" --profile-dir "$RUNNER_TEMP/plugin-profiles"
     - name: Upload the Plugin Profiles
       if: inputs.profile == 'true'
