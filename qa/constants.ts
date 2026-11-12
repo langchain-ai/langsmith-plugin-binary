@@ -82,3 +82,14 @@ export const CODEX_INJECTED_FRAGMENTS: readonly RegExp[] = [
   /^<\/?image(?:\s[^>]*)?>$/i,
 ];
 export const CODEX_SHELL_COMMAND = /^\s*<user_shell_command>\s*<command>([\s\S]*?)<\/command>/;
+export const CGROUP_PROCESSES_FILE = "cgroup.procs";
+export const CGROUP_EVENTS_FILE = "cgroup.events";
+export const CGROUP_KILL_FILE = "cgroup.kill";
+export const CGROUP_CPU_FILE = "cpu.stat";
+export const CGROUP_MEMORY_PEAK_FILE = "memory.peak";
+export const CGROUP_POPULATED = /^populated 1$/m;
+export const CGROUP_CPU_USAGE = /^usage_usec (\d+)$/m;
+export const ENGINE_EXIT_TIMEOUT_MS = 15_000;
+export const ENGINE_EXIT_POLL_MS = 250;
+export const BYTES_PER_MEGABYTE = 1024 * 1024;
+export const USAGE_PERCENTILES = [50, 95, 99];

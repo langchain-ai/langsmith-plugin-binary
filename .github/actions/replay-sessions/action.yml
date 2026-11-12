@@ -1,0 +1,59 @@
+name: Replay Recorded Sessions
+description: Replays recorded sessions through the built plugin, measuring its CPU and memory and optionally saving profiles.
+inputs:
+  agent:
+    description: The agent the sessions were recorded with, claude or codex.
+    required: true
+  plugin:
+    description: The built plugin folder, relative to the workspace.
+    required: true
+  sessions:
+    description: Session files or folders, one per line, shell globs allowed.
+    required: true
+  profile:
+    description: Also replay once more to save CPU and heap profiles as an artifact.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Measure the Plugin While Replaying Recorded Sessions
+      shell: bash
+      env:
+        SESSIONS: ${{ inputs.sessions }}
+      run: |
+        set -o pipefail
+        usage_root=/sys/fs/cgroup/plugin-qa
+        sudo mkdir "$usage_root"
+        sudo chown -R "$(id -u):$(id -g)" "$usage_root"
+        mkdir "$usage_root/runner"
+        echo $$ | sudo tee "$usage_root/runner/cgroup.procs" > /dev/null
+        echo "+cpu +memory" > "$usage_root/cgroup.subtree_control"
+        sessions=()
+        IFS=$'\n'
+        for path in $SESSIONS; do sessions+=(--sessions "$path"); done
+        unset IFS
+        failed=0
+        node qa/replay.ts --agent ${{ inputs.agent }} --plugin "${{ inputs.plugin }}" "${sessions[@]}" --cgroup "$usage_root" | tee "$RUNNER_TEMP/replay.log" || failed=1
+        {
+          echo "### Plugin CPU and memory on ${{ inputs.agent }}"
+          sed -n 's/^percentiles /All /p' "$RUNNER_TEMP/replay.log"
+          grep '^usage ' "$RUNNER_TEMP/replay.log" | sed 's/^usage /- /'
+        } >> "$GITHUB_STEP_SUMMARY"
+        exit $failed
+    - name: Profile the Plugin While Replaying Recorded Sessions
+      if: inputs.profile == 'true'
+      shell: bash
+      env:
+        SESSIONS: ${{ inputs.sessions }}
+      run: |
+        sessions=()
+        IFS=$'\n'
+        for path in $SESSIONS; do sessions+=(--sessions "$path"); done
+        unset IFS
+        node qa/replay.ts --agent ${{ inputs.agent }} --plugin "${{ inputs.plugin }}" "${sessions[@]}" --profile-dir "$RUNNER_TEMP/plugin-profiles"
+    - name: Upload the Plugin Profiles
+      if: inputs.profile == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: plugin-profiles-${{ inputs.agent }}
+        path: ${{ runner.temp }}/plugin-profiles

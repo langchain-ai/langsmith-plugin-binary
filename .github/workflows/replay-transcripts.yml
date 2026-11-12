@@ -1,0 +1,86 @@
+name: Replay Transcripts
+
+on:
+  workflow_call:
+    inputs:
+      transcripts:
+        description: The folder in the calling repository holding a claude and a codex folder of session transcripts.
+        type: string
+        required: true
+      profile:
+        description: Also save CPU and heap profiles of the plugin as an artifact.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  HOME: ${{ github.workspace }}/../plugins-base-ci-home
+  TMPDIR: ${{ github.workspace }}/../plugins-base-ci-home/tmp
+  LANGCHAIN_API_KEY: ""
+  LANGSMITH_API_KEY: ""
+  OPENAI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+
+jobs:
+  replay-transcripts:
+    name: Replay ${{ matrix.agent }} Transcripts
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: claude
+            repository: langchain-ai/langsmith-claude-code-plugins
+            plugin: plugins/langsmith-tracing
+          - agent: codex
+            repository: langchain-ai/langsmith-codex-plugins
+            plugin: plugins/tracing
+    steps:
+      - name: Check Out This Engine
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+      - name: Check Out the Transcripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: transcripts-under-test
+          sparse-checkout: ${{ inputs.transcripts }}
+          filter: blob:none
+      - name: Download the Transcripts
+        working-directory: transcripts-under-test
+        env:
+          TRANSCRIPTS: ${{ inputs.transcripts }}
+        run: git lfs pull --include "$TRANSCRIPTS/**" --exclude ""
+      - name: Check Out the Plugin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repository }}
+          path: plugin-under-test
+      - name: Create an Isolated Home
+        uses: ./.github/actions/isolated-home
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.8.2
+          cache: pnpm
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build the Plugin Against This Engine
+        working-directory: plugin-under-test
+        run: |
+          pnpm install --frozen-lockfile
+          rm node_modules/@langchain/plugins-base
+          ln -s "$GITHUB_WORKSPACE" node_modules/@langchain/plugins-base
+          pnpm build
+      - name: Replay the Transcripts
+        uses: ./.github/actions/replay-sessions
+        with:
+          agent: ${{ matrix.agent }}
+          plugin: plugin-under-test/${{ matrix.plugin }}
+          sessions: transcripts-under-test/${{ inputs.transcripts }}/${{ matrix.agent }}/*.jsonl
+          profile: ${{ inputs.profile }}

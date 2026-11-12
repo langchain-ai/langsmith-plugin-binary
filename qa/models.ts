@@ -148,3 +148,15 @@ export interface ReplayPlan {
   events: ReplayEvent[];
   turns: ScenarioTurn[];
 }
+
+export interface ReplayOptions {
+  agent: AgentName;
+  pluginDir: string;
+  profileDir: string | undefined;
+}
+
+export interface EngineUsage {
+  cpuMs: number;
+  peakMemoryBytes: number;
+  exitedOnItsOwn: boolean;
+}

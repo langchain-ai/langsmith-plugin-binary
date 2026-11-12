@@ -80,7 +80,7 @@ jobs:
           - agent: claude
             repository: langchain-ai/langsmith-claude-code-plugins
             plugin: plugins/langsmith-tracing
-            sessions: $TMPDIR/plugin-qa-headless-claude-*/claude-config/projects
+            sessions: ../plugins-base-ci-home/tmp/plugin-qa-headless-claude-*/claude-config/projects
           - agent: codex
             repository: langchain-ai/langsmith-codex-plugins
             plugin: plugins/tracing
@@ -126,12 +126,12 @@ jobs:
           done
           exit $failed
       - name: Replay Recorded Sessions
-        run: |
-          failed=0
-          for sessions in ${{ matrix.sessions }}; do
-            node qa/replay.ts --agent ${{ matrix.agent }} --plugin "plugin-under-test/${{ matrix.plugin }}" --sessions "$sessions" || failed=1
-          done
-          exit $failed
+        uses: ./.github/actions/replay-sessions
+        with:
+          agent: ${{ matrix.agent }}
+          plugin: plugin-under-test/${{ matrix.plugin }}
+          sessions: ${{ matrix.sessions }}
+          profile: ${{ github.event_name == 'workflow_dispatch' }}
 
   test-on-macos:
     if: ${{ !inputs.windows_only }}
