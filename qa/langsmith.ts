@@ -38,6 +38,11 @@ async function listRuns(apiKey: string, project: string, since: string): Promise
   return result.runs;
 }
 
+export function uploadsSettled(runs: TracedRun[], expectedRoots: number): boolean {
+  const roots = runs.filter((run) => run.parent_run_id === null);
+  return roots.length >= expectedRoots && roots.every((run) => run.end_time !== null);
+}
+
 export async function waitForRuns(
   apiKey: string,
   project: string,
@@ -48,9 +53,8 @@ export async function waitForRuns(
   let runs: TracedRun[] = [];
   while (Date.now() < deadline) {
     runs = await listRuns(apiKey, project, since).catch(() => runs);
-    const roots = runs.filter((run) => run.parent_run_id === null);
     await sleep(UPLOAD_POLL_MS);
-    if (roots.length >= expectedRoots && roots.every((run) => run.end_time !== null))
+    if (uploadsSettled(runs, expectedRoots))
       return listRuns(apiKey, project, since).catch(() => runs);
   }
   return runs;

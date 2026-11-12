@@ -6,8 +6,8 @@ const scenario: Scenario = {
   name: "two-turns",
   files: {},
   turns: [
-    { prompt: "read notes", minTools: 1, toolOutputContains: "hello" },
-    { prompt: "list files", minTools: 0 },
+    { prompt: "read notes", command: "cat notes.txt", minTools: 1, toolOutputContains: "hello" },
+    { prompt: "list files", command: "ls", minTools: 0 },
   ],
   hooksPerTurn: { claude: ["UserPromptSubmit", "Stop"], codex: ["Stop"] },
 };
@@ -88,7 +88,12 @@ describe("checkRuns", () => {
     const quoted: Scenario = {
       ...scenario,
       turns: [
-        { prompt: 'read "notes"', minTools: 1, toolOutputContains: 'say "hello"' },
+        {
+          prompt: 'read "notes"',
+          command: "cat notes.txt",
+          minTools: 1,
+          toolOutputContains: 'say "hello"',
+        },
         scenario.turns[1]!,
       ],
     };

@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { prepareClaude } from "./agents/claude.ts";
 import { prepareCodex } from "./agents/codex.ts";
 import { checkHooks, checkRuns } from "./check.ts";
+import { LIVE_ENDPOINTS } from "./constants.ts";
 import { waitForRuns } from "./langsmith.ts";
 import type { AgentName, PreparedAgent, RunOptions, Scenario } from "./models.ts";
 import { driveTerminal } from "./terminal.ts";
@@ -45,6 +46,7 @@ function readOptions(): RunOptions {
     tracingApiKey: requiredEnv("QA_TRACING_API_KEY"),
     gatewayApiKey: requiredEnv("QA_GATEWAY_API_KEY"),
     agentCommand: values["agent-command"] ?? agent,
+    endpoints: LIVE_ENDPOINTS,
   };
 }
 

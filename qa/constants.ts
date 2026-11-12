@@ -1,7 +1,12 @@
-import type { TypingPace } from "./models.ts";
+import type { Endpoints, TypingPace } from "./models.ts";
 
 export const DEV_ENDPOINT = "https://dev.api.smith.langchain.com";
 export const GATEWAY_URL = "https://gateway.smith.langchain.com";
+export const LIVE_ENDPOINTS: Endpoints = {
+  tracing: DEV_ENDPOINT,
+  anthropic: `${GATEWAY_URL}/anthropic/`,
+  openai: `${GATEWAY_URL}/v1`,
+};
 
 export const CLAUDE_MODEL = "claude-haiku-4-5";
 export const CODEX_MODEL = "openai/gpt-5.4-mini";
@@ -23,7 +28,29 @@ export const SCREEN_TAIL_CHARS = 600;
 
 export const UPLOAD_TIMEOUT_MS = 120_000;
 export const UPLOAD_POLL_MS = 5_000;
+export const UPLOAD_QUIET_MS = 3_000;
 export const RUN_QUERY_LIMIT = 100;
 
 export const STOP_EVENT = "Stop";
 export const RECORDED_EVENTS = ["UserPromptSubmit", "Stop"];
+
+export const FAKE_CALL_ID_PREFIX = "toolu_qa_";
+export const FAKE_API_KEY = "fake-key";
+export const FAKE_IDLE_REPLY = "Ready.";
+export const FAKE_MESSAGE_ID = "msg_qa";
+export const FAKE_RESPONSE_ID = "resp_qa";
+export const FAKE_FUNCTION_CALL_ID_PREFIX = "fc_";
+export const FAKE_ANTHROPIC_USAGE = { input_tokens: 10, output_tokens: 5 };
+export const FAKE_OPENAI_USAGE = {
+  input_tokens: 10,
+  input_tokens_details: null,
+  output_tokens: 5,
+  output_tokens_details: null,
+  total_tokens: 15,
+};
+export const BUNDLED_BINARY_WARNING =
+  "warning: off Linux the plugins run their committed binary, so this tests the released engine rather than this checkout";
+export const FAKE_SERVER_INFO = {
+  version: "0.0.0",
+  batch_ingest_config: { use_multipart_endpoint: false },
+};

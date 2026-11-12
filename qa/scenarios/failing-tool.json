@@ -4,6 +4,7 @@
   "turns": [
     {
       "prompt": "Run the shell command cat missing-file.txt and tell me the exact error.",
+      "command": "cat missing-file.txt",
       "minTools": 1,
       "toolOutputContains": "No such file"
     }
