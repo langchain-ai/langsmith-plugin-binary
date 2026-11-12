@@ -32,6 +32,8 @@ export const UPLOAD_QUIET_MS = 3_000;
 export const RUN_QUERY_LIMIT = 100;
 
 export const STOP_EVENT = "Stop";
+export const PROMPT_EVENT = "UserPromptSubmit";
+export const SKILL_TOOL_NAME = "Skill";
 export const RECORDED_EVENTS = ["UserPromptSubmit", "Stop"];
 
 export const FAKE_CALL_ID_PREFIX = "toolu_qa_";
@@ -54,3 +56,29 @@ export const FAKE_SERVER_INFO = {
   version: "0.0.0",
   batch_ingest_config: { use_multipart_endpoint: false },
 };
+
+export const CLAUDE_NON_PROMPT_PREFIX =
+  /^\s*(<local-command|<bash-stdout|<bash-stderr|\[Request interrupted by user)/;
+export const CLAUDE_SHELL_PROMPT = /^\s*<bash-input>([\s\S]*)<\/bash-input>\s*$/;
+export const CLAUDE_SYSTEM_REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+export const CLAUDE_LOCAL_OUTPUT_PREFIX = /^\s*<local-command-stdout>/;
+export const HOOK_TIMEOUT_MS = 60_000;
+export const SESSION_START = { hook_event_name: "SessionStart", source: "startup" };
+export const SESSION_END = { hook_event_name: "SessionEnd", reason: "prompt_input_exit" };
+export const TURN_SETTLE_TIMEOUT_MS = 15_000;
+export const TURN_SETTLE_POLL_MS = 250;
+export const PROMPT_MATCH_CHARS = 80;
+export const CODEX_TOOL_CALL_TYPES = new Set(["function_call", "custom_tool_call"]);
+export const CODEX_TOOL_OUTPUT_TYPES = new Set(["function_call_output", "custom_tool_call_output"]);
+export const CODEX_MODEL_OUTPUT_TYPES = new Set([
+  "message",
+  "reasoning",
+  "function_call",
+  "custom_tool_call",
+]);
+export const CODEX_INJECTED_FRAGMENTS: readonly RegExp[] = [
+  /^<(environment_context|skill|turn_aborted|subagent_notification|agent_message_board_notification|recommended_plugins|goal_context|codex_internal_context|external_[^\s>]+)[\s>][\s\S]*<\/\1>$/i,
+  /^# AGENTS\.md instructions[\s\S]*<\/INSTRUCTIONS>$/i,
+  /^<\/?image(?:\s[^>]*)?>$/i,
+];
+export const CODEX_SHELL_COMMAND = /^\s*<user_shell_command>\s*<command>([\s\S]*?)<\/command>/;

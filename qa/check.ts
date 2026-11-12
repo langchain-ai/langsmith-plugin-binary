@@ -1,3 +1,4 @@
+import { PROMPT_MATCH_CHARS, SKILL_TOOL_NAME } from "./constants.ts";
 import type { AgentName, RootOutputs, Scenario, TracedRun } from "./models.ts";
 import { containsText } from "./utils/text.ts";
 
@@ -34,15 +35,22 @@ export function checkRuns(scenario: Scenario, runs: TracedRun[]): string[] {
     if (root === undefined) continue;
     const label = `turn ${index + 1}`;
     const children = descendantsOf(root, runs);
-    const tools = children.filter((run) => run.run_type === "tool");
-    if (!containsText(JSON.stringify(root.inputs) ?? "", turn.prompt))
+    const tools = children.filter((run) => run.run_type === "tool" && run.name !== SKILL_TOOL_NAME);
+    if (!containsText(JSON.stringify(root.inputs) ?? "", turn.prompt.slice(0, PROMPT_MATCH_CHARS)))
       failures.push(`${label} is missing the user prompt`);
-    if (!hasText((root.outputs as RootOutputs | null)?.messages))
+    if (turn.reply !== null && !hasText((root.outputs as RootOutputs | null)?.messages))
       failures.push(`${label} is missing the final reply`);
-    if (!children.some((run) => run.run_type === "llm"))
+    if (turn.expectsModelCall !== false && !children.some((run) => run.run_type === "llm"))
       failures.push(`${label} has no model call`);
     if (tools.length < turn.minTools)
       failures.push(`${label} has ${tools.length} tool runs, expected ${turn.minTools}`);
+    if (turn.maxTools !== undefined && tools.length > turn.maxTools)
+      failures.push(`${label} has ${tools.length} tool runs, expected at most ${turn.maxTools}`);
+    if (
+      typeof turn.reply === "string" &&
+      !containsText(JSON.stringify(root.outputs) ?? "", turn.reply)
+    )
+      failures.push(`${label} reply does not match the transcript`);
     const expectedOutput = turn.toolOutputContains;
     if (
       expectedOutput !== undefined &&
