@@ -15,6 +15,25 @@ on:
       codex_plugin_ref:
         type: string
         default: ""
+  workflow_call:
+    inputs:
+      claude_code_version:
+        type: string
+        default: latest
+      codex_version:
+        type: string
+        default: latest
+      claude_plugin_ref:
+        type: string
+        default: ""
+      codex_plugin_ref:
+        type: string
+        default: ""
+    secrets:
+      QA_GATEWAY_API_KEY:
+        required: true
+      QA_TRACING_API_KEY:
+        required: true
 
 concurrency:
   group: ${{ github.workflow }}
@@ -52,8 +71,11 @@ jobs:
       CLAUDE_CODE_VERSION: ${{ inputs.claude_code_version || 'latest' }}
       CODEX_VERSION: ${{ inputs.codex_version || 'latest' }}
     steps:
-      - name: Check Out the Repository
+      - name: Check Out This Engine
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
       - name: Check Out the Plugin
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
