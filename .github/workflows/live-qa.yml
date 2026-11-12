@@ -9,6 +9,12 @@ on:
       codex_version:
         type: string
         default: latest
+      claude_plugin_ref:
+        type: string
+        default: ""
+      codex_plugin_ref:
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -37,9 +43,11 @@ jobs:
           - agent: claude
             repository: langchain-ai/langsmith-claude-code-plugins
             plugin: plugins/langsmith-tracing
+            ref: ${{ inputs.claude_plugin_ref }}
           - agent: codex
             repository: langchain-ai/langsmith-codex-plugins
             plugin: plugins/tracing
+            ref: ${{ inputs.codex_plugin_ref }}
     env:
       CLAUDE_CODE_VERSION: ${{ inputs.claude_code_version || 'latest' }}
       CODEX_VERSION: ${{ inputs.codex_version || 'latest' }}
@@ -50,6 +58,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ matrix.repository }}
+          ref: ${{ matrix.ref }}
           path: plugin-under-test
       - name: Create an Isolated Home
         uses: ./.github/actions/isolated-home
@@ -80,6 +89,6 @@ jobs:
         run: |
           failed=0
           for scenario in qa/scenarios/*.json; do
-            node qa/run.ts --agent ${{ matrix.agent }} --plugin "plugin-under-test/${{ matrix.plugin }}" --scenario "$scenario" --project plugin-qa-live || failed=1
+            node qa/run.ts --agent ${{ matrix.agent }} --plugin "plugin-under-test/${{ matrix.plugin }}" --scenario "$scenario" --project plugin-qa-live-${{ github.run_id }} || failed=1
           done
           exit $failed
