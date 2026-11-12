@@ -4,11 +4,13 @@
   "turns": [
     {
       "prompt": "Read notes.txt and tell me what it says in one line.",
+      "command": "cat notes.txt",
       "minTools": 1,
       "toolOutputContains": "hello from the qa runner"
     },
     {
       "prompt": "Now run ls and tell me how many files there are.",
+      "command": "ls",
       "minTools": 1,
       "toolOutputContains": "notes.txt"
     }

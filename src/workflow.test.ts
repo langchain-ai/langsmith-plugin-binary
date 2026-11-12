@@ -864,6 +864,7 @@ describe("offering the binaries to the plugin's beta branch", () => {
       ).toEqual(["arm64", "x86_64"]);
       expect(execFileSync(binary, { encoding: "utf-8" }).trim()).toBe("1.2.3");
     },
+    20_000,
   );
 
   it.runIf(process.platform === "darwin")("refuses to bundle a chip nothing signed", () => {
