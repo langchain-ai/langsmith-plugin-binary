@@ -80,9 +80,11 @@ jobs:
           - agent: claude
             repository: langchain-ai/langsmith-claude-code-plugins
             plugin: plugins/langsmith-tracing
+            sessions: $TMPDIR/plugin-qa-headless-claude-*/claude-config/projects
           - agent: codex
             repository: langchain-ai/langsmith-codex-plugins
             plugin: plugins/tracing
+            sessions: plugin-under-test/plugins/tracing/test/sessions
     env:
       CLAUDE_CODE_VERSION: ${{ inputs.claude_code_version || 'latest' }}
       CODEX_VERSION: ${{ inputs.codex_version || 'latest' }}
@@ -121,6 +123,13 @@ jobs:
           failed=0
           for scenario in qa/scenarios/*.json; do
             node qa/headless.ts --agent ${{ matrix.agent }} --plugin "plugin-under-test/${{ matrix.plugin }}" --scenario "$scenario" || failed=1
+          done
+          exit $failed
+      - name: Replay Recorded Sessions
+        run: |
+          failed=0
+          for sessions in ${{ matrix.sessions }}; do
+            node qa/replay.ts --agent ${{ matrix.agent }} --plugin "plugin-under-test/${{ matrix.plugin }}" --sessions "$sessions" || failed=1
           done
           exit $failed
 
