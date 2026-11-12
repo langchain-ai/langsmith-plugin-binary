@@ -6,7 +6,7 @@ on:
       transcripts:
         description: The folder in the calling repository holding a claude and a codex folder of session transcripts.
         type: string
-        default: transcripts
+        required: true
       profile:
         description: Also save CPU and heap profiles of the plugin as an artifact.
         type: boolean
@@ -47,7 +47,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: transcripts-under-test
-          lfs: true
+          sparse-checkout: ${{ inputs.transcripts }}
+          filter: blob:none
+      - name: Download the Transcripts
+        working-directory: transcripts-under-test
+        run: git lfs pull --include "${{ inputs.transcripts }}/**" --exclude ""
       - name: Check Out the Plugin
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
