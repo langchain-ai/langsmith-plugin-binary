@@ -1,20 +1,6 @@
 name: Live QA
 
 on:
-  workflow_dispatch:
-    inputs:
-      claude_code_version:
-        type: string
-        default: latest
-      codex_version:
-        type: string
-        default: latest
-      claude_plugin_ref:
-        type: string
-        default: ""
-      codex_plugin_ref:
-        type: string
-        default: ""
   workflow_call:
     inputs:
       claude_code_version:
