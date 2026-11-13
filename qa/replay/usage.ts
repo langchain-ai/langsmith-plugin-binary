@@ -12,9 +12,10 @@ import {
   CGROUP_PROCESSES_FILE,
   ENGINE_EXIT_POLL_MS,
   ENGINE_EXIT_TIMEOUT_MS,
+  USAGE_LINE,
   USAGE_PERCENTILES,
 } from "../constants.ts";
-import type { EngineUsage } from "../models.ts";
+import type { EngineUsage, UsageSample } from "../models.ts";
 import { quoteForShell } from "../utils/text.ts";
 
 export function createUsageGroup(root: string, name: string): string {
@@ -59,7 +60,19 @@ function percentiles(values: number[]): string {
   ).join(", ");
 }
 
-export function usageSummary(usages: EngineUsage[]): string {
+export function usageLine(session: string, usage: EngineUsage): string {
+  const megabytes = (usage.peakMemoryBytes / BYTES_PER_MEGABYTE).toFixed(1);
+  return `usage ${session}: ${usage.cpuMs} ms CPU, ${megabytes} MB peak memory`;
+}
+
+export function usagesFromLog(log: string): UsageSample[] {
+  return [...log.matchAll(USAGE_LINE)].map((match) => ({
+    cpuMs: Number(match[1]),
+    peakMemoryBytes: Number(match[2]) * BYTES_PER_MEGABYTE,
+  }));
+}
+
+export function usageSummary(usages: UsageSample[]): string {
   const cpu = percentiles(usages.map((usage) => usage.cpuMs));
   const memory = percentiles(
     usages.map((usage) => Math.round((usage.peakMemoryBytes / BYTES_PER_MEGABYTE) * 10) / 10),

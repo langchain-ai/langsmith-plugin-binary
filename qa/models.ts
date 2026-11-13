@@ -160,3 +160,5 @@ export interface EngineUsage {
   peakMemoryBytes: number;
   exitedOnItsOwn: boolean;
 }
+
+export type UsageSample = Pick<EngineUsage, "cpuMs" | "peakMemoryBytes">;
