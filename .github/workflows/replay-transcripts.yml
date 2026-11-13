@@ -11,6 +11,18 @@ on:
         description: Also save CPU and heap profiles of the plugin as an artifact.
         type: boolean
         default: false
+      engine_ref:
+        description: The engine branch, tag or commit to replay with, instead of this workflow's own commit.
+        type: string
+        default: ""
+      claude_plugin_ref:
+        description: The Claude Code plugin branch, tag or commit to replay, instead of its default branch.
+        type: string
+        default: ""
+      codex_plugin_ref:
+        description: The Codex plugin branch, tag or commit to replay, instead of its default branch.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -34,15 +46,17 @@ jobs:
           - agent: claude
             repository: langchain-ai/langsmith-claude-code-plugins
             plugin: plugins/langsmith-tracing
+            ref: ${{ inputs.claude_plugin_ref }}
           - agent: codex
             repository: langchain-ai/langsmith-codex-plugins
             plugin: plugins/tracing
+            ref: ${{ inputs.codex_plugin_ref }}
     steps:
       - name: Check Out This Engine
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
+          ref: ${{ inputs.engine_ref || job.workflow_sha }}
       - name: Check Out the Transcripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,6 +72,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ matrix.repository }}
+          ref: ${{ matrix.ref }}
           path: plugin-under-test
       - name: Create an Isolated Home
         uses: ./.github/actions/isolated-home
