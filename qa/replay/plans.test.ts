@@ -52,6 +52,10 @@ const codexRollout = [
   },
 ];
 
+function at(seconds: number): string {
+  return `2026-01-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
+}
+
 function codexUserMessage(...texts: string[]) {
   const content = texts.map((text) => ({ type: "input_text", text }));
   return { type: "response_item", payload: { type: "message", role: "user", content } };
@@ -195,6 +199,124 @@ describe("claudePlan", () => {
       ["PreCompact", "manual"],
       ["PostCompact", "auto"],
       ["SessionEnd", "auto"],
+    ]);
+  });
+
+  it("replays a subagent's hooks before its Agent call finishes", () => {
+    const launched = [
+      { type: "user", sessionId: "s1", message: { content: "explore" } },
+      {
+        type: "assistant",
+        message: {
+          id: "m1",
+          content: [
+            { type: "tool_use", id: "a1", name: "Agent", input: { subagent_type: "Explore" } },
+          ],
+        },
+      },
+      {
+        type: "user",
+        toolUseResult: { agentId: "x1" },
+        message: { content: [{ type: "tool_result", tool_use_id: "a1", content: "done" }] },
+      },
+      {
+        type: "assistant",
+        message: { id: "m2", stop_reason: "end_turn", content: [{ type: "text", text: "Done." }] },
+      },
+    ];
+    const subagent = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "tool_use", id: "t9", name: "Bash", input: {} }] },
+      },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t9" }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "found" }] } },
+    ];
+    const subagentLines = subagent.map((line) => JSON.stringify(line));
+    const plan = claudePlan(launched, (agentId) => (agentId === "x1" ? subagentLines : undefined));
+    expect(plan.subagents).toEqual([
+      { agentId: "x1", toolUseId: "a1", agentType: "Explore", lines: subagentLines },
+    ]);
+    expect(
+      plan.events.map((event) => [
+        event.payload.hook_event_name,
+        event.agentId,
+        event.payload.agent_type,
+        event.transcriptLines,
+      ]),
+    ).toEqual([
+      ["SessionStart", undefined, undefined, 0],
+      ["UserPromptSubmit", undefined, undefined, 0],
+      ["PreToolUse", undefined, undefined, 2],
+      ["PreToolUse", "x1", "Explore", 1],
+      ["PostToolUse", "x1", "Explore", 2],
+      ["SubagentStop", "x1", "Explore", 3],
+      ["PostToolUse", undefined, undefined, 3],
+      ["Stop", undefined, undefined, 4],
+      ["SessionEnd", undefined, undefined, 4],
+    ]);
+    expect(plan.events[5]?.payload.last_assistant_message).toBe("found");
+    expect(plan.turns[0]?.minTools).toBe(2);
+  });
+
+  it("replays a background subagent alongside the main thread by time", () => {
+    const launched = [
+      { type: "user", sessionId: "s1", timestamp: at(0), message: { content: "explore" } },
+      {
+        type: "assistant",
+        timestamp: at(1),
+        message: { id: "m1", content: [{ type: "tool_use", id: "b1", name: "Task", input: {} }] },
+      },
+      {
+        type: "user",
+        timestamp: at(2),
+        toolUseResult: { agentId: "x2", status: "async_launched" },
+        message: { content: [{ type: "tool_result", tool_use_id: "b1" }] },
+      },
+      {
+        type: "assistant",
+        timestamp: at(5),
+        message: { id: "m2", content: [{ type: "tool_use", id: "t5", name: "Bash", input: {} }] },
+      },
+      {
+        type: "user",
+        timestamp: at(6),
+        message: { content: [{ type: "tool_result", tool_use_id: "t5" }] },
+      },
+      {
+        type: "assistant",
+        timestamp: at(9),
+        message: { id: "m3", stop_reason: "end_turn", content: [{ type: "text", text: "Ok." }] },
+      },
+    ];
+    const subagent = [
+      {
+        type: "assistant",
+        timestamp: "2026-01-01T00:00:01.500Z",
+        message: { content: [{ type: "tool_use", id: "s1", name: "Read", input: {} }] },
+      },
+      {
+        type: "user",
+        timestamp: at(3),
+        message: { content: [{ type: "tool_result", tool_use_id: "s1" }] },
+      },
+      { type: "assistant", timestamp: at(7), message: { content: [{ type: "text", text: "bg" }] } },
+    ].map((line) => JSON.stringify(line));
+    const plan = claudePlan(launched, (agentId) => (agentId === "x2" ? subagent : undefined));
+    expect(
+      plan.events.map((event) => [event.payload.hook_event_name, event.payload.tool_use_id]),
+    ).toEqual([
+      ["SessionStart", undefined],
+      ["UserPromptSubmit", undefined],
+      ["PreToolUse", "b1"],
+      ["PostToolUse", "b1"],
+      ["PreToolUse", "s1"],
+      ["PostToolUse", "s1"],
+      ["PreToolUse", "t5"],
+      ["PostToolUse", "t5"],
+      ["SubagentStop", undefined],
+      ["Stop", undefined],
+      ["SessionEnd", undefined],
     ]);
   });
 });

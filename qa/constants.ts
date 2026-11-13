@@ -33,7 +33,16 @@ export const RUN_QUERY_LIMIT = 100;
 
 export const STOP_EVENT = "Stop";
 export const PROMPT_EVENT = "UserPromptSubmit";
+export const PRE_TOOL_EVENT = "PreToolUse";
+export const REPLAY_PERMISSION_MODE = "default";
+export const SUBAGENT_STOP_EVENT = "SubagentStop";
 export const SKILL_TOOL_NAME = "Skill";
+export const SUBAGENT_BACKGROUND_STATUS = "async_launched";
+export const DEFAULT_SUBAGENT_TYPE = "general-purpose";
+export const TRANSCRIPT_EXTENSION = ".jsonl";
+export const SUBAGENTS_FOLDER = "subagents";
+export const SUBAGENT_FILE_PREFIX = "agent-";
+export const SUBAGENT_METADATA_EXTENSION = ".meta.json";
 export const RECORDED_EVENTS = ["UserPromptSubmit", "Stop"];
 
 export const FAKE_CALL_ID_PREFIX = "toolu_qa_";
