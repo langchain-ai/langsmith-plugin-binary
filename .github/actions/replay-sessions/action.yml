@@ -13,6 +13,9 @@ inputs:
   profile:
     description: Also replay once more to save CPU and heap profiles as an artifact.
     default: "false"
+  artifact-suffix:
+    description: Added to the artifact names so parallel runs of the same agent don't collide.
+    default: ""
 runs:
   using: composite
   steps:
@@ -40,6 +43,12 @@ runs:
           grep '^usage ' "$RUNNER_TEMP/replay.log" | sed 's/^usage /- /'
         } >> "$GITHUB_STEP_SUMMARY"
         exit $failed
+    - name: Upload the Replay Log
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: replay-usage-${{ inputs.agent }}${{ inputs.artifact-suffix }}
+        path: ${{ runner.temp }}/replay.log
     - name: Profile the Plugin While Replaying Recorded Sessions
       if: inputs.profile == 'true'
       shell: bash
@@ -55,5 +64,5 @@ runs:
       if: inputs.profile == 'true'
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: plugin-profiles-${{ inputs.agent }}
+        name: plugin-profiles-${{ inputs.agent }}${{ inputs.artifact-suffix }}
         path: ${{ runner.temp }}/plugin-profiles

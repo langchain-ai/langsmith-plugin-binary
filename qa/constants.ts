@@ -93,3 +93,4 @@ export const ENGINE_EXIT_TIMEOUT_MS = 15_000;
 export const ENGINE_EXIT_POLL_MS = 250;
 export const BYTES_PER_MEGABYTE = 1024 * 1024;
 export const USAGE_PERCENTILES = [50, 95, 99];
+export const USAGE_LINE = /^usage .+: (\d+) ms CPU, ([\d.]+) MB peak memory$/gm;

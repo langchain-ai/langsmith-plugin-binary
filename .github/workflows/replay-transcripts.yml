@@ -23,6 +23,10 @@ on:
         description: The Codex plugin branch, tag or commit to replay, instead of its default branch.
         type: string
         default: ""
+      shards:
+        description: How many runners each agent's sessions are split across.
+        type: number
+        default: 5
 
 permissions:
   contents: read
@@ -36,21 +40,55 @@ env:
   ANTHROPIC_API_KEY: ""
 
 jobs:
+  split-transcripts:
+    name: Split the Transcripts Across Runners
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.split.outputs.shards }}
+    steps:
+      - name: Check Out the Transcripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: ${{ inputs.transcripts }}
+          filter: blob:none
+      - name: Split Each Agent's Sessions
+        id: split
+        env:
+          TRANSCRIPTS: ${{ inputs.transcripts }}
+          SHARDS: ${{ inputs.shards }}
+          CLAUDE_PLUGIN_REF: ${{ inputs.claude_plugin_ref }}
+          CODEX_PLUGIN_REF: ${{ inputs.codex_plugin_ref }}
+        run: |
+          for agent in claude codex; do
+            if [ -z "$(find "$TRANSCRIPTS/$agent" -maxdepth 1 -name '*.jsonl' -print -quit)" ]; then
+              echo "::error::No $agent transcripts found in $TRANSCRIPTS/$agent"
+              exit 1
+            fi
+          done
+          split() {
+            find "$TRANSCRIPTS/$1" -maxdepth 1 -name '*.jsonl' | sort | jq -R -s -c \
+              --arg agent "$1" --arg repository "$2" --arg plugin "$3" --arg ref "$4" --argjson count "$SHARDS" '
+                split("\n") | map(select(length > 0)) | to_entries | group_by(.key % $count)
+                | map({agent: $agent, repository: $repository, plugin: $plugin, ref: $ref,
+                    shard: (.[0].key % $count + 1),
+                    sessions: (map("transcripts-under-test/" + .value) | join("\n"))})'
+          }
+          shards=$(
+            {
+              split claude langchain-ai/langsmith-claude-code-plugins plugins/langsmith-tracing "$CLAUDE_PLUGIN_REF"
+              split codex langchain-ai/langsmith-codex-plugins plugins/tracing "$CODEX_PLUGIN_REF"
+            } | jq -s -c 'add'
+          )
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+
   replay-transcripts:
-    name: Replay ${{ matrix.agent }} Transcripts
+    name: Replay ${{ matrix.agent }} Transcripts, Part ${{ matrix.shard }}
+    needs: split-transcripts
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - agent: claude
-            repository: langchain-ai/langsmith-claude-code-plugins
-            plugin: plugins/langsmith-tracing
-            ref: ${{ inputs.claude_plugin_ref }}
-          - agent: codex
-            repository: langchain-ai/langsmith-codex-plugins
-            plugin: plugins/tracing
-            ref: ${{ inputs.codex_plugin_ref }}
+        include: ${{ fromJSON(needs.split-transcripts.outputs.shards) }}
     steps:
       - name: Check Out This Engine
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,11 +101,11 @@ jobs:
           path: transcripts-under-test
           sparse-checkout: ${{ inputs.transcripts }}
           filter: blob:none
-      - name: Download the Transcripts
+      - name: Download This Part's Transcripts
         working-directory: transcripts-under-test
         env:
-          TRANSCRIPTS: ${{ inputs.transcripts }}
-        run: git lfs pull --include "$TRANSCRIPTS/**" --exclude ""
+          SESSIONS: ${{ matrix.sessions }}
+        run: git lfs pull --include "$(paste -sd , - <<< "${SESSIONS//transcripts-under-test\//}")" --exclude ""
       - name: Check Out the Plugin
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,5 +135,39 @@ jobs:
         with:
           agent: ${{ matrix.agent }}
           plugin: plugin-under-test/${{ matrix.plugin }}
-          sessions: transcripts-under-test/${{ inputs.transcripts }}/${{ matrix.agent }}/*.jsonl
+          sessions: ${{ matrix.sessions }}
           profile: ${{ inputs.profile }}
+          artifact-suffix: -${{ matrix.shard }}
+
+  summarize-usage:
+    name: Summarize CPU and Memory Across Parts
+    needs: replay-transcripts
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out This Engine
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ inputs.engine_ref || job.workflow_sha }}
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.8.2
+      - name: Download the Replay Logs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: replay-usage-*
+          path: ${{ runner.temp }}/replay-usage
+      - name: Summarize Each Agent
+        run: |
+          shopt -s nullglob
+          for agent in claude codex; do
+            logs=("$RUNNER_TEMP"/replay-usage/replay-usage-"$agent"-*/replay.log)
+            echo "### Plugin CPU and memory on $agent across all parts"
+            if [ ${#logs[@]} -eq 0 ]; then
+              echo "No $agent sessions were replayed"
+            else
+              node qa/usage-summary.ts "${logs[@]}"
+            fi
+          done >> "$GITHUB_STEP_SUMMARY"

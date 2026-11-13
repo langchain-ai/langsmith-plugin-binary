@@ -16,7 +16,6 @@ import { codexTracingEnvironment } from "./agents/codex.ts";
 import { checkRuns } from "./check.ts";
 import {
   BUNDLED_BINARY_WARNING,
-  BYTES_PER_MEGABYTE,
   FAKE_API_KEY,
   PROMPT_EVENT,
   STOP_EVENT,
@@ -40,7 +39,13 @@ import type {
 import { claudePlan } from "./replay/claude-plan.ts";
 import { codexPlan } from "./replay/codex-plan.ts";
 import { pluginHookCommands, runHookCommand } from "./replay/hooks.ts";
-import { closeUsageGroup, commandInGroup, createUsageGroup, usageSummary } from "./replay/usage.ts";
+import {
+  closeUsageGroup,
+  commandInGroup,
+  createUsageGroup,
+  usageLine,
+  usageSummary,
+} from "./replay/usage.ts";
 import { baseEnvironment } from "./workspace.ts";
 
 const planners: Record<AgentName, ReplayPlanner> = {
@@ -186,8 +191,7 @@ for (const file of files) {
   if (usageGroup !== undefined) {
     const usage = await closeUsageGroup(usageGroup);
     usages.push(usage);
-    const megabytes = (usage.peakMemoryBytes / BYTES_PER_MEGABYTE).toFixed(1);
-    console.log(`usage ${basename(file)}: ${usage.cpuMs} ms CPU, ${megabytes} MB peak memory`);
+    console.log(usageLine(basename(file), usage));
     if (usage.cpuMs === 0) failures.push("no plugin process was measured");
     if (!usage.exitedOnItsOwn)
       failures.push("a plugin process was still running after the session");
