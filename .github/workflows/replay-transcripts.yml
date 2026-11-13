@@ -59,6 +59,12 @@ jobs:
           CLAUDE_PLUGIN_REF: ${{ inputs.claude_plugin_ref }}
           CODEX_PLUGIN_REF: ${{ inputs.codex_plugin_ref }}
         run: |
+          for agent in claude codex; do
+            if [ -z "$(find "$TRANSCRIPTS/$agent" -maxdepth 1 -name '*.jsonl' -print -quit)" ]; then
+              echo "::error::No $agent transcripts found in $TRANSCRIPTS/$agent"
+              exit 1
+            fi
+          done
           split() {
             find "$TRANSCRIPTS/$1" -maxdepth 1 -name '*.jsonl' | sort | jq -R -s -c \
               --arg agent "$1" --arg repository "$2" --arg plugin "$3" --arg ref "$4" --argjson count "$SHARDS" '
