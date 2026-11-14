@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { claudePlan } from "./claude-plan.ts";
 import { codexPlan } from "./codex-plan.ts";
+import { cursorPlan } from "./cursor-plan.ts";
 
 const claudeTranscript = [
   { type: "user", sessionId: "s1", message: { role: "user", content: "list files" } },
@@ -51,6 +52,35 @@ const codexRollout = [
     payload: { type: "task_complete", turn_id: "turn-1", last_agent_message: "One file." },
   },
 ];
+
+const cursorTranscript = [
+  {
+    role: "user",
+    message: {
+      content: [
+        {
+          type: "text",
+          text: "<timestamp>Today</timestamp>\n<user_query>\nlist files\n</user_query>",
+        },
+      ],
+    },
+  },
+  {
+    role: "assistant",
+    message: {
+      content: [
+        { type: "text", text: "Looking." },
+        { type: "tool_use", name: "Shell", input: { command: "ls" } },
+      ],
+    },
+  },
+  { role: "assistant", message: { content: [{ type: "text", text: "One file." }] } },
+  { type: "turn_ended", status: "success" },
+];
+
+function noSubagents(): undefined {
+  return undefined;
+}
 
 function at(seconds: number): string {
   return `2026-01-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
@@ -404,5 +434,56 @@ describe("codexPlan", () => {
       ...codexRollout.slice(1),
     ];
     expect(codexPlan(child).turns).toEqual([]);
+  });
+});
+
+describe("cursorPlan", () => {
+  it("expects one turn per prompt with its tools and reply", () => {
+    expect(cursorPlan(cursorTranscript, noSubagents, "conv-1").turns).toEqual([
+      {
+        prompt: "list files",
+        command: "",
+        minTools: 1,
+        maxTools: 1,
+        reply: "One file.",
+        expectsModelCall: true,
+      },
+    ]);
+  });
+
+  it("fires the hooks Cursor sends for one turn, in order", () => {
+    const events = cursorPlan(cursorTranscript, noSubagents, "conv-1").events;
+    expect(
+      events.map(({ payload }) => [
+        payload.hook_event_name,
+        payload.conversation_id,
+        payload.generation_id,
+        payload.status,
+      ]),
+    ).toEqual([
+      ["sessionStart", "conv-1", "", undefined],
+      ["beforeSubmitPrompt", "conv-1", "conv-1-1", undefined],
+      ["postToolUse", "conv-1", "conv-1-1", undefined],
+      ["afterAgentResponse", "conv-1", "conv-1-1", undefined],
+      ["stop", "conv-1", "conv-1-1", "completed"],
+    ]);
+  });
+
+  it("stops an unfinished turn as aborted and starts the next one clean", () => {
+    const readOnly = {
+      role: "assistant",
+      message: { content: [{ type: "tool_use", name: "Read", input: { path: "a.txt" } }] },
+    };
+    const interrupted = [...cursorTranscript.slice(0, 2), cursorTranscript[0]!, readOnly];
+    const plan = cursorPlan([...interrupted, cursorTranscript[3]!], noSubagents, "conv-1");
+    const stops = plan.events.filter(({ payload }) => payload.hook_event_name === "stop");
+    expect(stops.map(({ payload }) => [payload.generation_id, payload.status])).toEqual([
+      ["conv-1-1", "aborted"],
+      ["conv-1-2", "completed"],
+    ]);
+    expect(plan.turns.map((turn) => [turn.minTools, turn.reply])).toEqual([
+      [1, null],
+      [1, null],
+    ]);
   });
 });

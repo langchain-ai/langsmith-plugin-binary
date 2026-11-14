@@ -84,6 +84,12 @@ describe("checkRuns", () => {
     ).toEqual(["turn 1 is missing the final reply"]);
   });
 
+  it("accepts a final reply kept as text the way Cursor saves it", () => {
+    expect(checkRuns(scenario, withChange("r1", { outputs: { text: "it says hello" } }))).toEqual(
+      [],
+    );
+  });
+
   it("matches a prompt and tool output that contain quotes", () => {
     const quoted: Scenario = {
       ...scenario,

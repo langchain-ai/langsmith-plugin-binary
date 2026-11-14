@@ -15,29 +15,28 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { claudeTracingEnvironment } from "./agents/claude.ts";
 import { codexTracingEnvironment } from "./agents/codex.ts";
+import { cursorTracingEnvironment } from "./agents/cursor.ts";
 import { checkRuns } from "./check.ts";
 import {
   BUNDLED_BINARY_WARNING,
   BYTES_PER_MEGABYTE,
   FAKE_API_KEY,
-  PRE_TOOL_EVENT,
-  PROMPT_EVENT,
-  STOP_EVENT,
   SUBAGENT_FILE_PREFIX,
   SUBAGENT_METADATA_EXTENSION,
   SUBAGENTS_FOLDER,
   TRANSCRIPT_EXTENSION,
+  TURN_EVENTS,
   TURN_SETTLE_POLL_MS,
   TURN_SETTLE_TIMEOUT_MS,
 } from "./constants.ts";
 import { startFakeServer, waitForQuietUploads } from "./fake/server.ts";
 import { uploadsSettled } from "./langsmith.ts";
 import type {
-  AgentName,
   EngineUsage,
   FakeServer,
   ReplayOptions,
   ReplayPlan,
+  ReplayAgentName,
   ReplayPlanner,
   ReplayTranscript,
   Scenario,
@@ -45,21 +44,25 @@ import type {
   TracingEnvironment,
   TracingSettings,
   TranscriptLine,
+  TurnEvents,
 } from "./models.ts";
 import { claudePlan } from "./replay/claude-plan.ts";
 import { codexPlan } from "./replay/codex-plan.ts";
+import { cursorPlan } from "./replay/cursor-plan.ts";
 import { pluginHookCommands, runHookCommand } from "./replay/hooks.ts";
 import { closeUsageGroup, commandInGroup, createUsageGroup, usageSummary } from "./replay/usage.ts";
 import { forEachInParallel } from "./utils/pool.ts";
 import { baseEnvironment } from "./workspace.ts";
 
-const planners: Record<AgentName, ReplayPlanner> = {
+const planners: Record<ReplayAgentName, ReplayPlanner> = {
   claude: claudePlan,
   codex: codexPlan,
+  cursor: cursorPlan,
 };
-const tracingEnvironments: Record<AgentName, TracingEnvironment> = {
+const tracingEnvironments: Record<ReplayAgentName, TracingEnvironment> = {
   claude: claudeTracingEnvironment,
   codex: codexTracingEnvironment,
+  cursor: cursorTracingEnvironment,
 };
 
 function transcriptFiles(path: string): string[] {
@@ -102,14 +105,14 @@ async function waitForTurnUpload(server: FakeServer, finishedTurns: number): Pro
   }
 }
 
-function skipReason(plan: ReplayPlan): string | undefined {
+function skipReason(plan: ReplayPlan, turnEvents: TurnEvents): string | undefined {
   if (plan.turns.length === 0) return "no user turns";
   const lastPrompt = plan.events.findLastIndex(
-    (event) => event.payload.hook_event_name === PROMPT_EVENT,
+    (event) => event.payload.hook_event_name === turnEvents.prompt,
   );
   const finished = plan.events
     .slice(lastPrompt)
-    .some((event) => event.payload.hook_event_name === STOP_EVENT);
+    .some((event) => event.payload.hook_event_name === turnEvents.stop);
   return finished ? undefined : "ends mid-turn";
 }
 
@@ -127,6 +130,7 @@ async function replaySession(
   usageGroup: string | undefined,
 ): Promise<string[]> {
   const { agent, pluginDir } = options;
+  const turnEvents = TURN_EVENTS[agent];
   const sessionId = options.freshSessionId && plan.sessionId !== "" ? randomUUID() : plan.sessionId;
   const renamed = (text: string) => text.replaceAll(plan.sessionId, sessionId);
   const scenario: Scenario = {
@@ -183,9 +187,9 @@ async function replaySession(
         .join(""),
     );
     written.set(event.agentId, Math.max(done, event.transcriptLines));
-    if (event.payload.hook_event_name === PROMPT_EVENT && options.turnGapMs > 0)
+    if (event.payload.hook_event_name === turnEvents.prompt && options.turnGapMs > 0)
       await sleep(options.turnGapMs);
-    if (event.payload.hook_event_name === PRE_TOOL_EVENT && options.toolGapMs > 0) {
+    if (event.payload.hook_event_name === turnEvents.toolStart && options.toolGapMs > 0) {
       await sleep(Math.max(0, lastToolStart + options.toolGapMs - Date.now()));
       lastToolStart = Date.now();
     }
@@ -203,7 +207,7 @@ async function replaySession(
       if (exitCode !== 0)
         console.warn(`${event.payload.hook_event_name} hook exited with ${exitCode}`);
     }
-    if (event.payload.hook_event_name === STOP_EVENT)
+    if (event.payload.hook_event_name === turnEvents.stop)
       await waitForTurnUpload(server, ++finishedTurns);
   }
   await waitForQuietUploads(server, plan.turns.length);
@@ -227,7 +231,8 @@ const { values } = parseArgs({
 });
 const agent = values.agent;
 if (process.platform !== "linux") console.warn(BUNDLED_BINARY_WARNING);
-if (agent !== "claude" && agent !== "codex") throw new Error("--agent must be claude or codex");
+if (agent !== "claude" && agent !== "codex" && agent !== "cursor")
+  throw new Error("--agent must be claude, codex or cursor");
 if (!values.plugin || !values.sessions?.length)
   throw new Error("--plugin and --sessions are required");
 const options: ReplayOptions = {
@@ -251,8 +256,9 @@ await forEachInParallel(files, parallel, async (file, index) => {
   const plan = planners[agent](
     rawLines.map((line) => JSON.parse(line) as TranscriptLine),
     subagentReader(file),
+    basename(file, TRANSCRIPT_EXTENSION),
   );
-  const reason = skipReason(plan);
+  const reason = skipReason(plan, TURN_EVENTS[agent]);
   if (reason !== undefined) {
     console.log(`SKIP ${basename(file)} (${reason})`);
     return;

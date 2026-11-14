@@ -2,16 +2,18 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { HOOK_TIMEOUT_MS } from "../constants.ts";
-import type { HooksFile } from "../models.ts";
+import type { PluginHooksFile } from "../models.ts";
 
 export function pluginHookCommands(pluginDir: string): Map<string, string[]> {
   const file = JSON.parse(
     readFileSync(join(pluginDir, "hooks", "hooks.json"), "utf8"),
-  ) as HooksFile;
+  ) as PluginHooksFile;
   return new Map(
     Object.entries(file.hooks).map(([event, groups]) => [
       event,
-      groups.flatMap((group) => group.hooks.map((hook) => hook.command)),
+      groups
+        .flatMap((entry) => entry.hooks?.map((hook) => hook.command) ?? [entry.command])
+        .filter((command) => command !== undefined),
     ]),
   );
 }
