@@ -150,6 +150,22 @@ describe("claudePlan", () => {
     ).toEqual([[3, "Part two."]]);
   });
 
+  it("expects a turn for a message from another session but not for other meta lines", () => {
+    const peer = [
+      { type: "user", isMeta: true, message: { content: "skill instructions" } },
+      {
+        type: "user",
+        isMeta: true,
+        origin: { kind: "peer" },
+        message: { content: "message from a peer" },
+      },
+      claudeTranscript[3]!,
+    ];
+    expect(claudePlan(peer).turns.map((turn) => [turn.prompt, turn.reply])).toEqual([
+      ["message from a peer", "One file."],
+    ]);
+  });
+
   it("leaves skill calls out of the expected tool count", () => {
     const skill = [
       claudeTranscript[0]!,

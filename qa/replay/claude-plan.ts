@@ -1,6 +1,7 @@
 import {
   CLAUDE_LOCAL_OUTPUT_PREFIX,
   CLAUDE_NON_PROMPT_PREFIX,
+  CLAUDE_PEER_ORIGIN,
   CLAUDE_SHELL_PROMPT,
   CLAUDE_SYSTEM_REMINDER,
   DEFAULT_SUBAGENT_TYPE,
@@ -30,8 +31,8 @@ function blocks(line: TranscriptLine, type: string): TranscriptLine[] {
 }
 
 function isUserText(line: TranscriptLine | undefined): line is TranscriptLine {
-  if (line?.type !== "user" || line.isMeta || line.isCompactSummary || line.isSidechain)
-    return false;
+  if (line?.type !== "user" || line.isCompactSummary || line.isSidechain) return false;
+  if (line.isMeta && line.origin?.kind !== CLAUDE_PEER_ORIGIN) return false;
   return blocks(line, "tool_result").length === 0;
 }
 
