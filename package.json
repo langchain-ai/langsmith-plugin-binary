@@ -64,6 +64,10 @@
       "types": "./dist/tracing/upload/index.d.ts",
       "default": "./dist/tracing/upload/index.js"
     },
+    "./tracer": {
+      "types": "./dist/tracer/index.d.ts",
+      "default": "./dist/tracer/index.js"
+    },
     "./tracing/upload-identity": {
       "types": "./dist/tracing/upload/identity.d.ts",
       "default": "./dist/tracing/upload/identity.js"
