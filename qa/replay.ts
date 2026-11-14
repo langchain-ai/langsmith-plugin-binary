@@ -8,6 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -126,6 +127,8 @@ async function replaySession(
   usageGroup: string | undefined,
 ): Promise<string[]> {
   const { agent, pluginDir } = options;
+  const sessionId = options.freshSessionId && plan.sessionId !== "" ? randomUUID() : plan.sessionId;
+  const renamed = (text: string) => text.replaceAll(plan.sessionId, sessionId);
   const scenario: Scenario = {
     name: basename(file),
     files: {},
@@ -135,13 +138,13 @@ async function replaySession(
   const server = await startFakeServer(scenario);
   const workDir = mkdtempSync(join(tmpdir(), `plugin-qa-replay-${agent}-`));
   const project = join(workDir, "project");
-  const transcript = join(workDir, basename(file));
+  const transcript = join(workDir, renamed(basename(file)));
   mkdirSync(project);
   writeFileSync(transcript, "");
   const outputs = new Map<string | undefined, ReplayTranscript>([
-    [undefined, { path: transcript, lines: rawLines }],
+    [undefined, { path: transcript, lines: rawLines.map(renamed) }],
   ]);
-  const subagentFolder = join(workDir, plan.sessionId, SUBAGENTS_FOLDER);
+  const subagentFolder = join(workDir, sessionId, SUBAGENTS_FOLDER);
   for (const { agentId, toolUseId, agentType, lines } of plan.subagents) {
     const path = subagentFile(subagentFolder, agentId);
     mkdirSync(subagentFolder, { recursive: true });
@@ -150,7 +153,7 @@ async function replaySession(
       path.slice(0, -TRANSCRIPT_EXTENSION.length) + SUBAGENT_METADATA_EXTENSION,
       JSON.stringify({ toolUseId, agentType }),
     );
-    outputs.set(agentId, { path, lines });
+    outputs.set(agentId, { path, lines: lines.map(renamed) });
   }
   const settings: TracingSettings = {
     pluginDir,
@@ -186,12 +189,14 @@ async function replaySession(
       await sleep(Math.max(0, lastToolStart + options.toolGapMs - Date.now()));
       lastToolStart = Date.now();
     }
-    const payload = JSON.stringify({
-      ...event.payload,
-      transcript_path: transcript,
-      cwd: project,
-      ...(event.agentId === undefined ? {} : { agent_transcript_path: output.path }),
-    });
+    const payload = renamed(
+      JSON.stringify({
+        ...event.payload,
+        transcript_path: transcript,
+        cwd: project,
+        ...(event.agentId === undefined ? {} : { agent_transcript_path: output.path }),
+      }),
+    );
     for (const command of commands.get(String(event.payload.hook_event_name)) ?? []) {
       const measured = usageGroup === undefined ? command : commandInGroup(usageGroup, command);
       const exitCode = await runHookCommand(measured, payload, project, env);
@@ -217,6 +222,7 @@ const { values } = parseArgs({
     "tool-gap-ms": { type: "string", default: "0" },
     "turn-gap-ms": { type: "string", default: "0" },
     parallel: { type: "string", default: "1" },
+    "fresh-session-id": { type: "boolean", default: false },
   },
 });
 const agent = values.agent;
@@ -230,6 +236,7 @@ const options: ReplayOptions = {
   profileDir: values["profile-dir"] === undefined ? undefined : resolve(values["profile-dir"]),
   toolGapMs: gapOption("tool-gap-ms", values["tool-gap-ms"]),
   turnGapMs: gapOption("turn-gap-ms", values["turn-gap-ms"]),
+  freshSessionId: values["fresh-session-id"],
 };
 const parallel = Number(values.parallel);
 if (!Number.isInteger(parallel) || parallel < 1)

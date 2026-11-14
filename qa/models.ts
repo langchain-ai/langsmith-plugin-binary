@@ -176,6 +176,7 @@ export interface ReplayOptions {
   profileDir: string | undefined;
   toolGapMs: number;
   turnGapMs: number;
+  freshSessionId: boolean;
 }
 
 export interface ReplayTranscript {
