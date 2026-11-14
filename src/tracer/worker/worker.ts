@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { basename } from "node:path";
 import { describe } from "../../utils/errors.js";
+import { TRACER_FOLDER_MODE } from "../constants.js";
 import type {
   PositionedHookNote,
   SessionSnapshot,
@@ -229,7 +230,7 @@ class TracerWorker {
 }
 
 export async function runWorker(options: WorkerOptions): Promise<void> {
-  mkdirSync(options.paths.folder, { recursive: true });
+  mkdirSync(options.paths.folder, { recursive: true, mode: TRACER_FOLDER_MODE });
   if (!takeLock(options.paths.lock, options.version)) return;
   const worker = new TracerWorker(options);
   const stopped = worker.stopped();

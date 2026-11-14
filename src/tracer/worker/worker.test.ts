@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -75,6 +76,7 @@ function hook(box: Sandbox, sent: HookNote, startsWorker = true, version = VERSI
 
 const isAlive = (pid: number) => processIsAlive(pid) !== false;
 const lockPid = (lock: string): number => JSON.parse(readFileSync(lock, "utf8")).pid;
+const mode = (path: string) => statSync(path).mode & 0o777;
 const lines = (path: string) =>
   existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean) : [];
 const recorded = (box: Sandbox, count: number) =>
@@ -93,6 +95,12 @@ it("delivers fifty simultaneous hooks through one worker when none is running", 
   expect(startedWorkers(box)).toBe(1);
   await delay(TICK_MS * 2);
   expect(lines(box.record)).toHaveLength(50);
+});
+
+it("keeps the folder and notes holding API keys private to the owner", () => {
+  const box = sandbox();
+  hook(box, note(box, "UserPromptSubmit"), false);
+  expect([mode(box.paths.folder), mode(box.paths.notes)]).toEqual([0o700, 0o600]);
 });
 
 it("applies a note written while no worker runs in transcript order", async () => {
