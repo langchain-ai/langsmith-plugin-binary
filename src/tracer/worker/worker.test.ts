@@ -2,16 +2,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import {
   appendFileSync,
-  closeSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
-  openSync,
-  readdirSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
@@ -23,12 +18,7 @@ import { waitFor } from "../../test-support/wait.js";
 import type { HookNote } from "../models.js";
 import { tracerPaths } from "../paths.js";
 import { sendHookNote } from "./hook.js";
-import {
-  IDLE_EXIT_MS,
-  NOTES_ROTATE_BYTES,
-  TICK_MS,
-  WORKER_STARTED_LOG,
-} from "./worker-constants.js";
+import { IDLE_EXIT_MS, TICK_MS, WORKER_STARTED_LOG } from "./worker-constants.js";
 import { processIsAlive } from "../../storage/file-lock-support.js";
 
 vi.setConfig({ testTimeout: 15_000 });
@@ -260,53 +250,6 @@ it("resumes from the saved notes offset after a restart without retaking old not
   expect(await recorded(box, 2)).toEqual(["s note Start", "s note Next"]);
   await delay(TICK_MS * 2);
   expect(lines(box.record)).toHaveLength(2);
-});
-
-function rotatingWorker() {
-  const box = sandbox();
-  mkdirSync(box.paths.folder, { recursive: true });
-  const padded = { ...note(box, "Pad"), sessionId: "big", details: { pad: "x".repeat(1 << 20) } };
-  const padding = `${JSON.stringify({ ...padded, transcriptSizes: {} })}\n`;
-  const pads = Math.ceil(NOTES_ROTATE_BYTES / padding.length);
-  writeFileSync(box.paths.notes, padding.repeat(pads));
-  const lateHook = openSync(box.paths.notes, "a");
-  startWorker(box);
-  const writeLate = () => {
-    writeSync(lateHook, `${JSON.stringify({ ...note(box, "InRotated"), transcriptSizes: {} })}\n`);
-    closeSync(lateHook);
-    hook(box, note(box, "InNew"));
-  };
-  const rotated = () =>
-    waitFor(() => readdirSync(box.paths.folder).some((name) => name.includes(".rotated.")));
-  return { box, pads, writeLate, rotated };
-}
-
-async function expectBothLateNotes(box: Sandbox, pads: number): Promise<void> {
-  const received = await recorded(box, pads + 2);
-  expect(received.filter((line) => line.startsWith("s ")).toSorted()).toEqual([
-    "s note InNew",
-    "s note InRotated",
-  ]);
-  await delay(TICK_MS * 2);
-  expect(lines(box.record)).toHaveLength(pads + 2);
-}
-
-it("loses no note a slow hook appends after the notes file is rotated", async () => {
-  const { box, pads, writeLate, rotated } = rotatingWorker();
-  await rotated();
-  await delay(TICK_MS / 5);
-  writeLate();
-  await expectBothLateNotes(box, pads);
-});
-
-it("reads a rotated notes file a killed worker left behind", async () => {
-  const { box, pads, writeLate, rotated } = rotatingWorker();
-  await rotated();
-  const killed = lockPid(box.paths.lock);
-  process.kill(killed, "SIGKILL");
-  await waitFor(() => !isAlive(killed), "the worker to die");
-  writeLate();
-  await expectBothLateNotes(box, pads);
 });
 
 it("does not exit while a note is still being written", async () => {

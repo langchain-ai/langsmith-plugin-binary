@@ -4,10 +4,6 @@ export const LOCK_ATTEMPTS = 3;
 export const LOCK_TAKEOVER_STALE_MS = 1_000;
 
 export const UNREAD_NOTES = { base: 0, offset: 0 };
-export const NOTES_ROTATE_BYTES = 10 * 1024 * 1024;
-export const ROTATED_NOTES_SUFFIX = ".rotated.";
-export const ROTATED_NOTES_NAME = /\.rotated\.(\d+)-(\d+)$/u;
-export const ROTATED_NOTES_SETTLE_MS = 500;
 export const HOOK_WARNING_PREFIX = "langsmith tracer: ";
 
 export const READ_DEBOUNCE_MS = 20;

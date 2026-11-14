@@ -4,23 +4,6 @@ export type WorkerSession = Omit<SessionSnapshot, "builderState"> & {
   builder: TranscriptBuilder;
 };
 
-export interface RotatedNotes {
-  path: string;
-  offset: number;
-  rotatedAt: number;
-}
-
-export interface RotatedLeftover {
-  path: string;
-  base: number;
-  nextBase: number;
-}
-
-export interface NotesRead {
-  offset: number;
-  size: number;
-}
-
 export interface LockHolder {
   pid: number;
   version: string;

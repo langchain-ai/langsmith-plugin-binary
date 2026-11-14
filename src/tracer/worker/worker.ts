@@ -10,7 +10,7 @@ import type {
 } from "../models.js";
 import { SNAPSHOT_VERSION } from "../snapshot/snapshot-constants.js";
 import { releaseLock, takeLock } from "./lock.js";
-import { NotesFollower } from "./notes.js";
+import { NotesFollower } from "../notes/notes.js";
 import { positionNote, readPass, snapshotOf } from "./session.js";
 import {
   ABANDONED_EXIT_MS,
