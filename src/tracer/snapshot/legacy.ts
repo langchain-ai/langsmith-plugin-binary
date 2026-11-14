@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { TRACER_FOLDER_MODE } from "../constants.js";
 import type { SessionSnapshot } from "../models.js";
 import { tracerPaths } from "../paths.js";
 import {
@@ -38,7 +39,7 @@ export function importLegacyState(options: LegacyImport): number {
       ended: false,
     }));
   for (const session of imported) saved.sessions[session.sessionId] = session;
-  mkdirSync(paths.folder, { recursive: true });
+  mkdirSync(paths.folder, { recursive: true, mode: TRACER_FOLDER_MODE });
   writeSnapshot(paths.snapshot, saved);
   rmSync(legacyEngine, { recursive: true, force: true });
   rmSync(legacyState, { force: true });
