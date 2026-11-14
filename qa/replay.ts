@@ -1,5 +1,6 @@
 import {
   appendFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -7,8 +8,9 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { claudeTracingEnvironment } from "./agents/claude.ts";
@@ -18,8 +20,13 @@ import {
   BUNDLED_BINARY_WARNING,
   BYTES_PER_MEGABYTE,
   FAKE_API_KEY,
+  PRE_TOOL_EVENT,
   PROMPT_EVENT,
   STOP_EVENT,
+  SUBAGENT_FILE_PREFIX,
+  SUBAGENT_METADATA_EXTENSION,
+  SUBAGENTS_FOLDER,
+  TRANSCRIPT_EXTENSION,
   TURN_SETTLE_POLL_MS,
   TURN_SETTLE_TIMEOUT_MS,
 } from "./constants.ts";
@@ -32,7 +39,9 @@ import type {
   ReplayOptions,
   ReplayPlan,
   ReplayPlanner,
+  ReplayTranscript,
   Scenario,
+  SubagentReader,
   TracingEnvironment,
   TracingSettings,
   TranscriptLine,
@@ -41,6 +50,7 @@ import { claudePlan } from "./replay/claude-plan.ts";
 import { codexPlan } from "./replay/codex-plan.ts";
 import { pluginHookCommands, runHookCommand } from "./replay/hooks.ts";
 import { closeUsageGroup, commandInGroup, createUsageGroup, usageSummary } from "./replay/usage.ts";
+import { forEachInParallel } from "./utils/pool.ts";
 import { baseEnvironment } from "./workspace.ts";
 
 const planners: Record<AgentName, ReplayPlanner> = {
@@ -55,8 +65,34 @@ const tracingEnvironments: Record<AgentName, TracingEnvironment> = {
 function transcriptFiles(path: string): string[] {
   if (!statSync(path).isDirectory()) return [path];
   return readdirSync(path)
+    .filter((name) => name !== SUBAGENTS_FOLDER)
     .flatMap((name) => transcriptFiles(join(path, name)))
-    .filter((file) => file.endsWith(".jsonl"));
+    .filter((file) => file.endsWith(TRANSCRIPT_EXTENSION));
+}
+
+function readTranscript(file: string): string[] {
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line.trim());
+}
+
+function subagentFile(folder: string, agentId: string): string {
+  return join(folder, `${SUBAGENT_FILE_PREFIX}${agentId}${TRANSCRIPT_EXTENSION}`);
+}
+
+function subagentReader(file: string): SubagentReader {
+  const folder = join(dirname(file), basename(file, TRANSCRIPT_EXTENSION), SUBAGENTS_FOLDER);
+  return (agentId) => {
+    const path = subagentFile(folder, agentId);
+    return existsSync(path) ? readTranscript(path) : undefined;
+  };
+}
+
+function gapOption(name: string, value: string): number {
+  const gap = Number(value);
+  if (value.trim() === "" || !Number.isFinite(gap) || gap < 0)
+    throw new Error(`--${name} must be a number of milliseconds of at least 0`);
+  return gap;
 }
 
 async function waitForTurnUpload(server: FakeServer, finishedTurns: number): Promise<void> {
@@ -91,6 +127,8 @@ async function replaySession(
   usageGroup: string | undefined,
 ): Promise<string[]> {
   const { agent, pluginDir } = options;
+  const sessionId = options.freshSessionId && plan.sessionId !== "" ? randomUUID() : plan.sessionId;
+  const renamed = (text: string) => text.replaceAll(plan.sessionId, sessionId);
   const scenario: Scenario = {
     name: basename(file),
     files: {},
@@ -100,9 +138,23 @@ async function replaySession(
   const server = await startFakeServer(scenario);
   const workDir = mkdtempSync(join(tmpdir(), `plugin-qa-replay-${agent}-`));
   const project = join(workDir, "project");
-  const transcript = join(workDir, basename(file));
+  const transcript = join(workDir, renamed(basename(file)));
   mkdirSync(project);
   writeFileSync(transcript, "");
+  const outputs = new Map<string | undefined, ReplayTranscript>([
+    [undefined, { path: transcript, lines: rawLines.map(renamed) }],
+  ]);
+  const subagentFolder = join(workDir, sessionId, SUBAGENTS_FOLDER);
+  for (const { agentId, toolUseId, agentType, lines } of plan.subagents) {
+    const path = subagentFile(subagentFolder, agentId);
+    mkdirSync(subagentFolder, { recursive: true });
+    writeFileSync(path, "");
+    writeFileSync(
+      path.slice(0, -TRANSCRIPT_EXTENSION.length) + SUBAGENT_METADATA_EXTENSION,
+      JSON.stringify({ toolUseId, agentType }),
+    );
+    outputs.set(agentId, { path, lines: lines.map(renamed) });
+  }
   const settings: TracingSettings = {
     pluginDir,
     project: scenario.name,
@@ -116,18 +168,35 @@ async function replaySession(
   };
   const commands = pluginHookCommands(pluginDir);
 
-  let written = 0;
+  const written = new Map<string | undefined, number>();
   let finishedTurns = 0;
+  let lastToolStart = 0;
   for (const event of plan.events) {
+    const output = outputs.get(event.agentId);
+    if (output === undefined) throw new Error(`no transcript for subagent ${event.agentId}`);
+    const done = written.get(event.agentId) ?? 0;
     appendFileSync(
-      transcript,
-      rawLines
-        .slice(written, event.transcriptLines)
+      output.path,
+      output.lines
+        .slice(done, event.transcriptLines)
         .map((line) => `${line}\n`)
         .join(""),
     );
-    written = Math.max(written, event.transcriptLines);
-    const payload = JSON.stringify({ ...event.payload, transcript_path: transcript, cwd: project });
+    written.set(event.agentId, Math.max(done, event.transcriptLines));
+    if (event.payload.hook_event_name === PROMPT_EVENT && options.turnGapMs > 0)
+      await sleep(options.turnGapMs);
+    if (event.payload.hook_event_name === PRE_TOOL_EVENT && options.toolGapMs > 0) {
+      await sleep(Math.max(0, lastToolStart + options.toolGapMs - Date.now()));
+      lastToolStart = Date.now();
+    }
+    const payload = renamed(
+      JSON.stringify({
+        ...event.payload,
+        transcript_path: transcript,
+        cwd: project,
+        ...(event.agentId === undefined ? {} : { agent_transcript_path: output.path }),
+      }),
+    );
     for (const command of commands.get(String(event.payload.hook_event_name)) ?? []) {
       const measured = usageGroup === undefined ? command : commandInGroup(usageGroup, command);
       const exitCode = await runHookCommand(measured, payload, project, env);
@@ -150,6 +219,10 @@ const { values } = parseArgs({
     sessions: { type: "string", multiple: true },
     cgroup: { type: "string" },
     "profile-dir": { type: "string" },
+    "tool-gap-ms": { type: "string", default: "0" },
+    "turn-gap-ms": { type: "string", default: "0" },
+    parallel: { type: "string", default: "1" },
+    "fresh-session-id": { type: "boolean", default: false },
   },
 });
 const agent = values.agent;
@@ -161,26 +234,31 @@ const options: ReplayOptions = {
   agent,
   pluginDir: resolve(values.plugin),
   profileDir: values["profile-dir"] === undefined ? undefined : resolve(values["profile-dir"]),
+  toolGapMs: gapOption("tool-gap-ms", values["tool-gap-ms"]),
+  turnGapMs: gapOption("turn-gap-ms", values["turn-gap-ms"]),
+  freshSessionId: values["fresh-session-id"],
 };
+const parallel = Number(values.parallel);
+if (!Number.isInteger(parallel) || parallel < 1)
+  throw new Error("--parallel must be a whole number of at least 1");
 
 let failed = 0;
 let replayed = 0;
 const usages: EngineUsage[] = [];
 const files = values.sessions.flatMap((sessions) => transcriptFiles(resolve(sessions)));
-for (const file of files) {
-  const rawLines = readFileSync(file, "utf8")
-    .split("\n")
-    .filter((line) => line.trim());
-  const plan = planners[agent](rawLines.map((line) => JSON.parse(line) as TranscriptLine));
+await forEachInParallel(files, parallel, async (file, index) => {
+  const rawLines = readTranscript(file);
+  const plan = planners[agent](
+    rawLines.map((line) => JSON.parse(line) as TranscriptLine),
+    subagentReader(file),
+  );
   const reason = skipReason(plan);
   if (reason !== undefined) {
     console.log(`SKIP ${basename(file)} (${reason})`);
-    continue;
+    return;
   }
   const usageGroup =
-    values.cgroup === undefined
-      ? undefined
-      : createUsageGroup(values.cgroup, `session-${replayed}`);
+    values.cgroup === undefined ? undefined : createUsageGroup(values.cgroup, `session-${index}`);
   const failures = await replaySession(options, file, rawLines, plan, usageGroup);
   replayed += 1;
   if (usageGroup !== undefined) {
@@ -198,7 +276,7 @@ for (const file of files) {
       ? `PASS ${basename(file)}`
       : `FAIL ${basename(file)}\n- ${failures.join("\n- ")}`,
   );
-}
+});
 if (usages.length > 0) console.log(`percentiles ${usageSummary(usages)}`);
 console.log(`${failed} of ${replayed} replayed sessions failed`);
 if (failed > 0 || replayed === 0) process.exit(1);

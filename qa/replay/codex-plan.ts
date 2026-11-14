@@ -4,6 +4,7 @@ import {
   CODEX_MODEL_OUTPUT_TYPES,
   CODEX_TOOL_CALL_TYPES,
   CODEX_TOOL_OUTPUT_TYPES,
+  REPLAY_PERMISSION_MODE,
   SESSION_END,
   SESSION_START,
 } from "../constants.ts";
@@ -42,7 +43,7 @@ export function codexPlan(lines: TranscriptLine[]): ReplayPlan {
   const meta = lines.find((line) => line.type === "session_meta")?.payload ?? {};
   const sessionId = String(meta.session_id ?? meta.id ?? "");
   if (typeof meta.source === "object" && meta.source?.subagent)
-    return { sessionId, events: [], turns: [] };
+    return { sessionId, events: [], turns: [], subagents: [] };
   const promptsFromEvents = lines.some(isUserMessageEvent);
   const calls = new Map<string, TranscriptLine>();
   const events: ReplayEvent[] = [];
@@ -58,7 +59,7 @@ export function codexPlan(lines: TranscriptLine[]): ReplayPlan {
         session_id: sessionId,
         turn_id: turnId,
         model,
-        permission_mode: "default",
+        permission_mode: REPLAY_PERMISSION_MODE,
         ...fields,
       },
     });
@@ -123,5 +124,5 @@ export function codexPlan(lines: TranscriptLine[]): ReplayPlan {
     transcriptLines: lines.length,
     payload: { ...events.at(-1)?.payload, ...SESSION_END },
   });
-  return { sessionId, events, turns };
+  return { sessionId, events, turns, subagents: [] };
 }
