@@ -123,6 +123,7 @@ export interface TracerPaths {
 export type ReadNewLines = (
   bookmark: Bookmark,
   lineId: (line: TranscriptLine) => string | undefined,
+  log: (line: string) => void,
 ) => ReadLine[];
 
 export interface SnapshotStore {
