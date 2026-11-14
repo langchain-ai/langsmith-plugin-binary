@@ -1,4 +1,5 @@
 export type AgentName = "claude" | "codex";
+export type ReplayAgentName = AgentName | "cursor";
 
 export interface ScenarioTurn {
   prompt: string;
@@ -63,6 +64,7 @@ export interface TracedRun {
 
 export interface RootOutputs {
   messages?: unknown;
+  text?: unknown;
 }
 
 export interface Workspace {
@@ -108,6 +110,15 @@ export interface HooksFile {
   hooks: Record<string, HookGroup[]>;
 }
 
+export interface PluginHookEntry {
+  command?: string;
+  hooks?: HookCommand[];
+}
+
+export interface PluginHooksFile {
+  hooks: Record<string, PluginHookEntry[]>;
+}
+
 export interface TypingPace {
   keyDelayMs: number;
   enterDelayMs: number;
@@ -136,7 +147,11 @@ export interface TextBlock {
 }
 
 export type SubagentReader = (agentId: string) => string[] | undefined;
-export type ReplayPlanner = (lines: TranscriptLine[], readSubagent: SubagentReader) => ReplayPlan;
+export type ReplayPlanner = (
+  lines: TranscriptLine[],
+  readSubagent: SubagentReader,
+  sessionName: string,
+) => ReplayPlan;
 export type TracingEnvironment = (settings: TracingSettings) => Record<string, string>;
 
 export interface ReplayEvent {
@@ -171,7 +186,7 @@ export interface ReplayPlan {
 }
 
 export interface ReplayOptions {
-  agent: AgentName;
+  agent: ReplayAgentName;
   pluginDir: string;
   profileDir: string | undefined;
   toolGapMs: number;
@@ -188,4 +203,10 @@ export interface EngineUsage {
   cpuMs: number;
   peakMemoryBytes: number;
   exitedOnItsOwn: boolean;
+}
+
+export interface TurnEvents {
+  prompt: string;
+  stop: string;
+  toolStart: string;
 }
